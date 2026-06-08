@@ -1,0 +1,402 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SyncJob {
+  id               String    @id @default(cuid())
+  jobType          JobType
+  scopeType        ScopeType
+  scopeValue       Json
+  status           JobStatus @default(PENDING)
+  totalRecords     Int       @default(0)
+  processedRecords Int       @default(0)
+  successCount     Int       @default(0)
+  failedCount      Int       @default(0)
+  skippedCount     Int       @default(0)
+  retryCount       Int       @default(0)
+  maxRetries       Int       @default(3)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdBy        String    @default("SYSTEM")
+  errorMessage     String?
+  errorDetails     Json?
+
+  @@index([status])
+  @@index([jobType])
+  @@index([createdAt])
+}
+
+enum JobType {
+  ORDER_SYNC
+  INVENTORY_SYNC
+  PAYMENT_SYNC
+  CONFIG_SYNC
+  REFUND_SYNC
+}
+
+enum ScopeType {
+  SINGLE_ORDER
+  DATE_RANGE
+  BRANCH
+  ALL
+  FAILED_ONLY
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  PARTIAL
+  CANCELLED
+}
+
+model OrderSyncQueue {
+  id                     String     @id @default(cuid())
+  odooOrderId            String
+  odooOrderNumber        String
+  branchCode             String
+  branchName             String?
+  orderDate              DateTime
+  orderDateUtc           DateTime
+  originalTimezone       String
+  customerName           String?
+  customerEmail          String?
+  totalAmount            Decimal    @db.Decimal(15, 2)
+  currency               String     @default("AED")
+  status                 SyncStatus @default(PENDING)
+  validationErrors       Json?
+  syncAttempts           Int        @default(0)
+  lastSyncAt             DateTime?
+  isPaid                 Boolean    @default(false)
+  isCancelled            Boolean    @default(false)
+  isRefund               Boolean    @default(false)
+  refundReferenceId      String?
+  oracleInvoiceNumber    String?
+  oracleCreditMemoNumber String?
+  negativeInventoryFlag  Boolean    @default(false)
+  negativeInventoryItems Json?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  failedTransactions FailedTransaction[]
+
+  @@unique([odooOrderId, branchCode])
+  @@index([status])
+  @@index([branchCode])
+  @@index([orderDate])
+  @@index([orderDateUtc])
+  @@index([isPaid])
+  @@index([isRefund])
+}
+
+enum SyncStatus {
+  PENDING
+  VALIDATED
+  PROCESSING
+  SYNCED
+  FAILED
+  SKIPPED
+  QUEUED_FOR_RETRY
+}
+
+model AuditLog {
+  id                   String         @id @default(uuid())
+  idempotencyKey       String         @unique
+  externalId           String
+  externalSystem       String
+  targetSystem         String
+  operation            AuditOperation
+  status               AuditStatus
+  requestPayload       Json
+  responsePayload      Json?
+  oracleResponseId     String?
+  errorMessage         String?
+  errorCode            String?
+  processingDurationMs Int
+  attempts             Int            @default(1)
+  createdAt            DateTime       @default(now())
+  syncDate             DateTime       @map("sync_date")
+
+  @@index([externalId])
+  @@index([idempotencyKey])
+  @@index([status])
+  @@index([syncDate])
+  @@index([createdAt])
+  @@index([oracleResponseId])
+}
+
+enum AuditOperation {
+  CREATE_INVOICE
+  CREATE_RECEIPT
+  CREATE_CREDIT_MEMO
+  CREATE_JOURNAL
+  SYNC_INVENTORY
+  UPDATE_CONFIG
+}
+
+enum AuditStatus {
+  SUCCESS
+  FAILED
+  RETRY
+  SKIPPED
+  DUPLICATE
+}
+
+model PaymentMethodMapping {
+  id                      String   @id @default(cuid())
+  sourceSystem            String
+  sourcePaymentName       String
+  oracleReceiptMethodId   Int
+  oracleReceiptMethodName String
+  oracleBankAccountId     Int?
+  isActive                Boolean  @default(true)
+  requiresApproval        Boolean  @default(false)
+  approvedBy              String?
+  approvedAt              DateTime?
+  rejectionReason         String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([sourceSystem, sourcePaymentName])
+  @@index([sourcePaymentName])
+  @@index([isActive])
+  @@index([requiresApproval])
+}
+
+model RefundTracking {
+  id                     String     @id @default(cuid())
+  originalOrderId        String
+  originalOrderNumber    String
+  originalInvoiceNumber  String?
+  refundOrderId          String     @unique
+  refundOrderNumber      String
+  refundAmount           Decimal    @db.Decimal(15, 2)
+  refundReason           String
+  refundDate             DateTime
+  oracleCreditMemoNumber String
+  creditMemoStatus       SyncStatus @default(PENDING)
+  syncedAt               DateTime?
+  failureReason          String?
+  createdAt              DateTime   @default(now())
+
+  @@index([originalOrderId])
+  @@index([originalInvoiceNumber])
+  @@index([refundOrderId])
+  @@index([creditMemoStatus])
+}
+
+model StoreConfiguration {
+  id                    String           @id @default(cuid())
+  branchCode            String           @unique
+  branchName            String
+  odooBranchId          Int
+  oracleOperatingUnitId Int
+  oracleBusinessUnit    String
+  billToSiteName        String
+  billToLocation        String?
+  bankAccountName       String
+  cashAccountName       String
+  paymentTermsName      String
+  taxClassificationCode String?
+  transactionSource     String           @default("Manual")
+  transactionType       String           @default("PASA CONSULTING SALE")
+  invoiceCurrencyCode   String           @default("AED")
+  isActive              Boolean          @default(true)
+  lastValidatedAt       DateTime?
+  validationStatus      ValidationStatus @default(PENDING)
+  validationErrors      Json?
+  version               Int              @default(1)
+  createdBy             String
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  @@index([branchCode])
+  @@index([validationStatus])
+  @@index([isActive])
+}
+
+enum ValidationStatus {
+  PENDING
+  VALIDATED
+  INVALID
+  PARTIAL
+}
+
+model FailedTransaction {
+  id               String   @id @default(cuid())
+  orderSyncQueueId String?
+  originalPayload  Json
+  errorType        ErrorType
+  errorMessage     String
+  errorStack       String?
+  errorCode        String?
+  retryCount       Int      @default(0)
+  maxRetries       Int      @default(3)
+  nextRetryAt      DateTime?
+  isResolved       Boolean  @default(false)
+  resolvedBy       String?
+  resolvedAt       DateTime?
+  resolutionNote   String?
+  createdAt        DateTime @default(now())
+
+  orderSyncQueue OrderSyncQueue? @relation(fields: [orderSyncQueueId], references: [id])
+
+  @@index([errorType])
+  @@index([isResolved])
+  @@index([nextRetryAt])
+  @@index([createdAt])
+}
+
+enum ErrorType {
+  VALIDATION_ERROR
+  NETWORK_ERROR
+  TIMEOUT
+  MAPPING_ERROR
+  AUTHENTICATION_ERROR
+  RATE_LIMIT_ERROR
+  DUPLICATE_ERROR
+  INVENTORY_ERROR
+  PAYMENT_METHOD_ERROR
+  CONFIGURATION_ERROR
+  UNKNOWN_ERROR
+}
+
+model InventorySyncTracker {
+  id                         String                   @id @default(cuid())
+  productId                  String
+  productSku                 String
+  productName                String?
+  branchCode                 String
+  transactionDate            DateTime
+  transactionType            InventoryTransactionType
+  previousQuantity           Decimal                  @db.Decimal(15, 3)
+  newQuantity                Decimal                  @db.Decimal(15, 3)
+  quantityChange             Decimal                  @db.Decimal(15, 3)
+  syncStatus                 SyncStatus               @default(PENDING)
+  isNegativeInventory        Boolean                  @default(false)
+  negativeInventoryAlertSent Boolean                  @default(false)
+  orderReferenceId           String?
+  oracleTransactionId        String?
+  createdAt                  DateTime                 @default(now())
+  syncedAt                   DateTime?
+
+  @@unique([productId, branchCode, transactionDate, transactionType])
+  @@index([productId])
+  @@index([branchCode])
+  @@index([isNegativeInventory])
+  @@index([syncStatus])
+  @@index([transactionDate])
+}
+
+enum InventoryTransactionType {
+  SALE
+  RETURN
+  ADJUSTMENT
+  RECEIPT
+  TRANSFER
+}
+
+model IntegrationHealthCheck {
+  id                  String       @id @default(cuid())
+  serviceName         ServiceName
+  status              HealthStatus
+  responseTimeMs      Int
+  lastSuccessAt       DateTime
+  lastFailureAt       DateTime?
+  failureReason       String?
+  consecutiveFailures Int          @default(0)
+  createdAt           DateTime     @default(now())
+
+  @@index([serviceName])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum ServiceName {
+  ODOO_API
+  ORACLE_SOAP
+  ORACLE_REST
+  REDIS
+  DATABASE
+  WEBHOOK
+}
+
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+  UNKNOWN
+}
+
+model NotificationRecipient {
+  id                     String   @id @default(cuid())
+  email                  String   @unique
+  name                   String
+  role                   String
+  receiveErrorAlerts     Boolean  @default(true)
+  receiveDailyReports    Boolean  @default(false)
+  receiveInventoryAlerts Boolean  @default(false)
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+
+  @@index([role])
+  @@index([isActive])
+}
+
+model AlertLog {
+  id                String        @id @default(cuid())
+  alertType         AlertType
+  severity          AlertSeverity
+  title             String
+  message           String
+  relatedEntityId   String?
+  relatedEntityType String?
+  isResolved        Boolean       @default(false)
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  createdAt         DateTime      @default(now())
+
+  @@index([alertType])
+  @@index([severity])
+  @@index([isResolved])
+  @@index([createdAt])
+}
+
+enum AlertType {
+  PAYMENT_METHOD_DISCOVERED
+  NEGATIVE_INVENTORY
+  STORE_CONFIG_INVALID
+  SYNC_FAILURE
+  CONNECTION_LOST
+  DUPLICATE_DETECTED
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+model WebhookEvent {
+  id               String     @id @default(cuid())
+  eventType        String
+  sourceSystem     String     @default("ODOO")
+  payload          Json
+  receivedAt       DateTime   @default(now())
+  processedAt      DateTime?
+  processingStatus SyncStatus @default(PENDING)
+  processingError  String?
+
+  @@index([eventType])
+  @@index([processingStatus])
+  @@index([receivedAt])
+}
