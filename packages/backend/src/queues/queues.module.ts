@@ -50,7 +50,12 @@ export const QUEUE_NAMES = {
       { name: QUEUE_NAMES.NOTIFICATIONS },
     ),
   ],
-  providers: [OrderSyncProcessor, InventorySyncProcessor, RetryProcessor, QueuesService],
+  providers: [
+    OrderSyncProcessor,
+    InventorySyncProcessor,
+    RetryProcessor,
+    QueuesService,
+  ],
   exports: [BullModule, QueuesService],
 })
 export class QueuesModule {}

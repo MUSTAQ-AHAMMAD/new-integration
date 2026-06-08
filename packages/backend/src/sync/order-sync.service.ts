@@ -33,11 +33,19 @@ export class OrderSyncService {
   ) {}
 
   async ingestOrder(data: OdooOrderData): Promise<void> {
-    const orderDateUtc = this.timezoneService.normalizeToUtc(data.orderDate, data.originalTimezone);
+    const orderDateUtc = this.timezoneService.normalizeToUtc(
+      data.orderDate,
+      data.originalTimezone,
+    );
     const hasNegativeInventory = (data.negativeInventoryItems?.length ?? 0) > 0;
 
     const order = await this.prisma.orderSyncQueue.upsert({
-      where: { odooOrderId_branchCode: { odooOrderId: data.odooOrderId, branchCode: data.branchCode } },
+      where: {
+        odooOrderId_branchCode: {
+          odooOrderId: data.odooOrderId,
+          branchCode: data.branchCode,
+        },
+      },
       create: {
         odooOrderId: data.odooOrderId,
         odooOrderNumber: data.odooOrderNumber,
@@ -55,8 +63,13 @@ export class OrderSyncService {
         isRefund: data.isRefund ?? false,
         refundReferenceId: data.refundReferenceId,
         negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: data.negativeInventoryItems ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue) : undefined,
-        status: data.isPaid && !(data.isCancelled ?? false) ? SyncStatus.PENDING : SyncStatus.SKIPPED,
+        negativeInventoryItems: data.negativeInventoryItems
+          ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue)
+          : undefined,
+        status:
+          data.isPaid && !(data.isCancelled ?? false)
+            ? SyncStatus.PENDING
+            : SyncStatus.SKIPPED,
       },
       update: {
         odooOrderNumber: data.odooOrderNumber,
@@ -73,8 +86,13 @@ export class OrderSyncService {
         isRefund: data.isRefund ?? false,
         refundReferenceId: data.refundReferenceId,
         negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: data.negativeInventoryItems ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
-        status: data.isPaid && !(data.isCancelled ?? false) ? SyncStatus.PENDING : SyncStatus.SKIPPED,
+        negativeInventoryItems: data.negativeInventoryItems
+          ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        status:
+          data.isPaid && !(data.isCancelled ?? false)
+            ? SyncStatus.PENDING
+            : SyncStatus.SKIPPED,
       },
     });
 
@@ -108,7 +126,9 @@ export class OrderSyncService {
       });
     }
 
-    this.logger.log(`Order ${data.odooOrderId} ingested for branch ${data.branchCode}`);
+    this.logger.log(
+      `Order ${data.odooOrderId} ingested for branch ${data.branchCode}`,
+    );
   }
 
   async retryFailedOrders(branchCode?: string) {

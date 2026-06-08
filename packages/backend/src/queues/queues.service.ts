@@ -14,7 +14,8 @@ export interface OrderSyncJobData {
 export class QueuesService {
   constructor(
     @InjectQueue(QUEUE_NAMES.ORDER_SYNC) private readonly orderSyncQueue: Queue,
-    @InjectQueue(QUEUE_NAMES.INVENTORY_SYNC) private readonly inventorySyncQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.INVENTORY_SYNC)
+    private readonly inventorySyncQueue: Queue,
     @InjectQueue(QUEUE_NAMES.RETRY) private readonly retryQueue: Queue,
   ) {}
 
@@ -34,7 +35,14 @@ export class QueuesService {
   }
 
   async getQueueStats() {
-    const [orderWaiting, orderActive, orderFailed, orderCompleted, inventoryWaiting, retryWaiting] = await Promise.all([
+    const [
+      orderWaiting,
+      orderActive,
+      orderFailed,
+      orderCompleted,
+      inventoryWaiting,
+      retryWaiting,
+    ] = await Promise.all([
       this.orderSyncQueue.getWaitingCount(),
       this.orderSyncQueue.getActiveCount(),
       this.orderSyncQueue.getFailedCount(),

@@ -9,7 +9,11 @@ export class GatewayService {
     this.gateway.server?.emit('orderStatus', data);
   }
 
-  emitSyncJobUpdate(data: { jobId: string; status: string; progress?: number }) {
+  emitSyncJobUpdate(data: {
+    jobId: string;
+    status: string;
+    progress?: number;
+  }) {
     this.gateway.server?.emit('syncJobUpdate', data);
   }
 

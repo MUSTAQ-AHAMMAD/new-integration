@@ -10,7 +10,9 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({ cors: { origin: '*' }, namespace: '/events' })
-export class IntegrationGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class IntegrationGateway
+  implements OnGatewayConnection, OnGatewayDisconnect
+{
   private readonly logger = new Logger(IntegrationGateway.name);
 
   @WebSocketServer()

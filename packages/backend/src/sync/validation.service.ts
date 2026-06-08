@@ -14,7 +14,10 @@ export class ValidationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async validateOrder(odooOrderId: string, branchCode: string): Promise<ValidationResult> {
+  async validateOrder(
+    odooOrderId: string,
+    branchCode: string,
+  ): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -35,7 +38,9 @@ export class ValidationService {
       errors.push('Order is cancelled');
     }
 
-    const storeConfig = await this.prisma.storeConfiguration.findUnique({ where: { branchCode } });
+    const storeConfig = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
 
     if (!storeConfig) {
       errors.push(`No store configuration found for branch: ${branchCode}`);
@@ -44,15 +49,21 @@ export class ValidationService {
     } else if (storeConfig.validationStatus === ValidationStatus.INVALID) {
       errors.push(`Store ${branchCode} has invalid configuration`);
     } else if (storeConfig.validationStatus === ValidationStatus.PARTIAL) {
-      warnings.push(`Store ${branchCode} has partial configuration; sync will continue with caution`);
+      warnings.push(
+        `Store ${branchCode} has partial configuration; sync will continue with caution`,
+      );
     }
 
     if (order.negativeInventoryFlag) {
-      warnings.push('Order contains items with negative inventory - will sync but inventory team notified');
+      warnings.push(
+        'Order contains items with negative inventory - will sync but inventory team notified',
+      );
     }
 
     if (warnings.length > 0) {
-      this.logger.warn(`Validation warnings for ${odooOrderId}: ${warnings.join('; ')}`);
+      this.logger.warn(
+        `Validation warnings for ${odooOrderId}: ${warnings.join('; ')}`,
+      );
     }
 
     return { isValid: errors.length === 0, errors, warnings };

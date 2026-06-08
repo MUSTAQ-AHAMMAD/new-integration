@@ -25,7 +25,9 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('Integration Middleware API')
-    .setDescription('Odoo → Oracle Fusion middleware - enterprise integration system')
+    .setDescription(
+      'Odoo → Oracle Fusion middleware - enterprise integration system',
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .build();

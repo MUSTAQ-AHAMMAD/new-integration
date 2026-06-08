@@ -1,6 +1,12 @@
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
-import { AuditOperation, AuditStatus, ErrorType, Prisma, SyncStatus } from '@prisma/client';
+import {
+  AuditOperation,
+  AuditStatus,
+  ErrorType,
+  Prisma,
+  SyncStatus,
+} from '@prisma/client';
 import { Job } from 'bull';
 import { AlertsService } from '../../alerts/alerts.service';
 import { GatewayService } from '../../gateway/gateway.service';
@@ -55,28 +61,40 @@ export class OrderSyncProcessor {
             },
           },
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.SKIPPED });
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.SKIPPED,
+        });
         return;
       }
 
-      const validation = await this.validationService.validateOrder(odooOrderId, branchCode);
+      const validation = await this.validationService.validateOrder(
+        odooOrderId,
+        branchCode,
+      );
       if (!validation.isValid) {
         await this.prisma.orderSyncQueue.update({
           where: { id: order.id },
           data: {
             status: SyncStatus.SKIPPED,
-            validationErrors: { errors: validation.errors, warnings: validation.warnings },
+            validationErrors: {
+              errors: validation.errors,
+              warnings: validation.warnings,
+            },
           },
         });
         await this.prisma.failedTransaction.create({
           data: {
             orderSyncQueueId: order.id,
-            originalPayload: order as unknown as Prisma.InputJsonValue,
+            originalPayload: order,
             errorType: ErrorType.VALIDATION_ERROR,
             errorMessage: validation.errors.join('; '),
           },
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.SKIPPED });
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.SKIPPED,
+        });
         return;
       }
 
@@ -84,7 +102,9 @@ export class OrderSyncProcessor {
 
       const idempotencyKey = this.idempotencyService.generateKey(
         odooOrderId,
-        order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+        order.isRefund
+          ? AuditOperation.CREATE_CREDIT_MEMO
+          : AuditOperation.CREATE_INVOICE,
         branchCode,
       );
 
@@ -98,12 +118,17 @@ export class OrderSyncProcessor {
           externalId: odooOrderId,
           externalSystem: 'ODOO',
           targetSystem: 'ORACLE',
-          operation: order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+          operation: order.isRefund
+            ? AuditOperation.CREATE_CREDIT_MEMO
+            : AuditOperation.CREATE_INVOICE,
           status: AuditStatus.DUPLICATE,
-          requestPayload: order as unknown as Record<string, unknown>,
+          requestPayload: order,
           processingDurationMs: Date.now() - startedAt,
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: 'DUPLICATE' });
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: 'DUPLICATE',
+        });
         return;
       }
 
@@ -115,15 +140,27 @@ export class OrderSyncProcessor {
           lastSyncAt: new Date(),
         },
       });
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.PROCESSING });
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.PROCESSING,
+      });
 
-      const paymentMethodName =
-        order.isRefund ? 'REFUND' : order.branchName?.trim() ? `${order.branchName.trim()}-DEFAULT` : 'DEFAULT';
+      const paymentMethodName = order.isRefund
+        ? 'REFUND'
+        : order.branchName?.trim()
+          ? `${order.branchName.trim()}-DEFAULT`
+          : 'DEFAULT';
       let fallbackAlert: string | null = null;
       try {
-        await this.paymentMappingService.resolvePaymentMethod('ODOO', paymentMethodName);
+        await this.paymentMappingService.resolvePaymentMethod(
+          'ODOO',
+          paymentMethodName,
+        );
       } catch (error) {
-        fallbackAlert = error instanceof Error ? error.message : 'Payment mapping resolution failed';
+        fallbackAlert =
+          error instanceof Error
+            ? error.message
+            : 'Payment mapping resolution failed';
       }
 
       const oracleReference = order.isRefund
@@ -135,9 +172,11 @@ export class OrderSyncProcessor {
         externalId: odooOrderId,
         externalSystem: 'ODOO',
         targetSystem: 'ORACLE',
-        operation: order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+        operation: order.isRefund
+          ? AuditOperation.CREATE_CREDIT_MEMO
+          : AuditOperation.CREATE_INVOICE,
         status: AuditStatus.SUCCESS,
-        requestPayload: order as unknown as Record<string, unknown>,
+        requestPayload: order,
         responsePayload: {
           oracleReference,
           warnings: validation.warnings,
@@ -150,7 +189,9 @@ export class OrderSyncProcessor {
 
       const validationWarnings = [...validation.warnings];
       if (fallbackAlert) {
-        validationWarnings.push(`Payment mapping fallback applied: ${fallbackAlert}`);
+        validationWarnings.push(
+          `Payment mapping fallback applied: ${fallbackAlert}`,
+        );
       }
 
       if (order.negativeInventoryFlag) {
@@ -168,13 +209,18 @@ export class OrderSyncProcessor {
         where: { id: order.id },
         data: {
           status: SyncStatus.SYNCED,
-          validationErrors: validationWarnings.length ? { warnings: validationWarnings } : Prisma.JsonNull,
+          validationErrors: validationWarnings.length
+            ? { warnings: validationWarnings }
+            : Prisma.JsonNull,
           oracleInvoiceNumber: order.isRefund ? null : oracleReference,
           oracleCreditMemoNumber: order.isRefund ? oracleReference : null,
         },
       });
 
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.SYNCED });
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.SYNCED,
+      });
       this.logger.log(`Order synced successfully: ${odooOrderId}`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -192,14 +238,17 @@ export class OrderSyncProcessor {
         .create({
           data: {
             orderSyncQueueId: order.id,
-            originalPayload: order as unknown as Prisma.InputJsonValue,
+            originalPayload: order,
             errorType: ErrorType.UNKNOWN_ERROR,
             errorMessage,
             errorStack: err instanceof Error ? err.stack : undefined,
           },
         })
         .catch(() => undefined);
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.FAILED });
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.FAILED,
+      });
       throw err;
     }
   }

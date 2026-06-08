@@ -10,7 +10,11 @@ export class AlertsController {
 
   @Get()
   @ApiOperation({ summary: 'List alerts' })
-  list(@Query('severity') severity?: AlertSeverity, @Query('resolved') resolved?: string, @Query('limit') limit?: string) {
+  list(
+    @Query('severity') severity?: AlertSeverity,
+    @Query('resolved') resolved?: string,
+    @Query('limit') limit?: string,
+  ) {
     return this.service.listAlerts({
       severity,
       isResolved: resolved !== undefined ? resolved === 'true' : undefined,

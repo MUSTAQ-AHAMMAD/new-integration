@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SyncStatus } from '@prisma/client';
+import { Prisma, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -19,7 +19,7 @@ export class WebhookService {
       data: {
         eventType,
         sourceSystem: 'ODOO',
-        payload: payload as object,
+        payload: payload as Prisma.InputJsonObject,
         processingStatus: SyncStatus.PENDING,
       },
     });
@@ -40,14 +40,27 @@ export class WebhookService {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       await this.prisma.webhookEvent.update({
         where: { id: event.id },
-        data: { processingStatus: SyncStatus.FAILED, processingError: errorMessage },
+        data: {
+          processingStatus: SyncStatus.FAILED,
+          processingError: errorMessage,
+        },
       });
-      this.logger.error(`Failed to process webhook event ${event.id}`, err instanceof Error ? err.stack : undefined);
-      return { received: true, eventId: event.id, processingError: errorMessage };
+      this.logger.error(
+        `Failed to process webhook event ${event.id}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      return {
+        received: true,
+        eventId: event.id,
+        processingError: errorMessage,
+      };
     }
   }
 
-  private async handleEvent(eventType: string, payload: Record<string, unknown>) {
+  private async handleEvent(
+    eventType: string,
+    payload: Record<string, unknown>,
+  ) {
     switch (eventType) {
       case 'order.paid':
       case 'order.created':
@@ -64,26 +77,46 @@ export class WebhookService {
     const order = payload.order as Record<string, unknown> | undefined;
     if (!order) return;
 
+    const toStringValue = (value: unknown, fallback = ''): string =>
+      typeof value === 'string' || typeof value === 'number'
+        ? String(value)
+        : fallback;
+
     const amountTotal = Number(order.amount_total ?? 0);
-    const state = String(order.state ?? 'draft');
+    const state = toStringValue(order.state, 'draft');
 
     await this.orderSyncService.ingestOrder({
-      odooOrderId: String(order.id),
-      odooOrderNumber: String(order.name || order.number || order.id),
-      branchCode: String(order.branch_code || order.company_id || 'UNKNOWN'),
-      branchName: order.branch_name as string | undefined,
-      orderDate: new Date(String(order.date_order || new Date().toISOString())),
-      originalTimezone: String(order.timezone || 'Asia/Dubai'),
-      customerName: order.partner_name as string | undefined,
-      customerEmail: order.partner_email as string | undefined,
+      odooOrderId: toStringValue(order.id),
+      odooOrderNumber: toStringValue(order.name ?? order.number ?? order.id),
+      branchCode: toStringValue(
+        order.branch_code ?? order.company_id,
+        'UNKNOWN',
+      ),
+      branchName:
+        typeof order.branch_name === 'string' ? order.branch_name : undefined,
+      orderDate: new Date(
+        toStringValue(order.date_order, new Date().toISOString()),
+      ),
+      originalTimezone: toStringValue(order.timezone, 'Asia/Dubai'),
+      customerName:
+        typeof order.partner_name === 'string' ? order.partner_name : undefined,
+      customerEmail:
+        typeof order.partner_email === 'string'
+          ? order.partner_email
+          : undefined,
       totalAmount: amountTotal,
-      currency: String(order.currency || 'AED'),
+      currency: toStringValue(order.currency, 'AED'),
       isPaid: ['paid', 'done', 'posted'].includes(state),
       isCancelled: state === 'cancel',
       isRefund: Boolean(order.is_refund) || amountTotal < 0,
-      refundReferenceId: order.refund_reference_id ? String(order.refund_reference_id) : undefined,
+      refundReferenceId: order.refund_reference_id
+        ? toStringValue(order.refund_reference_id)
+        : undefined,
       negativeInventoryItems: Array.isArray(order.negative_inventory_items)
-        ? (order.negative_inventory_items as Array<{ sku: string; quantity: number }>)
+        ? (order.negative_inventory_items as Array<{
+            sku: string;
+            quantity: number;
+          }>)
         : undefined,
     });
   }

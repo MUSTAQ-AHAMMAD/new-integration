@@ -44,12 +44,15 @@ export class InventorySyncProcessor {
       data: {
         syncStatus: SyncStatus.SYNCED,
         syncedAt: new Date(),
-        negativeInventoryAlertSent: tracker.isNegativeInventory || tracker.negativeInventoryAlertSent,
+        negativeInventoryAlertSent:
+          tracker.isNegativeInventory || tracker.negativeInventoryAlertSent,
       },
     });
 
     this.gateway.emitAlert({
-      type: tracker.isNegativeInventory ? 'NEGATIVE_INVENTORY' : 'INVENTORY_SYNC',
+      type: tracker.isNegativeInventory
+        ? 'NEGATIVE_INVENTORY'
+        : 'INVENTORY_SYNC',
       severity: tracker.isNegativeInventory ? 'WARNING' : 'INFO',
       message: `Inventory sync completed for ${tracker.productSku}`,
     });

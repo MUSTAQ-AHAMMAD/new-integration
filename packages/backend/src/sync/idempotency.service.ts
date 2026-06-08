@@ -7,13 +7,25 @@ import { PrismaService } from '../prisma/prisma.service';
 export class IdempotencyService {
   constructor(private readonly prisma: PrismaService) {}
 
-  generateKey(externalId: string, operation: AuditOperation, additionalContext = ''): string {
-    return createHash('sha256').update(`${externalId}:${operation}:${additionalContext}`).digest('hex');
+  generateKey(
+    externalId: string,
+    operation: AuditOperation,
+    additionalContext = '',
+  ): string {
+    return createHash('sha256')
+      .update(`${externalId}:${operation}:${additionalContext}`)
+      .digest('hex');
   }
 
   async isDuplicate(idempotencyKey: string): Promise<boolean> {
-    const existing = await this.prisma.auditLog.findUnique({ where: { idempotencyKey } });
-    return existing !== null && [AuditStatus.SUCCESS, AuditStatus.DUPLICATE].includes(existing.status);
+    const existing = await this.prisma.auditLog.findUnique({
+      where: { idempotencyKey },
+    });
+    return (
+      existing !== null &&
+      (existing.status === AuditStatus.SUCCESS ||
+        existing.status === AuditStatus.DUPLICATE)
+    );
   }
 
   async recordOperation(params: {

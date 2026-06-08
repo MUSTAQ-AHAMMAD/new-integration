@@ -13,10 +13,16 @@ export class TimezoneService {
   }
 
   formatForOracle(date: Date, timezone = 'UTC'): string {
-    return format(toZonedTime(date, timezone), "yyyy-MM-dd'T'HH:mm:ss", { timeZone: timezone });
+    return format(toZonedTime(date, timezone), "yyyy-MM-dd'T'HH:mm:ss", {
+      timeZone: timezone,
+    });
   }
 
-  getDateRangeUtc(startDate: string, endDate: string, timezone: string): { start: Date; end: Date } {
+  getDateRangeUtc(
+    startDate: string,
+    endDate: string,
+    timezone: string,
+  ): { start: Date; end: Date } {
     return {
       start: this.normalizeToUtc(`${startDate}T00:00:00`, timezone),
       end: this.normalizeToUtc(`${endDate}T23:59:59`, timezone),

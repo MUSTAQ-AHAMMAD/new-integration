@@ -24,15 +24,25 @@ export class AlertsService {
   async createAlert(dto: CreateAlertDto) {
     const alert = await this.prisma.alertLog.create({ data: dto });
     this.logger.warn(`[ALERT ${dto.severity}] ${dto.title}: ${dto.message}`);
-    this.gateway.emitAlert({ type: dto.alertType, severity: dto.severity, message: dto.message });
+    this.gateway.emitAlert({
+      type: dto.alertType,
+      severity: dto.severity,
+      message: dto.message,
+    });
     return alert;
   }
 
-  async listAlerts(params?: { severity?: AlertSeverity; isResolved?: boolean; limit?: number }) {
+  async listAlerts(params?: {
+    severity?: AlertSeverity;
+    isResolved?: boolean;
+    limit?: number;
+  }) {
     return this.prisma.alertLog.findMany({
       where: {
         ...(params?.severity ? { severity: params.severity } : {}),
-        ...(params?.isResolved !== undefined ? { isResolved: params.isResolved } : {}),
+        ...(params?.isResolved !== undefined
+          ? { isResolved: params.isResolved }
+          : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: params?.limit || 50,

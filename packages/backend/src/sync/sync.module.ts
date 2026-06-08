@@ -11,9 +11,26 @@ import { TimezoneService } from './timezone.service';
 import { ValidationService } from './validation.service';
 
 @Module({
-  imports: [forwardRef(() => QueuesModule), StoreConfigModule, AlertsModule, PaymentMappingModule],
+  imports: [
+    forwardRef(() => QueuesModule),
+    StoreConfigModule,
+    AlertsModule,
+    PaymentMappingModule,
+  ],
   controllers: [SyncController],
-  providers: [SyncService, OrderSyncService, IdempotencyService, TimezoneService, ValidationService],
-  exports: [SyncService, OrderSyncService, IdempotencyService, TimezoneService, ValidationService],
+  providers: [
+    SyncService,
+    OrderSyncService,
+    IdempotencyService,
+    TimezoneService,
+    ValidationService,
+  ],
+  exports: [
+    SyncService,
+    OrderSyncService,
+    IdempotencyService,
+    TimezoneService,
+    ValidationService,
+  ],
 })
 export class SyncModule {}

@@ -14,7 +14,9 @@ export class PaymentMappingService {
 
   async resolvePaymentMethod(sourceSystem: string, sourcePaymentName: string) {
     const mapping = await this.prisma.paymentMethodMapping.findUnique({
-      where: { sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName } },
+      where: {
+        sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName },
+      },
     });
 
     if (!mapping) {
@@ -28,7 +30,9 @@ export class PaymentMappingService {
       });
 
       await this.prisma.paymentMethodMapping.upsert({
-        where: { sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName } },
+        where: {
+          sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName },
+        },
         create: {
           sourceSystem,
           sourcePaymentName,
@@ -40,16 +44,22 @@ export class PaymentMappingService {
         update: { requiresApproval: true },
       });
 
-      throw new NotFoundException(`Payment method "${sourcePaymentName}" is not mapped to Oracle. Admin notified.`);
+      throw new NotFoundException(
+        `Payment method "${sourcePaymentName}" is not mapped to Oracle. Admin notified.`,
+      );
     }
 
     if (!mapping.isActive) {
-      this.logger.warn(`Inactive payment mapping used for ${sourcePaymentName}; returning mapping for fallback handling`);
+      this.logger.warn(
+        `Inactive payment mapping used for ${sourcePaymentName}; returning mapping for fallback handling`,
+      );
       return mapping;
     }
 
     if (mapping.requiresApproval && !mapping.approvedAt) {
-      this.logger.warn(`Payment method ${sourcePaymentName} still requires approval; returning mapping as fallback`);
+      this.logger.warn(
+        `Payment method ${sourcePaymentName} still requires approval; returning mapping as fallback`,
+      );
       return mapping;
     }
 
@@ -66,7 +76,12 @@ export class PaymentMappingService {
   async approvePendingMapping(id: string, approvedBy: string) {
     return this.prisma.paymentMethodMapping.update({
       where: { id },
-      data: { requiresApproval: false, isActive: true, approvedBy, approvedAt: new Date() },
+      data: {
+        requiresApproval: false,
+        isActive: true,
+        approvedBy,
+        approvedAt: new Date(),
+      },
     });
   }
 
@@ -77,6 +92,8 @@ export class PaymentMappingService {
     oracleReceiptMethodName: string;
     oracleBankAccountId?: number;
   }) {
-    return this.prisma.paymentMethodMapping.create({ data: { ...data, isActive: true } });
+    return this.prisma.paymentMethodMapping.create({
+      data: { ...data, isActive: true },
+    });
   }
 }

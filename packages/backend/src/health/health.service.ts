@@ -20,7 +20,10 @@ export class HealthService {
     await Promise.allSettled([this.checkDatabase(), this.checkRedis()]);
   }
 
-  private async checkService(serviceName: ServiceName, checkFn: () => Promise<void>) {
+  private async checkService(
+    serviceName: ServiceName,
+    checkFn: () => Promise<void>,
+  ) {
     const start = Date.now();
     try {
       await checkFn();
@@ -34,11 +37,17 @@ export class HealthService {
           consecutiveFailures: 0,
         },
       });
-      this.gateway.emitHealthUpdate({ service: serviceName, status: HealthStatus.HEALTHY });
+      this.gateway.emitHealthUpdate({
+        service: serviceName,
+        status: HealthStatus.HEALTHY,
+      });
     } catch (err) {
       const responseTimeMs = Date.now() - start;
-      const failureReason = err instanceof Error ? err.message : 'Unknown error';
-      this.logger.error(`Health check failed for ${serviceName}: ${failureReason}`);
+      const failureReason =
+        err instanceof Error ? err.message : 'Unknown error';
+      this.logger.error(
+        `Health check failed for ${serviceName}: ${failureReason}`,
+      );
       await this.prisma.integrationHealthCheck
         .create({
           data: {
@@ -52,7 +61,10 @@ export class HealthService {
           },
         })
         .catch(() => undefined);
-      this.gateway.emitHealthUpdate({ service: serviceName, status: HealthStatus.UNHEALTHY });
+      this.gateway.emitHealthUpdate({
+        service: serviceName,
+        status: HealthStatus.UNHEALTHY,
+      });
     }
   }
 

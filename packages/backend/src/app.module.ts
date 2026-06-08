@@ -16,12 +16,18 @@ import { GatewayModule } from './gateway/gateway.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env.local', '.env'] }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env.local', '.env'],
+    }),
     LoggerModule.forRoot({
       pinoHttp: {
         transport:
           process.env.NODE_ENV !== 'production'
-            ? { target: 'pino-pretty', options: { colorize: true, singleLine: true } }
+            ? {
+                target: 'pino-pretty',
+                options: { colorize: true, singleLine: true },
+              }
             : undefined,
         level: process.env.LOG_LEVEL || 'info',
         serializers: {

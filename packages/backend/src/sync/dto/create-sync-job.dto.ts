@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { JobType, ScopeType } from '@prisma/client';
-import { IsArray, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateSyncJobDto {
   @ApiProperty({ enum: JobType })

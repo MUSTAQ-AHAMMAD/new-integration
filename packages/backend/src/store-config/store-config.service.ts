@@ -13,10 +13,14 @@ export class StoreConfigService {
   ) {}
 
   async getValidatedConfig(branchCode: string) {
-    const config = await this.prisma.storeConfiguration.findUnique({ where: { branchCode } });
+    const config = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
 
     if (!config) {
-      throw new NotFoundException(`Store configuration not found for branch: ${branchCode}`);
+      throw new NotFoundException(
+        `Store configuration not found for branch: ${branchCode}`,
+      );
     }
 
     if (!config.isActive) {
@@ -24,14 +28,20 @@ export class StoreConfigService {
     }
 
     if (config.validationStatus === ValidationStatus.INVALID) {
-      throw new Error(`Store ${branchCode} has invalid configuration: ${JSON.stringify(config.validationErrors)}`);
+      throw new Error(
+        `Store ${branchCode} has invalid configuration: ${JSON.stringify(config.validationErrors)}`,
+      );
     }
 
     return config;
   }
 
-  async validateConfig(branchCode: string): Promise<{ isValid: boolean; errors: string[] }> {
-    const config = await this.prisma.storeConfiguration.findUnique({ where: { branchCode } });
+  async validateConfig(
+    branchCode: string,
+  ): Promise<{ isValid: boolean; errors: string[] }> {
+    const config = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
     if (!config) return { isValid: false, errors: ['Store config not found'] };
 
     const errors: string[] = [];
@@ -39,9 +49,13 @@ export class StoreConfigService {
     if (!config.bankAccountName) errors.push('bankAccountName is required');
     if (!config.cashAccountName) errors.push('cashAccountName is required');
     if (!config.paymentTermsName) errors.push('paymentTermsName is required');
-    if (!config.oracleBusinessUnit) errors.push('oracleBusinessUnit is required');
+    if (!config.oracleBusinessUnit)
+      errors.push('oracleBusinessUnit is required');
 
-    const status = errors.length === 0 ? ValidationStatus.VALIDATED : ValidationStatus.INVALID;
+    const status =
+      errors.length === 0
+        ? ValidationStatus.VALIDATED
+        : ValidationStatus.INVALID;
     await this.prisma.storeConfiguration.update({
       where: { branchCode },
       data: {

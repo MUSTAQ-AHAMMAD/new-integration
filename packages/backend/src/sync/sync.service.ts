@@ -14,7 +14,7 @@ export class SyncService {
   ) {}
 
   async createSyncJob(dto: CreateSyncJobDto) {
-    const scopeValue: Record<string, unknown> = {};
+    const scopeValue: Record<string, Prisma.InputJsonValue> = {};
     if (dto.orderIds) scopeValue.orderIds = dto.orderIds;
     if (dto.branchCode) scopeValue.branchCode = dto.branchCode;
     if (dto.startDate) scopeValue.startDate = dto.startDate;
@@ -24,7 +24,7 @@ export class SyncService {
       data: {
         jobType: dto.jobType,
         scopeType: dto.scopeType,
-        scopeValue,
+        scopeValue: scopeValue,
         createdBy: dto.createdBy || 'API',
       },
     });
@@ -51,7 +51,10 @@ export class SyncService {
       successCount += 1;
     }
 
-    const finalStatus = successCount === 0 && skippedCount > 0 ? JobStatus.PARTIAL : JobStatus.PENDING;
+    const finalStatus =
+      successCount === 0 && skippedCount > 0
+        ? JobStatus.PARTIAL
+        : JobStatus.PENDING;
 
     return this.prisma.syncJob.update({
       where: { id: job.id },
@@ -82,7 +85,10 @@ export class SyncService {
 
   async cancelSyncJob(id: string) {
     const job = await this.getSyncJob(id);
-    if (![JobStatus.PENDING, JobStatus.PROCESSING].includes(job.status)) {
+    if (
+      job.status !== JobStatus.PENDING &&
+      job.status !== JobStatus.PROCESSING
+    ) {
       throw new Error(`Cannot cancel job in status: ${job.status}`);
     }
 
@@ -98,16 +104,31 @@ export class SyncService {
     const dto: CreateSyncJobDto = {
       jobType: job.jobType,
       scopeType: job.scopeType,
-      orderIds: Array.isArray(parsedScope.orderIds) ? parsedScope.orderIds.map(String) : undefined,
-      branchCode: typeof parsedScope.branchCode === 'string' ? parsedScope.branchCode : undefined,
-      startDate: typeof parsedScope.startDate === 'string' ? parsedScope.startDate : undefined,
-      endDate: typeof parsedScope.endDate === 'string' ? parsedScope.endDate : undefined,
+      orderIds: Array.isArray(parsedScope.orderIds)
+        ? parsedScope.orderIds.map(String)
+        : undefined,
+      branchCode:
+        typeof parsedScope.branchCode === 'string'
+          ? parsedScope.branchCode
+          : undefined,
+      startDate:
+        typeof parsedScope.startDate === 'string'
+          ? parsedScope.startDate
+          : undefined,
+      endDate:
+        typeof parsedScope.endDate === 'string'
+          ? parsedScope.endDate
+          : undefined,
       createdBy: job.createdBy,
     };
 
     await this.prisma.syncJob.update({
       where: { id },
-      data: { status: JobStatus.PENDING, retryCount: { increment: 1 }, errorMessage: null },
+      data: {
+        status: JobStatus.PENDING,
+        retryCount: { increment: 1 },
+        errorMessage: null,
+      },
     });
 
     return this.createSyncJob(dto);
@@ -120,7 +141,9 @@ export class SyncService {
   async getOrderStatus(odooOrderId: string) {
     return this.prisma.orderSyncQueue.findMany({
       where: { odooOrderId },
-      include: { failedTransactions: { take: 5, orderBy: { createdAt: 'desc' } } },
+      include: {
+        failedTransactions: { take: 5, orderBy: { createdAt: 'desc' } },
+      },
     });
   }
 
@@ -139,9 +162,17 @@ export class SyncService {
       });
     }
 
-    if (dto.scopeType === ScopeType.DATE_RANGE && dto.startDate && dto.endDate) {
+    if (
+      dto.scopeType === ScopeType.DATE_RANGE &&
+      dto.startDate &&
+      dto.endDate
+    ) {
       const timezone = 'UTC';
-      const range = this.timezoneService.getDateRangeUtc(dto.startDate, dto.endDate, timezone);
+      const range = this.timezoneService.getDateRangeUtc(
+        dto.startDate,
+        dto.endDate,
+        timezone,
+      );
       return this.prisma.orderSyncQueue.findMany({
         where: { orderDateUtc: { gte: range.start, lte: range.end } },
         orderBy: { orderDateUtc: 'asc' },
@@ -155,6 +186,8 @@ export class SyncService {
       });
     }
 
-    return this.prisma.orderSyncQueue.findMany({ orderBy: { createdAt: 'asc' } });
+    return this.prisma.orderSyncQueue.findMany({
+      orderBy: { createdAt: 'asc' },
+    });
   }
 }
