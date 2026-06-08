@@ -10,7 +10,20 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.useLogger(app.get(Logger));
-  app.use(helmet({ contentSecurityPolicy: false }));
+  // Enable helmet with a relaxed CSP that still allows the Swagger UI to function
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+        },
+      },
+    }),
+  );
   app.use(compression());
   app.enableCors({ origin: process.env.CORS_ORIGIN || '*', credentials: true });
   app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
