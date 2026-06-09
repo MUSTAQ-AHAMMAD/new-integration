@@ -563,7 +563,7 @@ export class OracleSoapClient {
         const result = extractTag(xml, 'result') || extractTag(xml, 'return');
         const jeHeaderId = result ? parseInt(result, 10) : null;
         this.logger.log(`Journal imported: jeHeaderId=${String(jeHeaderId)}`);
-        return isNaN(jeHeaderId ?? NaN) ? null : jeHeaderId;
+        return jeHeaderId !== null && !isNaN(jeHeaderId) ? jeHeaderId : null;
       }),
     );
   }
@@ -625,8 +625,8 @@ export class OracleSoapClient {
         this.logger.error('Oracle SOAP request failed after retries');
         throw error;
       }
-      // Exponential back-off: 5 s, 10 s  (matching Java pain-point #8 retry pattern)
-      await this.delay(5_000 * attempt);
+      // Exponential back-off: 5 s, 10 s, 20 s (matching Java pain-point #8 retry pattern)
+      await this.delay(5_000 * 2 ** (attempt - 1));
       return this.withRetries(operation, attempt + 1);
     }
   }

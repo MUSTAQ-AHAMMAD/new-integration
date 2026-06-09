@@ -349,14 +349,7 @@ export class VendHqClient {
 
   // ── Helpers ───────────────────────────────────────────────
 
-  private extractList<T>(payload: unknown): T[] {
-    if (Array.isArray(payload)) return payload as T[];
-    if (this.isRecord(payload)) {
-      const data = payload.data;
-      if (Array.isArray(data)) return data as T[];
-    }
-    return [];
-  }
+  private static readonly BASE_RETRY_DELAY_MS = 300;
 
   private isRecord(v: unknown): v is Record<string, unknown> {
     return typeof v === 'object' && v !== null;
@@ -373,7 +366,7 @@ export class VendHqClient {
         this.logger.error('VendHQ request failed after retries');
         throw error;
       }
-      await this.delay(300 * 2 ** (attempt - 1));
+      await this.delay(VendHqClient.BASE_RETRY_DELAY_MS * 2 ** (attempt - 1));
       return this.withRetries(operation, attempt + 1);
     }
   }
