@@ -33,6 +33,10 @@ interface SyncJobRecord extends SyncJob {
   skippedCount?: number;
 }
 
+interface FailedTransactionRecord extends FailedTransaction {
+  errorDetails?: unknown;
+}
+
 const PAGE_SIZE = 50;
 const TIMEZONES = ['UTC', 'Asia/Dubai', 'America/New_York', 'Europe/London'] as const;
 const STATUS_OPTIONS = ['ALL', 'PENDING', 'PROCESSING', 'SYNCED', 'FAILED', 'SKIPPED'] as const;
@@ -110,7 +114,7 @@ export default function OrdersPage() {
 
   const { data: failedTransactions } = useQuery({
     queryKey: ['order-sync-failures'],
-    queryFn: () => api.listFailedTransactions(200),
+    queryFn: () => api.listFailedTransactions(200) as Promise<FailedTransactionRecord[]>,
     refetchInterval: 15000,
   });
 
@@ -146,7 +150,7 @@ export default function OrdersPage() {
   });
 
   const rows = useMemo<OrderRow[]>(() => {
-    const failedByOrderNumber = new Map<string, FailedTransaction[]>();
+    const failedByOrderNumber = new Map<string, FailedTransactionRecord[]>();
 
     (failedTransactions ?? []).forEach((transaction) => {
       const orderNumber = transaction.orderSyncQueue?.odooOrderNumber;

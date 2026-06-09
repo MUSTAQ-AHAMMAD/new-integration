@@ -40,8 +40,10 @@ export default function NotificationsPage() {
   });
 
   const toggleActiveMutation = useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
-      api.updateNotificationRecipient(id, { isActive }),
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) => {
+      const payload: Partial<CreateNotificationRecipientDto> & { isActive: boolean } = { isActive };
+      return api.updateNotificationRecipient(id, payload);
+    },
     onSuccess: () => {
       toast.success('Recipient updated');
       void qc.invalidateQueries({ queryKey: ['notification-recipients'] });
