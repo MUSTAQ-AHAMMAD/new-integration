@@ -1,0 +1,76 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { AdminService } from './admin.service';
+
+@ApiTags('admin')
+@Controller('admin')
+export class AdminController {
+  constructor(private readonly adminService: AdminService) {}
+
+  @Get('tables')
+  @ApiOperation({ summary: 'List all managed admin tables' })
+  listTables() {
+    return AdminService.tables();
+  }
+
+  @Get(':table')
+  @ApiOperation({ summary: 'List records for a table' })
+  @ApiQuery({ name: 'skip', required: false })
+  @ApiQuery({ name: 'take', required: false })
+  @ApiQuery({ name: 'region', required: false })
+  list(
+    @Param('table') table: string,
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('region') region?: string,
+  ) {
+    return this.adminService.list(table, {
+      skip: skip ? Number(skip) : undefined,
+      take: take ? Number(take) : undefined,
+      region,
+    });
+  }
+
+  @Get(':table/:id')
+  @ApiOperation({ summary: 'Get single record by id' })
+  getOne(@Param('table') table: string, @Param('id') id: string) {
+    return this.adminService.getOne(table, id);
+  }
+
+  @Post(':table')
+  @ApiOperation({ summary: 'Create a record' })
+  create(
+    @Param('table') table: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.adminService.create(table, body);
+  }
+
+  @Put(':table/:id')
+  @ApiOperation({ summary: 'Update a record' })
+  update(
+    @Param('table') table: string,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.adminService.update(table, id, body);
+  }
+
+  @Delete(':table/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a record' })
+  remove(@Param('table') table: string, @Param('id') id: string) {
+    return this.adminService.remove(table, id);
+  }
+}

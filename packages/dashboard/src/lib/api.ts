@@ -74,6 +74,25 @@ export const api = {
     apiRequest<NotificationRecipient>(`/notifications/recipients/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNotificationRecipient: (id: string) =>
     apiRequest<void>(`/notifications/recipients/${id}`, { method: 'DELETE' }),
+
+  // ── Generic Admin CRUD ──────────────────────────────────────────
+  adminListTables: () => apiRequest<AdminTableMeta[]>('/admin/tables'),
+  adminList: <T = Record<string, unknown>>(table: string, opts?: { skip?: number; take?: number; region?: string }) => {
+    const qs = new URLSearchParams();
+    if (opts?.skip !== undefined) qs.set('skip', String(opts.skip));
+    if (opts?.take !== undefined) qs.set('take', String(opts.take));
+    if (opts?.region) qs.set('region', opts.region);
+    const q = qs.toString();
+    return apiRequest<AdminListResult<T>>(`/admin/${table}${q ? `?${q}` : ''}`);
+  },
+  adminGetOne: <T = Record<string, unknown>>(table: string, id: string) =>
+    apiRequest<T>(`/admin/${table}/${id}`),
+  adminCreate: <T = Record<string, unknown>>(table: string, body: Record<string, unknown>) =>
+    apiRequest<T>(`/admin/${table}`, { method: 'POST', body: JSON.stringify(body) }),
+  adminUpdate: <T = Record<string, unknown>>(table: string, id: string, body: Record<string, unknown>) =>
+    apiRequest<T>(`/admin/${table}/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  adminDelete: (table: string, id: string) =>
+    apiRequest<void>(`/admin/${table}/${id}`, { method: 'DELETE' }),
 };
 
 export interface DashboardOverview {
@@ -256,3 +275,200 @@ export interface CreateNotificationRecipientDto {
   receiveDailyReports?: boolean;
   receiveInventoryAlerts?: boolean;
 }
+
+// ─── Generic Admin interfaces ──────────────────────────────────────
+export interface AdminTableMeta {
+  slug: string;
+  model: string;
+}
+
+export interface AdminListResult<T = Record<string, unknown>> {
+  data: T[];
+  total: number;
+  skip: number;
+  take: number;
+}
+
+// ─── Oracle Integration Table types ────────────────────────────────
+export interface FusionCredential {
+  id: string;
+  hostName: string;
+  server: string;
+  username: string;
+  password: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendHqCredential {
+  id: string;
+  domainName: string;
+  personalToken: string;
+  active: boolean;
+  region: string;
+  fusionOrgCode: string | null;
+  timezoneOffset: number;
+  fusionTaxCode: string | null;
+  businessStartDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutletIntegrationConfig {
+  id: string;
+  outletName: string;
+  integMode: string;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FusionBusinessUnitMap {
+  id: string;
+  businessUnitId: number;
+  businessUnitName: string;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FusionReceiptMethod {
+  id: string;
+  receiptMethodId: number;
+  receiptMethodName: string;
+  receiptIsCash: boolean;
+  receiptBankCharge: number;
+  receiptMethodTax: number;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FusionSalesMetadata {
+  id: string;
+  billToName: string;
+  billToAccount: number;
+  siteNumber: string | null;
+  businessUnit: string;
+  txnSource: string;
+  txnType: string;
+  rateIsCorporate: boolean;
+  recActivityNameBank: string | null;
+  subinventory: string | null;
+  integrationSource: string;
+  distributionAccId: number | null;
+  recActivityNameCash: string | null;
+  region: string;
+  customerType: string;
+  costCenterCode: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServiceProviderJournalMeta {
+  id: string;
+  region: string;
+  ledgerId: number;
+  taxGroupId: number | null;
+  chartOfAccountsId: number;
+  serviceProvider: string;
+  creditDebit: string | null;
+  costIssue: string | null;
+  costRma: string | null;
+  company: string | null;
+  account: string | null;
+  department: string | null;
+  productCategory: string | null;
+  interCompany: string | null;
+  jeCategory: string | null;
+  jeSource: string | null;
+  isCash: boolean;
+  summaryFlag: boolean;
+  fixedFreightCharge: number;
+  bankChargeRate: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SalesIntegrationStatus {
+  id: string;
+  region: string;
+  integMode: string;
+  status: string;
+  updatedAt: string;
+}
+
+export interface VendHqDiscountItem {
+  id: string;
+  discountItemId: string;
+  region: string;
+  createdAt: string;
+}
+
+export interface VendHqTaxMeta {
+  id: string;
+  taxId: string;
+  taxName: string;
+  version: number;
+  fusionName: string | null;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendHqOutlet {
+  id: string;
+  outletId: string;
+  outletName: string;
+  currency: string;
+  version: number;
+  deletedAt: string | null;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendHqRegister {
+  id: string;
+  registerId: string;
+  outletId: string;
+  registerName: string;
+  cashAccount: string | null;
+  cashAccountId: number | null;
+  bankAccount: string | null;
+  bankAccountId: number | null;
+  giftAccount: string | null;
+  giftAccountId: number | null;
+  version: number;
+  deletedAt: string | null;
+  region: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendHqServiceProvider {
+  id: string;
+  region: string;
+  serviceProvider: string;
+  vendHqCustomerId: string | null;
+  isCash: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendHqItemMeta {
+  id: string;
+  itemId: string;
+  name: string;
+  sku: string | null;
+  active: boolean;
+  region: string;
+  retailPrice: number | null;
+  taxId: string | null;
+  uomCode: string | null;
+  itemType: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+

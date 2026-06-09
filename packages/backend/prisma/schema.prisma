@@ -400,3 +400,571 @@ model WebhookEvent {
   @@index([processingStatus])
   @@index([receivedAt])
 }
+
+// ─────────────────────────────────────────────────────────────────
+// ORACLE INTEGRATION TABLES (ported from ODOO_INTEGRATION schema)
+// ─────────────────────────────────────────────────────────────────
+
+model FusionCredential {
+  id         String   @id @default(cuid())
+  hostName   String
+  server     String
+  username   String
+  password   String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active])
+}
+
+model VendHqCredential {
+  id                String   @id @default(cuid())
+  domainName        String
+  personalToken     String
+  active            Boolean  @default(true)
+  region            String
+  fusionOrgCode     String?
+  timezoneOffset    Float    @default(0)
+  fusionTaxCode     String?
+  businessStartDate DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([region])
+  @@index([active])
+}
+
+model OutletIntegrationConfig {
+  id         String   @id @default(cuid())
+  outletName String
+  integMode  String
+  region     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([region])
+  @@index([integMode])
+}
+
+model FusionBusinessUnitMap {
+  id               String   @id @default(cuid())
+  businessUnitId   Int
+  businessUnitName String
+  region           String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([businessUnitId, region])
+  @@index([region])
+}
+
+model FusionReceiptMethod {
+  id                  String   @id @default(cuid())
+  receiptMethodId     Int
+  receiptMethodName   String
+  receiptIsCash       Boolean  @default(false)
+  receiptBankCharge   Float    @default(0)
+  receiptMethodTax    Float    @default(0)
+  region              String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([region])
+  @@index([receiptMethodName])
+}
+
+model FusionSalesMetadata {
+  id                   String   @id @default(cuid())
+  billToName           String
+  billToAccount        Int
+  siteNumber           String?
+  businessUnit         String
+  txnSource            String
+  txnType              String
+  rateIsCorporate      Boolean  @default(false)
+  recActivityNameBank  String?
+  subinventory         String?
+  integrationSource    String
+  distributionAccId    Int?
+  recActivityNameCash  String?
+  region               String
+  customerType         String
+  costCenterCode       String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([region])
+  @@index([customerType])
+}
+
+model ServiceProviderJournalMeta {
+  id                String   @id @default(cuid())
+  region            String
+  ledgerId          Int
+  taxGroupId        Int?
+  chartOfAccountsId Int
+  serviceProvider   String
+  creditDebit       String?
+  costIssue         String?
+  costRma           String?
+  company           String?
+  account           String?
+  department        String?
+  productCategory   String?
+  interCompany      String?
+  futUsed           String?
+  extraSegment1     String?
+  extraSegment2     String?
+  extraSegment3     String?
+  jeCategory        String?
+  jeSource          String?
+  isCash            Boolean  @default(false)
+  summaryFlag       Boolean  @default(false)
+  fixedFreightCharge Float   @default(0)
+  bankChargeRate     Float   @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([region])
+  @@index([serviceProvider])
+}
+
+model SalesIntegrationStatus {
+  id         String   @id @default(cuid())
+  region     String
+  integMode  String
+  status     String
+  updatedAt  DateTime @updatedAt
+
+  @@unique([region, integMode])
+  @@index([region])
+  @@index([status])
+}
+
+model VendHqDiscountItem {
+  id               String   @id @default(cuid())
+  discountItemId   String
+  region           String
+  createdAt        DateTime @default(now())
+
+  @@unique([discountItemId, region])
+  @@index([region])
+}
+
+model VendHqTaxMeta {
+  id          String   @id @default(cuid())
+  taxId       String
+  taxName     String
+  version     Int      @default(1)
+  fusionName  String?
+  region      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([taxId, region])
+  @@index([region])
+}
+
+model VendHqOutlet {
+  id          String    @id @default(cuid())
+  outletId    String
+  outletName  String
+  currency    String    @default("AED")
+  version     Int       @default(1)
+  deletedAt   DateTime?
+  region      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  registers VendHqRegister[]
+
+  @@unique([outletId, region])
+  @@index([region])
+}
+
+model VendHqRegister {
+  id            String    @id @default(cuid())
+  registerId    String
+  outletId      String
+  registerName  String
+  cashAccount   String?
+  cashAccountId Int?
+  bankAccount   String?
+  bankAccountId Int?
+  giftAccount   String?
+  giftAccountId Int?
+  version       Int       @default(1)
+  deletedAt     DateTime?
+  region        String
+  outletPk      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  outlet VendHqOutlet? @relation(fields: [outletPk], references: [id])
+
+  @@unique([registerId, region])
+  @@index([outletId])
+  @@index([region])
+}
+
+model VendHqServiceProvider {
+  id              String   @id @default(cuid())
+  region          String
+  serviceProvider String
+  vendHqCustomerId String?
+  isCash          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([region])
+  @@index([serviceProvider])
+}
+
+model VendHqItemMeta {
+  id              String    @id @default(cuid())
+  requestId       Int?
+  status          String?
+  message         String?
+  itemId          String
+  sourceId        Int?
+  uomCode         String?
+  handle          String?
+  itemType        String?
+  uomName         String?
+  active          Boolean   @default(true)
+  name            String
+  description     String?
+  sku             String?
+  brandId         String?
+  trackInventory  Boolean   @default(false)
+  retailPrice     Float?
+  taxId           String?
+  requestDate     DateTime?
+  lastUpdateDate  DateTime?
+  region          String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([itemId])
+  @@index([sku])
+  @@index([region])
+  @@index([active])
+}
+
+// ─── Fusion Transaction Log Tables ────────────────────────────────
+
+model FusionInvoiceHeader {
+  id               String    @id @default(cuid())
+  requestId        Int?
+  status           String    @default("PENDING")
+  message          String?
+  requestDate      DateTime?
+  billToCustName   String?
+  billToLocation   String?
+  billToAccNumber  Int?
+  businessUnit     String?
+  paymentTermsName String?
+  txnSource        String?
+  txnType          String?
+  txnDate          DateTime?
+  glDate           DateTime?
+  currencyCode     String    @default("AED")
+  txnNumber        Int?
+  customerTxnId    Int?
+  region           String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  invoiceLines FusionInvoiceLine[]
+
+  @@index([status])
+  @@index([region])
+  @@index([requestId])
+}
+
+model FusionInvoiceLine {
+  id              String    @id @default(cuid())
+  requestId       Int?
+  status          String    @default("PENDING")
+  message         String?
+  requestDate     DateTime?
+  invoiceNumber   String?
+  lineNumber      Int?
+  itemNumber      String?
+  description     String?
+  uom             String?
+  quantity        Float?
+  currencyCode    String    @default("AED")
+  taxCode         String?
+  version         Int       @default(1)
+  salesOrder      String?
+  salesOrderLine  Int?
+  region          String
+  headerId        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  header FusionInvoiceHeader? @relation(fields: [headerId], references: [id])
+
+  @@index([status])
+  @@index([region])
+  @@index([invoiceNumber])
+}
+
+model FusionStandardReceipt {
+  id                    String    @id @default(cuid())
+  requestId             Int?
+  status                String    @default("PENDING")
+  message               String?
+  requestDate           DateTime?
+  currencyCode          String    @default("AED")
+  receiptDate           DateTime?
+  glDate                DateTime?
+  exchangeDate          DateTime?
+  exchangeRateType      String?
+  receiptMethodId       Int?
+  receiptNumber         String?
+  remittanceBankAccId   String?
+  depositDate           DateTime?
+  customerId            Int?
+  orgId                 Int?
+  region                String
+  integMode             String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([status])
+  @@index([region])
+  @@index([receiptNumber])
+}
+
+model FusionMiscReceipt {
+  id                  String    @id @default(cuid())
+  requestId           Int?
+  status              String    @default("PENDING")
+  message             String?
+  requestDate         DateTime?
+  currencyCode        String    @default("AED")
+  glDate              DateTime?
+  exchangeDate        DateTime?
+  exchangeRateType    String?
+  receiptMethodName   String?
+  receiptNumber       String?
+  bankAccNumber       String?
+  recActivityName     String?
+  receiptDate         DateTime?
+  region              String
+  integMode           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([region])
+  @@index([receiptNumber])
+}
+
+model FusionApplyReceipt {
+  id              String    @id @default(cuid())
+  requestId       Int?
+  status          String    @default("PENDING")
+  message         String?
+  requestDate     DateTime?
+  accountingDate  DateTime?
+  applicationDate DateTime?
+  txnNumber       String?
+  receiptNumber   String?
+  currencyCode    String    @default("AED")
+  region          String
+  integMode       String?
+  txnSource       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([region])
+  @@index([receiptNumber])
+}
+
+model FusionJournalHeader {
+  id                         String    @id @default(cuid())
+  requestId                  Int?
+  status                     String    @default("PENDING")
+  message                    String?
+  requestDate                DateTime?
+  region                     String
+  jeHeaderId                 Int?
+  ledgerId                   Int?
+  batchName                  String?
+  batchDescription           String?
+  accountingPeriodName       String?
+  userSourceName             String?
+  userCategoryName           String?
+  errorToSuspenseFlag        Boolean   @default(false)
+  summaryFlag                Boolean   @default(false)
+  accountingDate             DateTime?
+  importDescriptiveFlexField String?
+  txnNumber                  Int?
+  integMode                  String?
+  customerType               String?
+  cashCredit                 String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  journalLines FusionJournalLine[]
+
+  @@index([status])
+  @@index([region])
+  @@index([ledgerId])
+}
+
+model FusionJournalLine {
+  id                       String    @id @default(cuid())
+  requestId                Int?
+  status                   String    @default("PENDING")
+  message                  String?
+  requestDate              DateTime?
+  region                   String
+  jeHeaderId               Int?
+  jeLineNum                Int?
+  ledgerId                 Int?
+  groupId                  Int?
+  chartOfAccountsId        Int?
+  enteredCrAmount          Float?
+  accountedCr              Float?
+  enteredDrAmount          Float?
+  accountedDr              Float?
+  currencyConversionRate   Float?
+  periodName               String?
+  accountingPeriodName     String?
+  userJeSourceName         String?
+  userJeCategoryName       String?
+  segment1                 String?
+  segment2                 String?
+  segment3                 String?
+  segment4                 String?
+  segment5                 String?
+  segment6                 String?
+  segment7                 String?
+  segment8                 String?
+  segment9                 String?
+  segment10                String?
+  currencyCode             String    @default("AED")
+  taxCode                  String?
+  recordType               String?
+  accountingDate           DateTime?
+  transactionDate          DateTime?
+  salesOrder               String?
+  txnNumber                Int?
+  customerType             String?
+  cashCredit               String?
+  headerId                 String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  header FusionJournalHeader? @relation(fields: [headerId], references: [id])
+
+  @@index([status])
+  @@index([region])
+  @@index([jeHeaderId])
+}
+
+model FusionInvTxn {
+  id               String    @id @default(cuid())
+  requestId        Int?
+  status           String    @default("PENDING")
+  message          String?
+  requestDate      DateTime?
+  organizationName String?
+  itemNumber       String?
+  txnSourceName    String?
+  subInventory     String?
+  txnUom           String?
+  txnDate          DateTime?
+  txnQty           Float?
+  region           String
+  integMode        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([region])
+  @@index([itemNumber])
+}
+
+// ─── Backup / Archive Tables (read-only view) ─────────────────────
+
+model BackupVendHqSale {
+  id                String   @id @default(cuid())
+  invoiceNumber     String
+  outletName        String?
+  registerName      String?
+  saleDate          DateTime
+  totalPrice        Float?
+  totalTax          Float?
+  totalLoyalty      Float?
+  totalPriceInclTax Float?
+  version           Int?
+  region            String
+  customerType      String?
+  createdAt         DateTime @default(now())
+
+  @@index([region])
+  @@index([invoiceNumber])
+  @@index([saleDate])
+}
+
+model BackupVendHqLineItem {
+  id            String   @id @default(cuid())
+  invoiceNumber String
+  lineNumber    Int?
+  itemNumber    String?
+  itemName      String?
+  quantity      Float?
+  loyaltyValue  Float?
+  totalPrice    Float?
+  totalTax      Float?
+  totalDiscount Float?
+  totalLoyalty  Float?
+  region        String
+  saleDate      DateTime
+  taxName       String?
+  createdAt     DateTime @default(now())
+
+  @@index([region])
+  @@index([invoiceNumber])
+  @@index([saleDate])
+}
+
+model BackupVendHqPayment {
+  id            String    @id @default(cuid())
+  invoiceNumber String
+  outletName    String?
+  registerName  String?
+  amount        Float?
+  currency      String    @default("AED")
+  paymentType   String?
+  paymentDate   DateTime?
+  deletedAt     DateTime?
+  region        String
+  saleDate      DateTime
+  createdAt     DateTime  @default(now())
+
+  @@index([region])
+  @@index([invoiceNumber])
+  @@index([saleDate])
+}
+
+model BackupVendHqPromotion {
+  id            String   @id @default(cuid())
+  invoiceNumber String
+  lineNumber    Int?
+  name          String?
+  amount        Float?
+  region        String
+  saleDate      DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([region])
+  @@index([invoiceNumber])
+}
