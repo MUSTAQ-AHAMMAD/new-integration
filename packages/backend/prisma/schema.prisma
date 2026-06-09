@@ -215,7 +215,18 @@ model StoreConfiguration {
   transactionSource     String           @default("Manual")
   transactionType       String           @default("PASA CONSULTING SALE")
   invoiceCurrencyCode   String           @default("AED")
-  isActive              Boolean          @default(true)
+
+  // Service provider → GL account mapping (JSON)
+  serviceProviderJournalMapping Json?
+
+  // Per-item quantity decimal precision rules
+  txnQuantityDecimals   Json?
+
+  // Control flags
+  isActive                        Boolean  @default(true)
+  allowNegativeInventory          Boolean  @default(true)
+  autoCreateMissingPaymentMethods Boolean  @default(false)
+
   lastValidatedAt       DateTime?
   validationStatus      ValidationStatus @default(PENDING)
   validationErrors      Json?
@@ -347,18 +358,35 @@ enum HealthStatus {
 }
 
 model NotificationRecipient {
-  id                     String   @id @default(cuid())
-  email                  String   @unique
+  id                     String           @id @default(cuid())
+  email                  String           @unique
   name                   String
-  role                   String
+  role                   NotificationRole
+
+  // Alert preferences
   receiveErrorAlerts     Boolean  @default(true)
   receiveDailyReports    Boolean  @default(false)
   receiveInventoryAlerts Boolean  @default(false)
+  receivePaymentAlerts   Boolean  @default(false)
+  receiveConfigAlerts    Boolean  @default(true)
+
+  // Escalation
+  escalationLevel        Int      @default(1)
+  backupRecipientId      String?
+
   isActive               Boolean  @default(true)
   createdAt              DateTime @default(now())
 
   @@index([role])
   @@index([isActive])
+}
+
+enum NotificationRole {
+  ADMIN
+  FINANCE
+  INVENTORY_MANAGER
+  IT_SUPPORT
+  STORE_MANAGER
 }
 
 model AlertLog {
@@ -978,3 +1006,300 @@ model BackupVendHqPromotion {
   @@index([region])
   @@index([invoiceNumber])
 }
+
+// ─────────────────────────────────────────────────────────────────
+// COMPOSITE PRIMARY KEY: per-sale sync status tracker
+// ─────────────────────────────────────────────────────────────────
+
+enum SaleStatus {
+  PENDING
+  PROCESSING
+  SYNCED
+  FAILED
+  SKIPPED
+}
+
+model SaleSyncStatus {
+  saleId           String
+  outletId         String
+  saleDate         DateTime
+  status           SaleStatus
+  syncAttempts     Int        @default(0)
+  lastSyncAt       DateTime?
+  errorMessage     String?
+  oracleInvoiceId  String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@id([saleId, outletId, saleDate])
+  @@index([status])
+  @@index([saleDate])
+  @@index([outletId])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PER-ENTITY AUDIT TABLES (Oracle call payloads)
+// ─────────────────────────────────────────────────────────────────
+
+enum ReceiptType {
+  STANDARD
+  MISC
+  APPLY
+}
+
+model FusionInvoiceAudit {
+  id               String      @id @default(cuid())
+  vendhqSaleId     String
+  vendhqSaleNumber String
+  oracleInvoiceId  String
+  invoiceNumber    String
+  invoiceAmount    Decimal     @db.Decimal(15, 2)
+  invoiceDate      DateTime
+  requestPayload   String      @db.Text
+  responsePayload  String?     @db.Text
+  status           AuditStatus
+  errorMessage     String?
+  processingTimeMs Int
+  createdAt        DateTime    @default(now())
+
+  @@index([vendhqSaleId])
+  @@index([oracleInvoiceId])
+  @@index([invoiceDate])
+  @@index([status])
+}
+
+model FusionReceiptAudit {
+  id               String      @id @default(cuid())
+  vendhqSaleId     String
+  vendhqPaymentId  String
+  receiptType      ReceiptType
+  oracleReceiptId  String
+  receiptNumber    String
+  receiptAmount    Decimal     @db.Decimal(15, 2)
+  paymentMethod    String
+  requestPayload   String      @db.Text
+  responsePayload  String?     @db.Text
+  status           AuditStatus
+  errorMessage     String?
+  processingTimeMs Int
+  createdAt        DateTime    @default(now())
+
+  @@index([vendhqSaleId])
+  @@index([oracleReceiptId])
+  @@index([receiptType])
+}
+
+model FusionJournalAudit {
+  id               String      @id @default(cuid())
+  vendhqSaleId     String
+  journalHeaderId  String
+  journalName      String
+  journalAmount    Decimal     @db.Decimal(15, 2)
+  glDate           DateTime
+  requestPayload   String      @db.Text
+  responsePayload  String?     @db.Text
+  status           AuditStatus
+  errorMessage     String?
+  processingTimeMs Int
+  createdAt        DateTime    @default(now())
+
+  @@index([vendhqSaleId])
+  @@index([glDate])
+}
+
+model FusionInventoryAudit {
+  id               String      @id @default(cuid())
+  vendhqSaleId     String
+  productId        String
+  branchCode       String
+  quantityChange   Decimal     @db.Decimal(15, 3)
+  transactionType  String
+  oracleTxnId      String
+  requestPayload   String      @db.Text
+  responsePayload  String?     @db.Text
+  status           AuditStatus
+  errorMessage     String?
+  processingTimeMs Int
+  createdAt        DateTime    @default(now())
+
+  @@index([vendhqSaleId])
+  @@index([productId])
+  @@index([branchCode])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// VENDHQ FULL BACKUP TABLES
+// ─────────────────────────────────────────────────────────────────
+
+model BackupVendhqSales {
+  id             String    @id @default(cuid())
+  saleId         String    @unique
+  saleNumber     String
+  outletId       String
+  outletName     String
+  customerId     String?
+  customerName   String?
+  saleDate       DateTime
+  saleDateUtc    DateTime
+  totalAmount    Decimal   @db.Decimal(15, 2)
+  totalTax       Decimal   @db.Decimal(15, 2)
+  status         String
+  rawJson        Json
+  syncedToFusion Boolean   @default(false)
+  fusionSyncDate DateTime?
+  createdAt      DateTime  @default(now())
+
+  lineItems BackupVendhqLineItems[]
+  payments  BackupVendhqPayments[]
+
+  @@index([saleDate])
+  @@index([outletId])
+  @@index([syncedToFusion])
+  @@index([saleDateUtc])
+}
+
+model BackupVendhqLineItems {
+  id             String  @id @default(cuid())
+  saleId         String
+  lineId         String
+  productId      String
+  productName    String
+  quantity       Decimal @db.Decimal(15, 3)
+  unitPrice      Decimal @db.Decimal(15, 2)
+  totalPrice     Decimal @db.Decimal(15, 2)
+  taxAmount      Decimal @db.Decimal(15, 2)
+  discountAmount Decimal @db.Decimal(15, 2)
+
+  sale BackupVendhqSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([productId])
+}
+
+model BackupVendhqPayments {
+  id            String  @id @default(cuid())
+  saleId        String
+  paymentId     String
+  paymentMethod String
+  amount        Decimal @db.Decimal(15, 2)
+  reference     String?
+  status        String
+
+  sale BackupVendhqSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([paymentMethod])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// OPENING BALANCE (reconciliation)
+// ─────────────────────────────────────────────────────────────────
+
+model OpeningBalance {
+  id             String    @id @default(cuid())
+  branchCode     String
+  accountType    String
+  accountCode    String
+  balanceDate    DateTime
+  balanceAmount  Decimal   @db.Decimal(15, 2)
+  currency       String    @default("AED")
+  reference      String?
+  notes          String?
+  reconciledWith String?
+  isReconciled   Boolean   @default(false)
+  reconciledAt   DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([branchCode, accountType, accountCode, balanceDate])
+  @@index([branchCode])
+  @@index([balanceDate])
+  @@index([isReconciled])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// SERVICE PROVIDER JOURNAL MAPPING
+// ─────────────────────────────────────────────────────────────────
+
+model ServiceProviderJournalMapping {
+  id              String   @id @default(cuid())
+  branchCode      String
+  serviceProvider String
+  glAccountDebit  String
+  glAccountCredit String
+  description     String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([branchCode, serviceProvider])
+  @@index([branchCode])
+  @@index([serviceProvider])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// OPENCART INTEGRATION
+// ─────────────────────────────────────────────────────────────────
+
+model OpencartSite {
+  id           String    @id @default(cuid())
+  siteCode     String    @unique
+  siteName     String
+  baseUrl      String
+  apiKey       String    // Store encrypted at the application layer
+  branchCode   String
+  isActive     Boolean   @default(true)
+  lastSyncedAt DateTime?
+  syncSettings Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([branchCode])
+  @@index([isActive])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// BATCH PROCESSING JOBS (checkpoint / resume support)
+// ─────────────────────────────────────────────────────────────────
+
+model BatchJob {
+  id                  String    @id @default(cuid())
+  jobType             JobType
+  batchId             String
+  status              JobStatus
+  totalRecords        Int
+  processedRecords    Int       @default(0)
+  successCount        Int       @default(0)
+  failedCount         Int       @default(0)
+  lastCheckpoint      Int       @default(0)
+  checkpointData      Json?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  estimatedCompletion DateTime?
+  parameters          Json
+  errorSummary        Json?
+  createdBy           String
+  createdAt           DateTime  @default(now())
+
+  batchItems BatchJobItem[]
+
+  @@index([status])
+  @@index([batchId])
+  @@index([createdAt])
+}
+
+model BatchJobItem {
+  id           String    @id @default(cuid())
+  batchJobId   String
+  externalId   String
+  sequence     Int
+  status       JobStatus
+  errorMessage String?
+  processedAt  DateTime?
+
+  batchJob BatchJob @relation(fields: [batchJobId], references: [id], onDelete: Cascade)
+
+  @@index([batchJobId])
+  @@index([status])
+  @@index([externalId])
+}
+
