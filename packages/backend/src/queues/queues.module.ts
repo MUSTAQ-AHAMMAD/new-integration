@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bull';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AlertsModule } from '../alerts/alerts.module';
+import { ClientsModule } from '../clients/clients.module';
 import { GatewayModule } from '../gateway/gateway.module';
 import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module';
 import { StoreConfigModule } from '../store-config/store-config.module';
@@ -28,6 +29,7 @@ export const QUEUE_NAMES = {
     StoreConfigModule,
     PaymentMappingModule,
     NotificationsModule,
+    ClientsModule,
     forwardRef(() => SyncModule),
     BullModule.forRootAsync({
       imports: [ConfigModule],

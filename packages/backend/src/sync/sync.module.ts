@@ -1,9 +1,11 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AlertsModule } from '../alerts/alerts.module';
+import { ClientsModule } from '../clients/clients.module';
 import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module';
 import { QueuesModule } from '../queues/queues.module';
 import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncController } from './sync.controller';
+import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OrderSyncService } from './order-sync.service';
 import { SyncResolver } from './sync.resolver';
@@ -17,6 +19,7 @@ import { ValidationService } from './validation.service';
     StoreConfigModule,
     AlertsModule,
     PaymentMappingModule,
+    ClientsModule,
   ],
   controllers: [SyncController],
   providers: [
@@ -25,6 +28,7 @@ import { ValidationService } from './validation.service';
     IdempotencyService,
     TimezoneService,
     ValidationService,
+    FusionTransformationService,
     SyncResolver,
   ],
   exports: [
@@ -33,6 +37,7 @@ import { ValidationService } from './validation.service';
     IdempotencyService,
     TimezoneService,
     ValidationService,
+    FusionTransformationService,
   ],
 })
 export class SyncModule {}
