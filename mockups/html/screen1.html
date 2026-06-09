@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Integration Dashboard - Odoo-Oracle Middleware</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="shared.css" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;background:linear-gradient(135deg,#2563EB,#7C3AED);border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        </div>
+        <div>
+          <div class="sidebar-logo-title">IntegrationHub</div>
+          <div class="sidebar-logo-sub">Odoo ↔ Oracle Fusion</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="sidebar-section">Main</div>
+      <a class="nav-item active" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+      Dashboard
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+      Order Sync
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      Failed Transactions<span class="nav-badge">23</span>
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+      Payment Methods<span class="nav-badge">3</span>
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+      Store Config
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+      Refunds
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+      Inventory<span class="nav-badge">5</span>
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+      Audit Trail
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      System Health
+    </a><a class="nav-item" href="#">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Settings
+    </a>
+    </div>
+    <div class="sidebar-bottom">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px">
+        <div class="avatar" style="width:30px;height:30px;font-size:11px">MA</div>
+        <div>
+          <div style="font-size:12px;font-weight:600;color:#E2E8F0">Mustaq Ahmed</div>
+          <div style="font-size:10px;color:#64748B">System Admin</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="main">
+    <div class="header">
+    <div class="header-title">
+      <h1>Integration Dashboard</h1>
+      <p>Odoo → Oracle Fusion sync monitoring</p>
+    </div>
+    <div class="header-actions">
+      <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+      <div class="icon-btn" title="Dark mode">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+      </div>
+      <div class="icon-btn" title="Notifications">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+      </div>
+      <div class="avatar">MA</div>
+    </div>
+  </div>
+    <div class="content">
+      
+<div class="content-inner">
+  <!-- Page header row -->
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <h2 style="font-size:18px;font-weight:800;color:#0F172A">Overview</h2>
+      <p class="text-muted text-sm">Monitoring all branches • Last updated: just now</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="select-wrap">
+        <select class="select">
+          <option>Last 7 Days</option>
+          <option>Last 30 Days</option>
+          <option>Custom Range</option>
+        </select>
+      </div>
+      <div class="select-wrap">
+        <select class="select"><option>GST (UTC+4)</option><option>UTC</option></select>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid mb-4">
+    <div class="kpi-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div class="kpi-label">Today's Synced Orders</div>
+        <div style="width:34px;height:34px;background:#DBEAFE;border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563EB"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value">1,247</div>
+      <div class="kpi-change up">↑ 12% vs yesterday</div>
+      <div class="kpi-sub">Orders processed today</div>
+    </div>
+    <div class="kpi-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div class="kpi-label">Failed Orders</div>
+        <div style="width:34px;height:34px;background:#FEE2E2;border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EF4444"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value" style="color:#EF4444">23</div>
+      <div class="kpi-change down good">↓ 5% vs yesterday</div>
+      <div class="kpi-sub">Requires attention</div>
+    </div>
+    <div class="kpi-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div class="kpi-label">Pending Queue</div>
+        <div style="width:34px;height:34px;background:#FEF3C7;border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F59E0B"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value" style="color:#F59E0B">456</div>
+      <div class="kpi-change up bad">↑ 8 added last hour</div>
+      <div class="kpi-sub">Awaiting processing</div>
+    </div>
+    <div class="kpi-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div class="kpi-label">Avg Sync Time</div>
+        <div style="width:34px;height:34px;background:#EDE9FE;border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7C3AED"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+      </div>
+      <div class="kpi-value">2.4<span style="font-size:14px;font-weight:500;color:#64748B">s</span></div>
+      <div class="kpi-change up bad">↑ 0.3s vs last hour</div>
+      <div class="kpi-sub">Per order average</div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="grid-60-40 mb-4" style="height:240px">
+    <!-- Line Chart -->
+    <div class="card" style="height:240px">
+      <div style="padding:14px 16px 8px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="card-title">Sync Trends — Last 7 Days</div>
+          <div class="card-subtitle">Success vs Failure overlay</div>
+        </div>
+        <div class="flex gap-3">
+          <span class="flex items-center gap-2 text-xs text-muted"><span style="display:inline-block;width:12px;height:3px;background:#10B981;border-radius:2px"></span>Synced</span>
+          <span class="flex items-center gap-2 text-xs text-muted"><span style="display:inline-block;width:12px;height:3px;background:#EF4444;border-radius:2px"></span>Failed</span>
+        </div>
+      </div>
+      <div style="padding:0 16px 14px;height:170px">
+        <svg width="100%" height="100%" viewBox="0 0 600 160" preserveAspectRatio="none">
+          <!-- Grid lines -->
+          <line x1="0" y1="30" x2="600" y2="30" stroke="#F1F5F9" stroke-width="1"/>
+          <line x1="0" y1="60" x2="600" y2="60" stroke="#F1F5F9" stroke-width="1"/>
+          <line x1="0" y1="90" x2="600" y2="90" stroke="#F1F5F9" stroke-width="1"/>
+          <line x1="0" y1="120" x2="600" y2="120" stroke="#F1F5F9" stroke-width="1"/>
+          <!-- Success area fill -->
+          <defs>
+            <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#10B981" stop-opacity="0.15"/><stop offset="100%" stop-color="#10B981" stop-opacity="0.02"/></linearGradient>
+            <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#EF4444" stop-opacity="0.15"/><stop offset="100%" stop-color="#EF4444" stop-opacity="0.02"/></linearGradient>
+          </defs>
+          <path d="M0,110 L80,95 L160,80 L240,70 L320,55 L400,45 L480,50 L560,42 L600,40 L600,150 L0,150Z" fill="url(#sg)"/>
+          <path d="M0,135 L80,130 L160,128 L240,133 L320,125 L400,122 L480,118 L560,120 L600,122 L600,150 L0,150Z" fill="url(#fg)"/>
+          <!-- Success line -->
+          <polyline points="0,110 80,95 160,80 240,70 320,55 400,45 480,50 560,42 600,40" fill="none" stroke="#10B981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Failure line -->
+          <polyline points="0,135 80,130 160,128 240,133 320,125 400,122 480,118 560,120 600,122" fill="none" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Dots -->
+          <circle cx="560" cy="42" r="4" fill="#10B981"/><circle cx="560" cy="120" r="4" fill="#EF4444"/>
+          <!-- X axis labels -->
+          <text x="0" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Mon</text>
+          <text x="80" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Tue</text>
+          <text x="160" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Wed</text>
+          <text x="240" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Thu</text>
+          <text x="320" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Fri</text>
+          <text x="400" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Sat</text>
+          <text x="480" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Sun</text>
+          <text x="560" y="158" fill="#94A3B8" font-size="9" font-family="Inter">Today</text>
+          <!-- Y axis labels -->
+          <text x="0" y="32" fill="#94A3B8" font-size="9" font-family="Inter">1.5k</text>
+          <text x="0" y="62" fill="#94A3B8" font-size="9" font-family="Inter">1.0k</text>
+          <text x="0" y="92" fill="#94A3B8" font-size="9" font-family="Inter">500</text>
+        </svg>
+      </div>
+    </div>
+    <!-- Bar Chart -->
+    <div class="card" style="height:240px">
+      <div style="padding:14px 16px 8px">
+        <div class="card-title">Pending by Branch</div>
+        <div class="card-subtitle">Current queue depth</div>
+      </div>
+      <div style="padding:8px 16px 14px">
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:12px;font-weight:600;color:#0F172A">Branch A — Dubai Main</span>
+            <span style="font-size:12px;font-weight:700;color:#2563EB">234</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:72%;background:#2563EB"></div></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:12px;font-weight:600;color:#0F172A">Branch B — Sharjah</span>
+            <span style="font-size:12px;font-weight:700;color:#7C3AED">156</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:48%;background:#7C3AED"></div></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:12px;font-weight:600;color:#0F172A">Branch C — Abu Dhabi</span>
+            <span style="font-size:12px;font-weight:700;color:#10B981">66</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:20%;background:#10B981"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-size:12px;font-weight:600;color:#0F172A">Branch D — Ajman</span>
+            <span style="font-size:12px;font-weight:700;color:#F59E0B">0</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:0%;background:#F59E0B"></div></div>
+        </div>
+        <div style="margin-top:14px;padding-top:10px;border-top:1px solid #F1F5F9;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:11px;color:#64748B">Total pending</span>
+          <span style="font-size:16px;font-weight:800;color:#0F172A">456</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom: Alerts + Activity Feed -->
+  <div class="grid-60-40">
+    <!-- Recent Alerts -->
+    <div class="card">
+      <div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #F1F5F9">
+        <div class="card-title">Recent Alerts</div>
+        <a href="#" style="font-size:11px;color:#2563EB;font-weight:600;text-decoration:none">View all →</a>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Severity</th><th>Message</th><th>Time</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="badge badge-error">Payment</span></td><td><span class="badge badge-error">High</span></td><td>Unknown payment method 'STORE_CASH' at Branch A</td><td class="text-muted">2 min ago</td></tr>
+          <tr><td><span class="badge badge-warning">Config</span></td><td><span class="badge badge-warning">Medium</span></td><td>Branch B OU ID mismatch — config needs update</td><td class="text-muted">15 min ago</td></tr>
+          <tr><td><span class="badge badge-error">Timeout</span></td><td><span class="badge badge-error">High</span></td><td>Oracle SOAP endpoint timeout after 30s</td><td class="text-muted">34 min ago</td></tr>
+          <tr><td><span class="badge badge-blue">Inventory</span></td><td><span class="badge badge-warning">Low</span></td><td>SKU-9821 negative stock at Branch A</td><td class="text-muted">1 hr ago</td></tr>
+          <tr><td><span class="badge badge-gray">Info</span></td><td><span class="badge badge-gray">Info</span></td><td>Nightly sync completed — 3,421 orders processed</td><td class="text-muted">6 hr ago</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- Real-time Feed -->
+    <div class="card" style="display:flex;flex-direction:column">
+      <div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #F1F5F9">
+        <div class="card-title">Real-time Sync Activity</div>
+        <div class="live-badge" style="font-size:10px;padding:3px 8px"><span class="live-dot"></span>LIVE</div>
+      </div>
+      <div style="padding:12px 16px;flex:1;overflow:hidden">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:#F0FDF4;border-radius:6px;border-left:3px solid #10B981">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" style="margin-top:1px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            <div><span style="font-size:12px;font-weight:600;color:#0F172A">Syncing order #SO-12348</span><span style="font-size:11px;color:#059669;margin-left:6px">✓ Completed</span><div style="font-size:10px;color:#64748B;margin-top:1px">Branch A • 1.8s • Invoice #INV-89012</div></div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:#FFF7ED;border-radius:6px;border-left:3px solid #F59E0B">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" style="margin-top:1px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <div><span style="font-size:12px;font-weight:600;color:#0F172A">Processing #SO-12347</span><div style="font-size:10px;color:#64748B;margin-top:1px">Branch B • In progress... 2.1s elapsed</div></div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:#FEF2F2;border-radius:6px;border-left:3px solid #EF4444">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#EF4444" style="margin-top:1px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            <div><span style="font-size:12px;font-weight:600;color:#0F172A">Failed #SO-12346</span><span style="font-size:11px;color:#DC2626;margin-left:6px">✗ Error</span><div style="font-size:10px;color:#64748B;margin-top:1px">Payment mapping missing: CASH_STORE</div></div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:#F0FDF4;border-radius:6px;border-left:3px solid #10B981">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" style="margin-top:1px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            <div><span style="font-size:12px;font-weight:600;color:#0F172A">Syncing order #SO-12345</span><span style="font-size:11px;color:#059669;margin-left:6px">✓ Completed</span><div style="font-size:10px;color:#64748B;margin-top:1px">Branch C • 2.4s • Invoice #INV-89010</div></div>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;background:#F0FDF4;border-radius:6px;border-left:3px solid #10B981">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10B981" style="margin-top:1px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            <div><span style="font-size:12px;font-weight:600;color:#0F172A">Syncing order #SO-12344</span><span style="font-size:11px;color:#059669;margin-left:6px">✓ Completed</span><div style="font-size:10px;color:#64748B;margin-top:1px">Branch A • 1.9s • Invoice #INV-89009</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

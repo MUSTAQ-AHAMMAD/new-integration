@@ -1,0 +1,212 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Store Configuration Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="shared.css" rel="stylesheet">
+</head><body>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;background:linear-gradient(135deg,#2563EB,#7C3AED);border-radius:8px;display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        </div>
+        <div>
+          <div class="sidebar-logo-title">IntegrationHub</div>
+          <div class="sidebar-logo-sub">Odoo ↔ Oracle Fusion</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="sidebar-section">Main</div>
+      <a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>Dashboard</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>Order Sync</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>Failed Transactions<span class="nav-badge">23</span></a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>Payment Methods<span class="nav-badge">3</span></a><a class="nav-item active" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>Store Config</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>Refunds</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>Inventory<span class="nav-badge">5</span></a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>Audit Trail</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>System Health</a><a class="nav-item" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Settings</a>
+    </div>
+    <div class="sidebar-bottom">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px">
+        <div class="avatar" style="width:30px;height:30px;font-size:11px">MA</div>
+        <div><div style="font-size:12px;font-weight:600;color:#E2E8F0">Mustaq Ahmed</div><div style="font-size:10px;color:#64748B">System Admin</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="main">
+    <div class="header">
+    <div class="header-title"><h1>Store Configuration Manager</h1><p>Configure Oracle Fusion settings per branch</p></div>
+    <div class="header-actions">
+      <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+      <div class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg></div>
+      <div class="icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg></div>
+      <div class="avatar">MA</div>
+    </div>
+  </div>
+    <div class="content">
+<div class="content-inner">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div><h2 style="font-size:18px;font-weight:800">Store Configuration</h2><p class="text-muted text-sm">Manage Oracle Fusion configuration for each branch</p></div>
+    <div class="flex gap-2">
+      <button class="btn btn-ghost">Validate All</button>
+      <button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>Add New Store</button>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 400px;gap:16px">
+    <!-- Store cards grid -->
+    <div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <!-- Card 1: Valid -->
+        <div class="card" style="cursor:pointer;border:2px solid #2563EB;position:relative">
+          <div style="padding:12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563EB;background:#DBEAFE;padding:2px 6px;border-radius:4px">DXB-MAIN</span>
+            <span class="badge badge-success">Active</span>
+          </div>
+          <div style="padding:12px">
+            <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px">Dubai Main Store</div>
+            <div style="color:#059669;font-size:11px;margin-bottom:8px;font-weight:600">✅ Validated — Jan 15</div>
+            <div style="font-size:10px;color:#64748B;line-height:1.8">
+              <div>Bill-to Site: <strong>SITE_DXB_001</strong></div>
+              <div>OU: <strong>204</strong> • BU: <strong>AE-DXB</strong></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:10px">
+              <button class="btn btn-success" style="padding:4px 6px;font-size:10px;justify-content:center">✓ Validate</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⚡ Test</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">✎ Edit</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⎘ Clone</button>
+            </div>
+          </div>
+        </div>
+        <!-- Card 2: Warning -->
+        <div class="card" style="cursor:pointer;border:1px solid #FCD34D">
+          <div style="padding:12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:#D97706;background:#FEF3C7;padding:2px 6px;border-radius:4px">SHJ-MAIN</span>
+            <span class="badge badge-warning">⚠ Invalid</span>
+          </div>
+          <div style="padding:12px">
+            <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px">Sharjah Main Store</div>
+            <div style="color:#DC2626;font-size:11px;margin-bottom:8px;font-weight:600">❌ Validation Failed</div>
+            <div style="font-size:10px;color:#64748B;line-height:1.8">
+              <div>Bill-to Site: <span style="color:#EF4444;font-weight:600">MISSING</span></div>
+              <div>OU: <strong>205</strong> • BU: <span style="color:#EF4444;font-weight:600">INVALID</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:10px">
+              <button class="btn btn-warning" style="padding:4px 6px;font-size:10px;justify-content:center;background:#F59E0B;color:#fff">✓ Validate</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⚡ Test</button>
+              <button class="btn btn-primary" style="padding:4px 6px;font-size:10px;justify-content:center">✎ Edit</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⎘ Clone</button>
+            </div>
+          </div>
+        </div>
+        <!-- Card 3: Valid -->
+        <div class="card" style="cursor:pointer">
+          <div style="padding:12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:#7C3AED;background:#EDE9FE;padding:2px 6px;border-radius:4px">AUH-MAIN</span>
+            <span class="badge badge-success">Active</span>
+          </div>
+          <div style="padding:12px">
+            <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px">Abu Dhabi Store</div>
+            <div style="color:#059669;font-size:11px;margin-bottom:8px;font-weight:600">✅ Validated — Jan 14</div>
+            <div style="font-size:10px;color:#64748B;line-height:1.8">
+              <div>Bill-to Site: <strong>SITE_AUH_001</strong></div>
+              <div>OU: <strong>206</strong> • BU: <strong>AE-AUH</strong></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:10px">
+              <button class="btn btn-success" style="padding:4px 6px;font-size:10px;justify-content:center">✓ Validate</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⚡ Test</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">✎ Edit</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⎘ Clone</button>
+            </div>
+          </div>
+        </div>
+        <!-- Card 4 -->
+        <div class="card" style="cursor:pointer">
+          <div style="padding:12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563EB;background:#DBEAFE;padding:2px 6px;border-radius:4px">AJM-MAIN</span>
+            <span class="badge badge-gray">Inactive</span>
+          </div>
+          <div style="padding:12px">
+            <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px">Ajman Store</div>
+            <div style="color:#94A3B8;font-size:11px;margin-bottom:8px">— Not validated yet</div>
+            <div style="font-size:10px;color:#64748B;line-height:1.8">
+              <div>Bill-to Site: <strong>SITE_AJM_001</strong></div>
+              <div>OU: <strong>207</strong> • BU: <strong>AE-AJM</strong></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:10px">
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">✓ Validate</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⚡ Test</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">✎ Edit</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⎘ Clone</button>
+            </div>
+          </div>
+        </div>
+        <!-- Card 5 -->
+        <div class="card" style="cursor:pointer">
+          <div style="padding:12px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:monospace;font-size:12px;font-weight:700;color:#2563EB;background:#DBEAFE;padding:2px 6px;border-radius:4px">FUJ-MAIN</span>
+            <span class="badge badge-success">Active</span>
+          </div>
+          <div style="padding:12px">
+            <div style="font-size:13px;font-weight:700;color:#0F172A;margin-bottom:4px">Fujairah Store</div>
+            <div style="color:#059669;font-size:11px;margin-bottom:8px;font-weight:600">✅ Validated — Jan 12</div>
+            <div style="font-size:10px;color:#64748B;line-height:1.8">
+              <div>Bill-to Site: <strong>SITE_FUJ_001</strong></div>
+              <div>OU: <strong>208</strong> • BU: <strong>AE-FUJ</strong></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:10px">
+              <button class="btn btn-success" style="padding:4px 6px;font-size:10px;justify-content:center">✓ Validate</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⚡ Test</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">✎ Edit</button>
+              <button class="btn btn-ghost" style="padding:4px 6px;font-size:10px;justify-content:center">⎘ Clone</button>
+            </div>
+          </div>
+        </div>
+        <!-- Card 6 placeholder -->
+        <div class="card" style="cursor:pointer;border:2px dashed #E2E8F0;display:flex;align-items:center;justify-content:center;min-height:180px">
+          <div style="text-align:center;color:#94A3B8">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="margin:0 auto 6px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v16m8-8H4"/></svg>
+            <div style="font-size:12px;font-weight:600">Add New Store</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Detail form -->
+    <div class="card" style="overflow:hidden;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;background:linear-gradient(135deg,#2563EB08,#7C3AED08);border-bottom:1px solid #E2E8F0">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:700;color:#0F172A">DXB-MAIN — Dubai Main Store</div>
+          <span class="badge badge-success">Active</span>
+        </div>
+        <div style="font-size:11px;color:#64748B;margin-top:2px">Last edited by admin • Jan 15, 2024</div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:14px 16px">
+        <div style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Basic Info</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Branch Code</label><input type="text" value="DXB-MAIN" disabled style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px;background:#F8FAFC;color:#94A3B8"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Branch Name</label><input type="text" value="Dubai Main Store" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Odoo Branch ID</label><input type="number" value="101" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Currency</label><select class="select" style="width:100%"><option>AED</option><option>USD</option></select></div>
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Oracle Configuration</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Operating Unit ID</label><input type="text" value="204" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Business Unit</label><input type="text" value="AE-DXB" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Bill-to Site</label><input type="text" value="SITE_DXB_001" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+          <div><label style="font-size:11px;color:#64748B;display:block;margin-bottom:3px">Tax Classification</label><input type="text" value="AE_VAT_5" style="width:100%;padding:6px 8px;border:1px solid #E2E8F0;border-radius:5px;font-size:12px"></div>
+        </div>
+        <!-- Version history -->
+        <div style="font-size:11px;font-weight:700;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Version History</div>
+        <div style="display:flex;gap:0;align-items:center;margin-bottom:12px">
+          <div style="text-align:center;flex:1"><div style="width:22px;height:22px;border-radius:50%;background:#10B981;color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:9px;font-weight:700">v1</div><div style="font-size:9px;color:#94A3B8;margin-top:2px">Jan 10</div></div>
+          <div style="flex:1;height:2px;background:#10B981"></div>
+          <div style="text-align:center;flex:1"><div style="width:22px;height:22px;border-radius:50%;background:#10B981;color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:9px;font-weight:700">v2</div><div style="font-size:9px;color:#94A3B8;margin-top:2px">Jan 12</div></div>
+          <div style="flex:1;height:2px;background:#10B981"></div>
+          <div style="text-align:center;flex:1"><div style="width:22px;height:22px;border-radius:50%;background:#2563EB;color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:9px;font-weight:700">v3</div><div style="font-size:9px;color:#2563EB;margin-top:2px;font-weight:600">Current</div></div>
+        </div>
+      </div>
+      <div style="padding:10px 16px;border-top:1px solid #F1F5F9;display:flex;gap:6px">
+        <button class="btn btn-success" style="flex:1;justify-content:center;font-size:11px">⚡ Test Connection</button>
+        <button class="btn btn-primary" style="flex:1;justify-content:center;font-size:11px">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+  </div>
+</div></body></html>
