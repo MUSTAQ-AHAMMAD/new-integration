@@ -143,7 +143,7 @@ export class VendHqClient {
       baseURL,
       timeout: 30_000,
       headers: {
-        Authorization: `******
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     });
