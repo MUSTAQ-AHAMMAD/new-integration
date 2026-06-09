@@ -3,14 +3,28 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Activity, AlertTriangle, Bell, Building2, CreditCard, FileText, LayoutDashboard, Package, RefreshCw } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  Building2,
+  CreditCard,
+  FileText,
+  LayoutDashboard,
+  Package,
+  RefreshCw,
+  Send,
+  Store,
+} from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
+  { href: '/push-order', label: 'Push Single Order', icon: Send },
+  { href: '/push-store', label: 'Push Single Store', icon: Store },
+  { href: '/stores', label: 'Store Config Admin', icon: Building2 },
   { href: '/alerts', label: 'Alerts', icon: Bell },
   { href: '/failed-transactions', label: 'Failed Transactions', icon: AlertTriangle },
-  { href: '/stores', label: 'Stores', icon: Building2 },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
   { href: '/inventory', label: 'Inventory', icon: Package },
   { href: '/notifications', label: 'Notifications', icon: Bell },
@@ -31,7 +45,7 @@ export function Sidebar() {
           </div>
         </div>
       </div>
-      <nav className="flex-1 space-y-1 p-4">
+      <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {navItems.map(({ href, label, icon: Icon }) => (
           <Link
             key={href}
@@ -41,7 +55,7 @@ export function Sidebar() {
               pathname === href ? 'bg-blue-50 font-medium text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
             )}
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-4 w-4 shrink-0" />
             {label}
           </Link>
         ))}

@@ -41,6 +41,22 @@ export const api = {
   getStore: (branchCode: string) => apiRequest<StoreConfig>(`/store-config/${branchCode}`),
   validateStore: (branchCode: string) =>
     apiRequest<{ isValid: boolean; errors: string[] }>(`/store-config/${branchCode}/validate`, { method: 'POST' }),
+  upsertStore: (data: UpsertStoreConfigDto) =>
+    apiRequest<StoreConfig>('/store-config', { method: 'POST', body: JSON.stringify(data) }),
+  updateStore: (branchCode: string, data: Partial<UpsertStoreConfigDto>) =>
+    apiRequest<StoreConfig>(`/store-config/${branchCode}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteStore: (branchCode: string) =>
+    apiRequest<void>(`/store-config/${branchCode}`, { method: 'DELETE' }),
+  pushOrder: (orderId: string, createdBy = 'DASHBOARD_USER') =>
+    apiRequest<SyncJob>('/sync/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ jobType: 'ORDER_SYNC', scopeType: 'SINGLE_ORDER', orderIds: [orderId], createdBy }),
+    }),
+  pushStore: (branchCode: string, createdBy = 'DASHBOARD_USER') =>
+    apiRequest<SyncJob>('/sync/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ jobType: 'ORDER_SYNC', scopeType: 'BRANCH', branchCode, createdBy }),
+    }),
   listPaymentMappings: () => apiRequest<PaymentMapping[]>('/payment-mappings'),
   approveMapping: (id: string, approvedBy: string) =>
     apiRequest<PaymentMapping>(`/payment-mappings/${id}/approve`, { method: 'PUT', body: JSON.stringify({ approvedBy }) }),
@@ -158,12 +174,45 @@ export interface StoreConfig {
   id: string;
   branchCode: string;
   branchName: string;
+  odooBranchId: number;
+  oracleOperatingUnitId: number;
+  oracleBusinessUnit: string;
+  billToSiteName: string;
+  billToLocation: string | null;
+  bankAccountName: string;
+  cashAccountName: string;
+  paymentTermsName: string;
+  taxClassificationCode: string | null;
+  transactionSource: string;
+  transactionType: string;
+  invoiceCurrencyCode: string;
   isActive: boolean;
   validationStatus: string;
   validationErrors: string[] | null;
-  billToSiteName: string;
-  bankAccountName: string;
+  lastValidatedAt: string | null;
+  version: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertStoreConfigDto {
+  branchCode: string;
+  branchName: string;
+  odooBranchId: number;
+  oracleOperatingUnitId: number;
   oracleBusinessUnit: string;
+  billToSiteName: string;
+  billToLocation?: string;
+  bankAccountName: string;
+  cashAccountName: string;
+  paymentTermsName: string;
+  taxClassificationCode?: string;
+  transactionSource?: string;
+  transactionType?: string;
+  invoiceCurrencyCode?: string;
+  isActive?: boolean;
+  createdBy: string;
 }
 
 export interface PaymentMapping {

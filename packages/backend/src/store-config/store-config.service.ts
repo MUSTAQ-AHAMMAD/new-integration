@@ -12,7 +12,7 @@ export class StoreConfigService {
     private readonly alertsService: AlertsService,
   ) {}
 
-  async getValidatedConfig(branchCode: string) {
+  async getRawConfig(branchCode: string) {
     const config = await this.prisma.storeConfiguration.findUnique({
       where: { branchCode },
     });
@@ -22,6 +22,12 @@ export class StoreConfigService {
         `Store configuration not found for branch: ${branchCode}`,
       );
     }
+
+    return config;
+  }
+
+  async getValidatedConfig(branchCode: string) {
+    const config = await this.getRawConfig(branchCode);
 
     if (!config.isActive) {
       throw new Error(`Store ${branchCode} is inactive - skipping sync`);
@@ -34,6 +40,21 @@ export class StoreConfigService {
     }
 
     return config;
+  }
+
+  async deleteStore(branchCode: string): Promise<void> {
+    const config = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
+
+    if (!config) {
+      throw new NotFoundException(
+        `Store configuration not found for branch: ${branchCode}`,
+      );
+    }
+
+    await this.prisma.storeConfiguration.delete({ where: { branchCode } });
+    this.logger.log(`Store configuration deleted: ${branchCode}`);
   }
 
   async validateConfig(
