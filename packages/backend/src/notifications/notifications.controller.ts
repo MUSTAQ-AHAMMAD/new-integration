@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { NotificationRole } from '@prisma/client';
 import { NotificationsService } from './notifications.service';
 
 @ApiTags('notifications')
@@ -36,10 +37,14 @@ export class NotificationsController {
     body: {
       email: string;
       name: string;
-      role: string;
+      role: NotificationRole;
       receiveErrorAlerts?: boolean;
       receiveDailyReports?: boolean;
       receiveInventoryAlerts?: boolean;
+      receivePaymentAlerts?: boolean;
+      receiveConfigAlerts?: boolean;
+      escalationLevel?: number;
+      backupRecipientId?: string;
     },
   ) {
     return this.service.createRecipient(body);
@@ -52,10 +57,14 @@ export class NotificationsController {
     @Body()
     body: {
       name?: string;
-      role?: string;
+      role?: NotificationRole;
       receiveErrorAlerts?: boolean;
       receiveDailyReports?: boolean;
       receiveInventoryAlerts?: boolean;
+      receivePaymentAlerts?: boolean;
+      receiveConfigAlerts?: boolean;
+      escalationLevel?: number;
+      backupRecipientId?: string;
       isActive?: boolean;
     },
   ) {

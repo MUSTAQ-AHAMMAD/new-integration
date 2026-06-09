@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { NotificationRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -21,10 +22,14 @@ export class NotificationsService {
   async createRecipient(data: {
     email: string;
     name: string;
-    role: string;
+    role: NotificationRole;
     receiveErrorAlerts?: boolean;
     receiveDailyReports?: boolean;
     receiveInventoryAlerts?: boolean;
+    receivePaymentAlerts?: boolean;
+    receiveConfigAlerts?: boolean;
+    escalationLevel?: number;
+    backupRecipientId?: string;
   }) {
     return this.prisma.notificationRecipient.create({ data });
   }
@@ -33,10 +38,14 @@ export class NotificationsService {
     id: string,
     data: {
       name?: string;
-      role?: string;
+      role?: NotificationRole;
       receiveErrorAlerts?: boolean;
       receiveDailyReports?: boolean;
       receiveInventoryAlerts?: boolean;
+      receivePaymentAlerts?: boolean;
+      receiveConfigAlerts?: boolean;
+      escalationLevel?: number;
+      backupRecipientId?: string;
       isActive?: boolean;
     },
   ) {
