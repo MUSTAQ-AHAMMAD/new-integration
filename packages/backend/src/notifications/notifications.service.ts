@@ -1,12 +1,40 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NotificationRole } from '@prisma/client';
+import * as nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
+  private transporter: Transporter | null = null;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
+
+  onModuleInit() {
+    const smtpHost = this.config.get<string>('SMTP_HOST');
+    const smtpUser = this.config.get<string>('SMTP_USER');
+    const smtpPass = this.config.get<string>('SMTP_PASS');
+
+    if (smtpHost && smtpUser && smtpPass) {
+      this.transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: this.config.get<number>('SMTP_PORT') ?? 587,
+        secure: false,
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+      this.logger.log(`SMTP transport configured (host: ${smtpHost})`);
+    } else {
+      this.logger.warn(
+        'SMTP not configured — email notifications will be logged only. ' +
+          'Set SMTP_HOST, SMTP_USER and SMTP_PASS to enable delivery.',
+      );
+    }
+  }
 
   async listRecipients(activeOnly = false) {
     return this.prisma.notificationRecipient.findMany({
@@ -90,11 +118,35 @@ export class NotificationsService {
       return;
     }
 
-    // Log the notification; actual email dispatch is handled by the
-    // notifications queue processor which uses nodemailer when SMTP is
-    // configured. Without SMTP configured we just log.
-    this.logger.log(
-      `Notification queued: "${params.subject}" → [${params.recipients.join(', ')}]`,
-    );
+    if (!this.transporter) {
+      // SMTP not configured — log only so the rest of the system keeps working
+      this.logger.log(
+        `[NO-SMTP] Notification "${params.subject}" → [${params.recipients.join(', ')}]`,
+      );
+      return;
+    }
+
+    const fromAddress =
+      this.config.get<string>('SMTP_FROM') ?? 'noreply@integration.local';
+
+    this.transporter
+      .sendMail({
+        from: fromAddress,
+        to: params.recipients.join(', '),
+        subject: params.subject,
+        text: params.body,
+        html: `<pre style="font-family:sans-serif">${params.body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`,
+      })
+      .then(() => {
+        this.logger.log(
+          `Email "${params.subject}" sent to [${params.recipients.join(', ')}]`,
+        );
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send email "${params.subject}": ${err.message}`,
+          err.stack,
+        );
+      });
   }
 }
