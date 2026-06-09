@@ -1,0 +1,375 @@
+---
+# ─── Namespace ─────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: integration
+  labels:
+    app.kubernetes.io/part-of: integration-middleware
+
+---
+# ─── ConfigMap ─────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: integration-config
+  namespace: integration
+data:
+  NODE_ENV: "production"
+  API_PREFIX: "api/v1"
+  PORT: "3001"
+  LOG_LEVEL: "info"
+  CORS_ORIGIN: "*"
+
+---
+# ─── Secret (replace values with base64-encoded secrets) ──────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: integration-secrets
+  namespace: integration
+type: Opaque
+stringData:
+  DATABASE_URL: "******postgres-service:5432/integration_db"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "CHANGE_ME"
+  JWT_SECRET: "CHANGE_ME_USE_64_CHAR_RANDOM_STRING"
+  WEBHOOK_SECRET: "CHANGE_ME"
+  ODOO_BASE_URL: "https://your-odoo.example.com"
+  ODOO_DB: "your_odoo_db"
+  ODOO_USERNAME: "api_user"
+  ODOO_PASSWORD: "CHANGE_ME"
+  ORACLE_REST_BASE_URL: "https://oracle.example.com/fscmRestApi/resources/11.13.18.05"
+  ORACLE_USERNAME: "oracle_api_user"
+  ORACLE_PASSWORD: "CHANGE_ME"
+
+---
+# ─── Backend Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integration-backend
+  namespace: integration
+  labels:
+    app: integration-backend
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: integration-backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: integration-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: backend
+          image: integration-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: integration-config
+            - secretRef:
+                name: integration-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+---
+# ─── Backend Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: integration-backend-service
+  namespace: integration
+  labels:
+    app: integration-backend
+spec:
+  selector:
+    app: integration-backend
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+  type: ClusterIP
+
+---
+# ─── Dashboard Deployment ───────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: integration-dashboard
+  namespace: integration
+  labels:
+    app: integration-dashboard
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: integration-dashboard
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: integration-dashboard
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: dashboard
+          image: integration-dashboard:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://integration-backend-service:3001/api/v1"
+            - name: NEXT_PUBLIC_WS_URL
+              value: "http://integration-backend-service:3001"
+            - name: NODE_ENV
+              value: "production"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+---
+# ─── Dashboard Service ──────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: integration-dashboard-service
+  namespace: integration
+  labels:
+    app: integration-dashboard
+spec:
+  selector:
+    app: integration-dashboard
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
+
+---
+# ─── PostgreSQL StatefulSet ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: integration
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "integration"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: integration-secrets
+                  key: DATABASE_URL
+                  optional: false
+            - name: POSTGRES_DB
+              value: "integration_db"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "integration"]
+            periodSeconds: 10
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: integration
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+---
+# ─── Redis StatefulSet ──────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: integration
+spec:
+  serviceName: redis-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: integration-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: integration
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  clusterIP: None
+
+---
+# ─── HorizontalPodAutoscaler ────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: integration-backend-hpa
+  namespace: integration
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: integration-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

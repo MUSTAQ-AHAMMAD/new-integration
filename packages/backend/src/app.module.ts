@@ -18,6 +18,11 @@ import { AlertsModule } from './alerts/alerts.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { RefundsModule } from './refunds/refunds.module';
+import { InventoryModule } from './inventory/inventory.module';
+import { AuditModule } from './audit/audit.module';
+import { ClientsModule } from './clients/clients.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -57,26 +62,6 @@ import { MetricsModule } from './metrics/metrics.module';
         },
       },
     }),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        transport:
-          process.env.NODE_ENV !== 'production'
-            ? {
-                target: 'pino-pretty',
-                options: { colorize: true, singleLine: true },
-              }
-            : undefined,
-        level: process.env.LOG_LEVEL || 'info',
-        serializers: {
-          req(req: { method?: string; url?: string; id?: string }) {
-            return { method: req.method, url: req.url, id: req.id };
-          },
-          res(res: { statusCode?: number }) {
-            return { statusCode: res.statusCode };
-          },
-        },
-      },
-    }),
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
@@ -91,6 +76,11 @@ import { MetricsModule } from './metrics/metrics.module';
     GatewayModule,
     NotificationsModule,
     MetricsModule,
+    RefundsModule,
+    InventoryModule,
+    AuditModule,
+    ClientsModule,
+    SettingsModule,
     AdminModule,
   ],
   providers: [

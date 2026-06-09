@@ -6,6 +6,7 @@ import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncController } from './sync.controller';
 import { IdempotencyService } from './idempotency.service';
 import { OrderSyncService } from './order-sync.service';
+import { SyncResolver } from './sync.resolver';
 import { SyncService } from './sync.service';
 import { TimezoneService } from './timezone.service';
 import { ValidationService } from './validation.service';
@@ -24,6 +25,7 @@ import { ValidationService } from './validation.service';
     IdempotencyService,
     TimezoneService,
     ValidationService,
+    SyncResolver,
   ],
   exports: [
     SyncService,

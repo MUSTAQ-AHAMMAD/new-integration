@@ -185,12 +185,18 @@ model RefundTracking {
   creditMemoStatus       SyncStatus @default(PENDING)
   syncedAt               DateTime?
   failureReason          String?
+  isReconciled           Boolean    @default(false)
+  reconcileNote          String?
+  reconciledAt           DateTime?
+  reconciledBy           String?
   createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
 
   @@index([originalOrderId])
   @@index([originalInvoiceNumber])
   @@index([refundOrderId])
   @@index([creditMemoStatus])
+  @@index([isReconciled])
 }
 
 model StoreConfiguration {
@@ -285,6 +291,9 @@ model InventorySyncTracker {
   negativeInventoryAlertSent Boolean                  @default(false)
   orderReferenceId           String?
   oracleTransactionId        String?
+  reviewedAt                 DateTime?
+  reviewedBy                 String?
+  reviewNote                 String?
   createdAt                  DateTime                 @default(now())
   syncedAt                   DateTime?
 
@@ -294,6 +303,7 @@ model InventorySyncTracker {
   @@index([isNegativeInventory])
   @@index([syncStatus])
   @@index([transactionDate])
+  @@index([reviewedAt])
 }
 
 enum InventoryTransactionType {

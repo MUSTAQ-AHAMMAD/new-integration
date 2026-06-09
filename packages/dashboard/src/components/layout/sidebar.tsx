@@ -15,13 +15,17 @@ import {
   CreditCard,
   Database,
   FileText,
+  Heart,
   Key,
   LayoutDashboard,
   Package,
   RefreshCw,
+  RotateCcw,
+  Search,
   Send,
   Settings,
   Server,
+  ShoppingCart,
   Store,
   Wallet,
 } from 'lucide-react';
@@ -41,6 +45,7 @@ interface NavGroup {
 const topItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
+  { href: '/orders', label: 'Order Manager', icon: ShoppingCart },
   { href: '/push-order', label: 'Push Single Order', icon: Send },
   { href: '/push-store', label: 'Push Single Store', icon: Store },
 ];
@@ -48,12 +53,17 @@ const topItems: NavItem[] = [
 const operationalItems: NavItem[] = [
   { href: '/stores', label: 'Store Config Admin', icon: Building2 },
   { href: '/alerts', label: 'Alerts', icon: Bell },
-  { href: '/failed-transactions', label: 'Failed Transactions', icon: AlertTriangle },
+  { href: '/failed', label: 'Failed Transactions', icon: AlertTriangle },
+  { href: '/failed-transactions', label: 'Failed (Legacy)', icon: AlertTriangle },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
-  { href: '/inventory', label: 'Inventory', icon: Package },
+  { href: '/refunds', label: 'Refund Reconciliation', icon: RotateCcw },
+  { href: '/inventory', label: 'Inventory Warnings', icon: Package },
+  { href: '/audit', label: 'Audit Trail', icon: Search },
+  { href: '/health', label: 'System Health', icon: Heart },
+  { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/webhooks', label: 'Webhook Events', icon: Activity },
-  { href: '/activity', label: 'Audit Log', icon: FileText },
+  { href: '/activity', label: 'Audit Log (Legacy)', icon: FileText },
 ];
 
 const adminGroups: NavGroup[] = [
