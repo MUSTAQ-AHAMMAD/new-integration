@@ -6,9 +6,11 @@ import { GatewayModule } from '../gateway/gateway.module';
 import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module';
 import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncModule } from '../sync/sync.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderSyncProcessor } from './processors/order-sync.processor';
 import { InventorySyncProcessor } from './processors/inventory-sync.processor';
 import { RetryProcessor } from './processors/retry.processor';
+import { NotificationsProcessor } from './processors/notifications.processor';
 import { QueuesService } from './queues.service';
 
 export const QUEUE_NAMES = {
@@ -25,6 +27,7 @@ export const QUEUE_NAMES = {
     AlertsModule,
     StoreConfigModule,
     PaymentMappingModule,
+    NotificationsModule,
     forwardRef(() => SyncModule),
     BullModule.forRootAsync({
       imports: [ConfigModule],
@@ -54,6 +57,7 @@ export const QUEUE_NAMES = {
     OrderSyncProcessor,
     InventorySyncProcessor,
     RetryProcessor,
+    NotificationsProcessor,
     QueuesService,
   ],
   exports: [BullModule, QueuesService],

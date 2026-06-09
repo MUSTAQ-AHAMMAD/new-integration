@@ -3,15 +3,17 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
-import { Activity, Bell, Building2, CreditCard, FileText, LayoutDashboard, Package, RefreshCw } from 'lucide-react';
+import { Activity, AlertTriangle, Bell, Building2, CreditCard, FileText, LayoutDashboard, Package, RefreshCw } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
   { href: '/alerts', label: 'Alerts', icon: Bell },
+  { href: '/failed-transactions', label: 'Failed Transactions', icon: AlertTriangle },
   { href: '/stores', label: 'Stores', icon: Building2 },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
   { href: '/inventory', label: 'Inventory', icon: Package },
+  { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/activity', label: 'Audit Log', icon: FileText },
 ];
 

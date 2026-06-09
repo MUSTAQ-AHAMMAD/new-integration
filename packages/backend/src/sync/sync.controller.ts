@@ -44,6 +44,25 @@ export class SyncController {
     return this.syncService.getQueueStats();
   }
 
+  @Post('failed-transactions/:id/resolve')
+  @ApiOperation({ summary: 'Resolve a failed transaction' })
+  resolveFailedTransaction(
+    @Param('id') id: string,
+    @Body() body: { resolvedBy: string; resolutionNote?: string },
+  ) {
+    return this.syncService.resolveFailedTransaction(
+      id,
+      body.resolvedBy,
+      body.resolutionNote,
+    );
+  }
+
+  @Get('failed-transactions')
+  @ApiOperation({ summary: 'List unresolved failed transactions' })
+  listFailedTransactions(@Query('limit') limit = '50') {
+    return this.syncService.listFailedTransactions(Number(limit));
+  }
+
   @Get('orders/:odooOrderId')
   @ApiOperation({ summary: 'Get sync status for specific order' })
   getOrderStatus(@Param('odooOrderId') odooOrderId: string) {

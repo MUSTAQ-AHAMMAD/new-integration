@@ -44,6 +44,20 @@ export const api = {
   listPaymentMappings: () => apiRequest<PaymentMapping[]>('/payment-mappings'),
   approveMapping: (id: string, approvedBy: string) =>
     apiRequest<PaymentMapping>(`/payment-mappings/${id}/approve`, { method: 'PUT', body: JSON.stringify({ approvedBy }) }),
+  listFailedTransactions: (limit = 50) => apiRequest<FailedTransaction[]>(`/sync/failed-transactions?limit=${limit}`),
+  resolveFailedTransaction: (id: string, resolvedBy: string, resolutionNote?: string) =>
+    apiRequest<FailedTransaction>(`/sync/failed-transactions/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ resolvedBy, resolutionNote }),
+    }),
+  listNotificationRecipients: (activeOnly = false) =>
+    apiRequest<NotificationRecipient[]>(`/notifications/recipients?activeOnly=${activeOnly}`),
+  createNotificationRecipient: (data: CreateNotificationRecipientDto) =>
+    apiRequest<NotificationRecipient>('/notifications/recipients', { method: 'POST', body: JSON.stringify(data) }),
+  updateNotificationRecipient: (id: string, data: Partial<CreateNotificationRecipientDto>) =>
+    apiRequest<NotificationRecipient>(`/notifications/recipients/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteNotificationRecipient: (id: string) =>
+    apiRequest<void>(`/notifications/recipients/${id}`, { method: 'DELETE' }),
 };
 
 export interface DashboardOverview {
@@ -171,4 +185,25 @@ export interface CreateSyncJobDto {
   startDate?: string;
   endDate?: string;
   createdBy?: string;
+}
+
+export interface NotificationRecipient {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  receiveErrorAlerts: boolean;
+  receiveDailyReports: boolean;
+  receiveInventoryAlerts: boolean;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface CreateNotificationRecipientDto {
+  email: string;
+  name: string;
+  role: string;
+  receiveErrorAlerts?: boolean;
+  receiveDailyReports?: boolean;
+  receiveInventoryAlerts?: boolean;
 }

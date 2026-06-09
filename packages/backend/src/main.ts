@@ -4,10 +4,19 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import * as compression from 'compression';
 import helmet from 'helmet';
+import { createBullBoard } from '@bull-board/api';
+import { BullAdapter } from '@bull-board/api/bullAdapter';
+import { ExpressAdapter } from '@bull-board/express';
+import { getQueueToken } from '@nestjs/bull';
+import { Queue } from 'bull';
 import { AppModule } from './app.module';
+import { QUEUE_NAMES } from './queues/queues.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
 
   app.useLogger(app.get(Logger));
   // Enable helmet with a relaxed CSP that still allows the Swagger UI to function
@@ -16,10 +25,11 @@ async function bootstrap() {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:'],
+          imgSrc: ["'self'", 'data:', 'blob:'],
           connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'data:'],
         },
       },
     }),
@@ -36,6 +46,17 @@ async function bootstrap() {
     }),
   );
 
+  // Bull Board queue administration UI
+  const serverAdapter = new ExpressAdapter();
+  serverAdapter.setBasePath('/queues');
+  createBullBoard({
+    queues: Object.values(QUEUE_NAMES).map(
+      (name) => new BullAdapter(app.get<Queue>(getQueueToken(name))),
+    ),
+    serverAdapter,
+  });
+  app.use('/queues', serverAdapter.getRouter());
+
   const config = new DocumentBuilder()
     .setTitle('Integration Middleware API')
     .setDescription(
@@ -50,5 +71,8 @@ async function bootstrap() {
   const port = process.env.PORT || 3001;
   await app.listen(port);
   app.get(Logger).log(`🚀 Application running on port ${port}`);
+  app
+    .get(Logger)
+    .log(`📊 Bull Board available at http://localhost:${port}/queues`);
 }
 void bootstrap();

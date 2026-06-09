@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { Prisma, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
@@ -6,13 +8,29 @@ import { OrderSyncService } from '../sync/order-sync.service';
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
+  private readonly webhookSecret: string | undefined;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly orderSyncService: OrderSyncService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.webhookSecret = this.configService.get<string>('WEBHOOK_SECRET');
+  }
 
-  async processOdooEvent(payload: Record<string, unknown>, signature?: string) {
+  async processOdooEvent(
+    payload: Record<string, unknown>,
+    rawBody: Buffer,
+    signature?: string,
+  ) {
+    // Verify HMAC signature if a secret is configured
+    if (this.webhookSecret) {
+      if (!signature) {
+        throw new UnauthorizedException('Missing x-odoo-signature header');
+      }
+      this.verifySignature(rawBody, signature);
+    }
+
     const eventType = (payload.event_type as string) || 'unknown';
 
     const event = await this.prisma.webhookEvent.create({
@@ -25,9 +43,6 @@ export class WebhookService {
     });
 
     try {
-      if (signature) {
-        this.logger.debug(`Received webhook signature for event ${event.id}`);
-      }
       await this.handleEvent(eventType, payload);
 
       await this.prisma.webhookEvent.update({
@@ -54,6 +69,28 @@ export class WebhookService {
         eventId: event.id,
         processingError: errorMessage,
       };
+    }
+  }
+
+  private verifySignature(rawBody: Buffer, signature: string): void {
+    const expected = createHmac('sha256', this.webhookSecret!)
+      .update(rawBody)
+      .digest('hex');
+
+    // The Odoo signature may be prefixed with "sha256=" — strip it
+    const incoming = signature.startsWith('sha256=')
+      ? signature.slice(7)
+      : signature;
+
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const incomingBuf = Buffer.from(incoming, 'hex');
+
+    if (
+      expectedBuf.length !== incomingBuf.length ||
+      !timingSafeEqual(expectedBuf, incomingBuf)
+    ) {
+      this.logger.warn('Webhook signature verification failed');
+      throw new UnauthorizedException('Invalid webhook signature');
     }
   }
 

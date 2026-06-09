@@ -4,6 +4,7 @@ import {
   AuditOperation,
   AuditStatus,
   ErrorType,
+  JobStatus,
   Prisma,
   SyncStatus,
 } from '@prisma/client';
@@ -16,7 +17,7 @@ import { StoreConfigService } from '../../store-config/store-config.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
 import { ValidationService } from '../../sync/validation.service';
 import { QUEUE_NAMES } from '../queues.module';
-import { OrderSyncJobData } from '../queues.service';
+import { OrderSyncJobData, QueuesService } from '../queues.service';
 
 @Processor(QUEUE_NAMES.ORDER_SYNC)
 export class OrderSyncProcessor {
@@ -30,11 +31,12 @@ export class OrderSyncProcessor {
     private readonly storeConfigService: StoreConfigService,
     private readonly paymentMappingService: PaymentMappingService,
     private readonly alertsService: AlertsService,
+    private readonly queuesService: QueuesService,
   ) {}
 
   @Process('sync')
   async handleOrderSync(job: Job<OrderSyncJobData>) {
-    const { odooOrderId, branchCode } = job.data;
+    const { odooOrderId, branchCode, syncJobId } = job.data;
     const startedAt = Date.now();
     this.logger.log(`Processing order sync: ${odooOrderId} / ${branchCode}`);
 
@@ -65,6 +67,9 @@ export class OrderSyncProcessor {
           orderId: odooOrderId,
           status: SyncStatus.SKIPPED,
         });
+        if (syncJobId) {
+          await this.incrementSyncJobCounters(syncJobId, 'skipped');
+        }
         return;
       }
 
@@ -95,6 +100,9 @@ export class OrderSyncProcessor {
           orderId: odooOrderId,
           status: SyncStatus.SKIPPED,
         });
+        if (syncJobId) {
+          await this.incrementSyncJobCounters(syncJobId, 'failed');
+        }
         return;
       }
 
@@ -129,6 +137,9 @@ export class OrderSyncProcessor {
           orderId: odooOrderId,
           status: 'DUPLICATE',
         });
+        if (syncJobId) {
+          await this.incrementSyncJobCounters(syncJobId, 'success');
+        }
         return;
       }
 
@@ -217,6 +228,10 @@ export class OrderSyncProcessor {
         },
       });
 
+      if (syncJobId) {
+        await this.incrementSyncJobCounters(syncJobId, 'success');
+      }
+
       this.gateway.emitOrderStatus({
         orderId: odooOrderId,
         status: SyncStatus.SYNCED,
@@ -245,11 +260,82 @@ export class OrderSyncProcessor {
           },
         })
         .catch(() => undefined);
+
+      if (syncJobId) {
+        await this.incrementSyncJobCounters(syncJobId, 'failed').catch(
+          () => undefined,
+        );
+      }
+
+      // Enqueue an error notification for the ops team
+      await this.queuesService
+        .enqueueNotification({
+          type: 'ERROR_ALERT',
+          subject: `Order sync failed: ${odooOrderId}`,
+          body: `Order ${odooOrderId} (branch: ${branchCode}) failed to sync.\n\nError: ${errorMessage}`,
+        })
+        .catch(() => undefined);
+
       this.gateway.emitOrderStatus({
         orderId: odooOrderId,
         status: SyncStatus.FAILED,
       });
       throw err;
+    }
+  }
+
+  /**
+   * Increments the parent SyncJob counters and finalises the job status once
+   * all records have been processed.
+   */
+  private async incrementSyncJobCounters(
+    syncJobId: string,
+    outcome: 'success' | 'failed' | 'skipped',
+  ) {
+    const update: Prisma.SyncJobUpdateInput = {
+      processedRecords: { increment: 1 },
+    };
+
+    if (outcome === 'success') update.successCount = { increment: 1 };
+    else if (outcome === 'failed') update.failedCount = { increment: 1 };
+    else update.skippedCount = { increment: 1 };
+
+    const job = await this.prisma.syncJob.update({
+      where: { id: syncJobId },
+      data: update,
+    });
+
+    // Finalise the job if all records have been processed
+    if (job.processedRecords >= job.totalRecords && job.totalRecords > 0) {
+      let finalStatus: JobStatus;
+      if (job.failedCount === 0 && job.skippedCount === 0) {
+        finalStatus = JobStatus.COMPLETED;
+      } else if (job.successCount > 0) {
+        finalStatus = JobStatus.PARTIAL;
+      } else {
+        finalStatus = JobStatus.FAILED;
+      }
+
+      await this.prisma.syncJob.update({
+        where: { id: syncJobId },
+        data: { status: finalStatus, completedAt: new Date() },
+      });
+
+      this.gateway.emitSyncJobUpdate({
+        jobId: syncJobId,
+        status: finalStatus,
+        progress: 100,
+      });
+    } else {
+      const progress =
+        job.totalRecords > 0
+          ? Math.round((job.processedRecords / job.totalRecords) * 100)
+          : 0;
+      this.gateway.emitSyncJobUpdate({
+        jobId: syncJobId,
+        status: JobStatus.PROCESSING,
+        progress,
+      });
     }
   }
 }

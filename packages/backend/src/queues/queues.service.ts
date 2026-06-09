@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { QUEUE_NAMES } from './queues.module';
+import { NotificationJobData } from './processors/notifications.processor';
 
 export interface OrderSyncJobData {
   orderSyncQueueId: string;
   odooOrderId: string;
   branchCode: string;
+  syncJobId?: string;
   isRetry?: boolean;
 }
 
@@ -17,6 +19,8 @@ export class QueuesService {
     @InjectQueue(QUEUE_NAMES.INVENTORY_SYNC)
     private readonly inventorySyncQueue: Queue,
     @InjectQueue(QUEUE_NAMES.RETRY) private readonly retryQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.NOTIFICATIONS)
+    private readonly notificationsQueue: Queue,
   ) {}
 
   async enqueueOrderSync(data: OrderSyncJobData, delay = 0) {
@@ -34,6 +38,10 @@ export class QueuesService {
     return this.inventorySyncQueue.add('sync', data, { delay });
   }
 
+  async enqueueNotification(data: NotificationJobData, delay = 0) {
+    return this.notificationsQueue.add('send', data, { delay });
+  }
+
   async getQueueStats() {
     const [
       orderWaiting,
@@ -42,6 +50,7 @@ export class QueuesService {
       orderCompleted,
       inventoryWaiting,
       retryWaiting,
+      notificationsWaiting,
     ] = await Promise.all([
       this.orderSyncQueue.getWaitingCount(),
       this.orderSyncQueue.getActiveCount(),
@@ -49,6 +58,7 @@ export class QueuesService {
       this.orderSyncQueue.getCompletedCount(),
       this.inventorySyncQueue.getWaitingCount(),
       this.retryQueue.getWaitingCount(),
+      this.notificationsQueue.getWaitingCount(),
     ]);
 
     return {
@@ -60,6 +70,7 @@ export class QueuesService {
       },
       inventorySync: { waiting: inventoryWaiting },
       retry: { waiting: retryWaiting },
+      notifications: { waiting: notificationsWaiting },
     };
   }
 }

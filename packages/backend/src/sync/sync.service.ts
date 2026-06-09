@@ -47,6 +47,7 @@ export class SyncService {
         orderSyncQueueId: order.id,
         odooOrderId: order.odooOrderId,
         branchCode: order.branchCode,
+        syncJobId: job.id,
       });
       successCount += 1;
     }
@@ -143,6 +144,35 @@ export class SyncService {
       where: { odooOrderId },
       include: {
         failedTransactions: { take: 5, orderBy: { createdAt: 'desc' } },
+      },
+    });
+  }
+
+  async listFailedTransactions(limit = 50) {
+    return this.prisma.failedTransaction.findMany({
+      where: { isResolved: false },
+      include: {
+        orderSyncQueue: {
+          select: { odooOrderNumber: true, branchCode: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async resolveFailedTransaction(
+    id: string,
+    resolvedBy: string,
+    resolutionNote?: string,
+  ) {
+    return this.prisma.failedTransaction.update({
+      where: { id },
+      data: {
+        isResolved: true,
+        resolvedBy,
+        resolvedAt: new Date(),
+        resolutionNote,
       },
     });
   }
