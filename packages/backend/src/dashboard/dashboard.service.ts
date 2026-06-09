@@ -104,4 +104,11 @@ export class DashboardService {
       take: limit,
     });
   }
+
+  async getWebhookEvents(limit = 100) {
+    return this.prisma.webhookEvent.findMany({
+      orderBy: { receivedAt: 'desc' },
+      take: limit,
+    });
+  }
 }

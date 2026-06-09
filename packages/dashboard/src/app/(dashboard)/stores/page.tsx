@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ErrorState } from '@/components/ui/error-state';
 
 const EMPTY_FORM: UpsertStoreConfigDto = {
   branchCode: '',
@@ -147,7 +148,7 @@ function storeToFormDto(store: StoreConfig): UpsertStoreConfigDto {
 export default function StoresPage() {
   const qc = useQueryClient();
 
-  const { data: stores, isLoading } = useQuery({
+  const { data: stores, isLoading, isError } = useQuery({
     queryKey: ['stores'],
     queryFn: () => api.listStores(),
   });
@@ -208,6 +209,8 @@ export default function StoresPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

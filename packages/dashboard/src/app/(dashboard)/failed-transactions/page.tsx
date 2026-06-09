@@ -6,10 +6,11 @@ import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ErrorState } from '@/components/ui/error-state';
 
 export default function FailedTransactionsPage() {
   const qc = useQueryClient();
-  const { data: transactions, isLoading } = useQuery({
+  const { data: transactions, isLoading, isError } = useQuery({
     queryKey: ['failed-transactions'],
     queryFn: () => api.listFailedTransactions(100),
     refetchInterval: 15000,
@@ -21,7 +22,7 @@ export default function FailedTransactionsPage() {
     onSuccess: () => {
       toast.success('Transaction resolved');
       void qc.invalidateQueries({ queryKey: ['failed-transactions'] });
-      void qc.invalidateQueries({ queryKey: ['overview'] });
+      void qc.invalidateQueries({ queryKey: ['dashboard-overview'] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -41,6 +42,8 @@ export default function FailedTransactionsPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -52,6 +52,7 @@ const operationalItems: NavItem[] = [
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
   { href: '/inventory', label: 'Inventory', icon: Package },
   { href: '/notifications', label: 'Notifications', icon: Bell },
+  { href: '/webhooks', label: 'Webhook Events', icon: Activity },
   { href: '/activity', label: 'Audit Log', icon: FileText },
 ];
 
@@ -114,12 +115,13 @@ const adminGroups: NavGroup[] = [
   },
 ];
 
-function NavLink({ href, label, icon: Icon }: NavItem & { compact?: boolean }) {
+function NavLink({ href, label, icon: Icon, onNavigate }: NavItem & { onNavigate?: () => void }) {
   const pathname = usePathname();
   const isActive = pathname === href;
   return (
     <Link
       href={href}
+      onClick={onNavigate}
       className={cn(
         'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
         isActive
@@ -133,7 +135,7 @@ function NavLink({ href, label, icon: Icon }: NavItem & { compact?: boolean }) {
   );
 }
 
-function NavGroupSection({ group }: { group: NavGroup }) {
+function NavGroupSection({ group, onNavigate }: { group: NavGroup; onNavigate?: () => void }) {
   const pathname = usePathname();
   const hasActive = group.items.some((i) => pathname === i.href);
   const [open, setOpen] = useState(hasActive);
@@ -158,7 +160,7 @@ function NavGroupSection({ group }: { group: NavGroup }) {
       {open && (
         <div className="ml-2 mt-0.5 space-y-0.5 border-l border-gray-100 pl-2">
           {group.items.map((item) => (
-            <NavLink key={item.href} {...item} />
+            <NavLink key={item.href} {...item} onNavigate={onNavigate} />
           ))}
         </div>
       )}
@@ -166,32 +168,34 @@ function NavGroupSection({ group }: { group: NavGroup }) {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {
   return (
-    <aside className="hidden w-64 flex-col border-r border-gray-200 bg-white lg:flex">
-      <div className="border-b p-6">
-        <div className="flex items-center gap-2">
-          <Activity className="h-6 w-6 text-blue-600" />
-          <div>
-            <h1 className="font-bold text-gray-900">Integration</h1>
-            <p className="text-xs text-gray-400">Odoo → Oracle Fusion</p>
+    <aside className={mobile ? 'flex flex-1 flex-col overflow-y-auto' : 'hidden w-64 flex-col border-r border-gray-200 bg-white lg:flex'}>
+      {!mobile && (
+        <div className="border-b p-6">
+          <div className="flex items-center gap-2">
+            <Activity className="h-6 w-6 text-blue-600" />
+            <div>
+              <h1 className="font-bold text-gray-900">Integration</h1>
+              <p className="text-xs text-gray-400">Odoo → Oracle Fusion</p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
       <nav className="flex-1 space-y-1 overflow-y-auto p-4">
         {topItems.map((item) => (
-          <NavLink key={item.href} {...item} />
+          <NavLink key={item.href} {...item} onNavigate={onNavigate} />
         ))}
         <div className="my-2 border-t border-gray-100" />
         {operationalItems.map((item) => (
-          <NavLink key={item.href} {...item} />
+          <NavLink key={item.href} {...item} onNavigate={onNavigate} />
         ))}
         <div className="my-2 border-t border-gray-100" />
         <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
           Admin Panel
         </p>
         {adminGroups.map((group) => (
-          <NavGroupSection key={group.label} group={group} />
+          <NavGroupSection key={group.label} group={group} onNavigate={onNavigate} />
         ))}
       </nav>
       <div className="border-t p-4 text-xs text-gray-400">v0.1.0 · Enterprise Integration</div>

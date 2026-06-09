@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ErrorState } from '@/components/ui/error-state';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function NotificationsPage() {
@@ -22,7 +23,7 @@ export default function NotificationsPage() {
     receiveInventoryAlerts: false,
   });
 
-  const { data: recipients, isLoading } = useQuery({
+  const { data: recipients, isLoading, isError } = useQuery({
     queryKey: ['notification-recipients'],
     queryFn: () => api.listNotificationRecipients(),
   });
@@ -71,6 +72,8 @@ export default function NotificationsPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

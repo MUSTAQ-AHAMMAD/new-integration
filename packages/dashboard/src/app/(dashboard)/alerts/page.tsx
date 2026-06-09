@@ -6,10 +6,11 @@ import { formatDate, getSeverityColor } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ErrorState } from '@/components/ui/error-state';
 
 export default function AlertsPage() {
   const qc = useQueryClient();
-  const { data: alerts, isLoading } = useQuery({
+  const { data: alerts, isLoading, isError } = useQuery({
     queryKey: ['alerts'],
     queryFn: () => api.listAlerts({ resolved: false }),
     refetchInterval: 10000,
@@ -34,6 +35,8 @@ export default function AlertsPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="space-y-3">
               {alerts?.map((alert) => (

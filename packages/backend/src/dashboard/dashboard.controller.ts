@@ -48,4 +48,10 @@ export class DashboardController {
   getNegativeInventory(@Query('limit') limit?: string) {
     return this.service.getNegativeInventory(limit ? Number(limit) : 20);
   }
+
+  @Get('webhook-events')
+  @ApiOperation({ summary: 'Get recent webhook events' })
+  getWebhookEvents(@Query('limit') limit?: string) {
+    return this.service.getWebhookEvents(limit ? Number(limit) : 100);
+  }
 }

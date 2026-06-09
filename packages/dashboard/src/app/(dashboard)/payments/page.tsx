@@ -5,10 +5,11 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ErrorState } from '@/components/ui/error-state';
 
 export default function PaymentMappingsPage() {
   const qc = useQueryClient();
-  const { data: mappings, isLoading } = useQuery({
+  const { data: mappings, isLoading, isError } = useQuery({
     queryKey: ['payment-mappings'],
     queryFn: () => api.listPaymentMappings(),
   });
@@ -39,6 +40,8 @@ export default function PaymentMappingsPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -4,9 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { formatDate, formatNumber } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ErrorState } from '@/components/ui/error-state';
 
 export default function InventoryPage() {
-  const { data: items, isLoading } = useQuery({
+  const { data: items, isLoading, isError } = useQuery({
     queryKey: ['negative-inventory'],
     queryFn: api.getNegativeInventory,
     refetchInterval: 30000,
@@ -27,6 +28,8 @@ export default function InventoryPage() {
         <CardContent>
           {isLoading ? (
             <div className="py-8 text-center text-gray-400">Loading...</div>
+          ) : isError ? (
+            <ErrorState />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -22,6 +22,7 @@ export const api = {
   getRecentActivity: (limit = 50) => apiRequest<AuditLogItem[]>(`/dashboard/recent-activity?limit=${limit}`),
   getHealthStatus: () => apiRequest<HealthCheck[]>('/dashboard/health'),
   getNegativeInventory: () => apiRequest<InventoryItem[]>('/dashboard/negative-inventory'),
+  getWebhookEvents: (limit = 100) => apiRequest<WebhookEvent[]>(`/dashboard/webhook-events?limit=${limit}`),
   createSyncJob: (data: CreateSyncJobDto) => apiRequest<SyncJob>('/sync/jobs', { method: 'POST', body: JSON.stringify(data) }),
   listSyncJobs: (status?: string) => apiRequest<SyncJob[]>(`/sync/jobs${status ? `?status=${status}` : ''}`),
   getSyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}`),
@@ -157,6 +158,17 @@ export interface InventoryItem {
   quantityChange: number;
   newQuantity: number;
   transactionDate: string;
+}
+
+export interface WebhookEvent {
+  id: string;
+  eventType: string;
+  sourceSystem: string;
+  payload: Record<string, unknown>;
+  receivedAt: string;
+  processedAt: string | null;
+  processingStatus: string;
+  processingError: string | null;
 }
 
 export interface SyncJob {

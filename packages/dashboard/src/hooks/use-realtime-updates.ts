@@ -16,18 +16,19 @@ export function useRealtimeUpdates() {
 
     const handleOrderStatus = () => {
       void queryClient.invalidateQueries({ queryKey: ['sync-jobs'] });
-      void queryClient.invalidateQueries({ queryKey: ['overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] });
       void queryClient.invalidateQueries({ queryKey: ['failed-transactions'] });
     };
 
     const handleSyncJobUpdate = () => {
       void queryClient.invalidateQueries({ queryKey: ['sync-jobs'] });
-      void queryClient.invalidateQueries({ queryKey: ['overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['queue-stats'] });
     };
 
     const handleAlert = () => {
       void queryClient.invalidateQueries({ queryKey: ['alerts'] });
-      void queryClient.invalidateQueries({ queryKey: ['overview'] });
+      void queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] });
     };
 
     const handleHealthUpdate = () => {
