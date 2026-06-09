@@ -21,13 +21,16 @@ export class NotificationsService implements OnModuleInit {
     const smtpPass = this.config.get<string>('SMTP_PASS');
 
     if (smtpHost && smtpUser && smtpPass) {
+      const smtpPort = this.config.get<number>('SMTP_PORT') ?? 587;
+      // Use implicit TLS (secure) when port is 465; otherwise use STARTTLS
+      const secure = this.config.get<string>('SMTP_SECURE') === 'true' || smtpPort === 465;
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
-        port: this.config.get<number>('SMTP_PORT') ?? 587,
-        secure: false,
+        port: smtpPort,
+        secure,
         auth: { user: smtpUser, pass: smtpPass },
       });
-      this.logger.log(`SMTP transport configured (host: ${smtpHost})`);
+      this.logger.log(`SMTP transport configured (host: ${smtpHost}, port: ${smtpPort}, secure: ${secure})`);
     } else {
       this.logger.warn(
         'SMTP not configured — email notifications will be logged only. ' +
@@ -108,6 +111,15 @@ export class NotificationsService implements OnModuleInit {
     return recipients.map((r) => r.email);
   }
 
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   sendNotification(params: {
     subject: string;
     body: string;
@@ -135,7 +147,7 @@ export class NotificationsService implements OnModuleInit {
         to: params.recipients.join(', '),
         subject: params.subject,
         text: params.body,
-        html: `<pre style="font-family:sans-serif">${params.body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`,
+        html: `<pre style="font-family:sans-serif">${this.escapeHtml(params.body)}</pre>`,
       })
       .then(() => {
         this.logger.log(
