@@ -4,6 +4,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import * as compression from 'compression';
 import helmet from 'helmet';
+import { json } from 'express';
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
@@ -11,6 +12,7 @@ import { getQueueToken } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { AppModule } from './app.module';
 import { QUEUE_NAMES } from './queues/queues.module';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -19,6 +21,9 @@ async function bootstrap() {
   });
 
   app.useLogger(app.get(Logger));
+  app.useGlobalFilters(new GlobalExceptionFilter());
+  // Limit request body size to 10 MB to protect against oversized payloads
+  app.use(json({ limit: '10mb' }));
   // Enable helmet with a relaxed CSP that still allows the Swagger UI to function
   app.use(
     helmet({

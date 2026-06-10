@@ -12,9 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('admin')
 @Controller('admin')
+@Roles('ADMIN')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

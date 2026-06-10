@@ -23,6 +23,9 @@ import { InventoryModule } from './inventory/inventory.module';
 import { AuditModule } from './audit/audit.module';
 import { ClientsModule } from './clients/clients.module';
 import { SettingsModule } from './settings/settings.module';
+import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { RolesGuard } from './auth/roles.guard';
 
 @Module({
   imports: [
@@ -40,6 +43,12 @@ import { SettingsModule } from './settings/settings.module';
         name: 'medium',
         ttl: 60000,
         limit: 300,
+      },
+      // Dedicated high-volume throttle for inbound webhooks (1000 req/min per IP)
+      {
+        name: 'webhook',
+        ttl: 60000,
+        limit: 1000,
       },
     ]),
     LoggerModule.forRoot({
@@ -82,11 +91,23 @@ import { SettingsModule } from './settings/settings.module';
     ClientsModule,
     SettingsModule,
     AdminModule,
+    AuthModule,
   ],
   providers: [
+    // Rate limiting (all routes)
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    // JWT authentication (all routes; use @Public() to opt-out)
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    // Role-based authorisation
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
     },
   ],
 })
