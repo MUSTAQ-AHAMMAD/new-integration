@@ -36,6 +36,9 @@ USER appuser
 
 EXPOSE 3001
 
+# Default CMD starts the API server.
+# To run the dedicated worker process instead:
+#   docker run <image> node dist/worker
 CMD ["node", "dist/main"]
 
 # ─────────────────────────────────────────

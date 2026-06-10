@@ -23,6 +23,16 @@ scrape_configs:
       - targets: ['node-exporter:9100']
     scrape_interval: 30s
 
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 15s
+
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
 alerting:
   alertmanagers:
     - static_configs:

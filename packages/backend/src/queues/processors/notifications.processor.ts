@@ -17,7 +17,7 @@ export class NotificationsProcessor {
 
   constructor(private readonly notificationsService: NotificationsService) {}
 
-  @Process('send')
+  @Process({ name: 'send', concurrency: 5 })
   async handleSendNotification(job: Job<NotificationJobData>) {
     const { type, subject, body, recipients } = job.data;
     this.logger.log(`Processing notification job: ${type} - "${subject}"`);

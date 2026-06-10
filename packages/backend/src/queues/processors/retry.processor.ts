@@ -10,7 +10,7 @@ export class RetryProcessor {
 
   constructor(private readonly queuesService: QueuesService) {}
 
-  @Process('retry')
+  @Process({ name: 'retry', concurrency: 5 })
   async handleRetry(job: Job<OrderSyncJobData>) {
     this.logger.log(`Retrying order: ${job.data.odooOrderId}`);
     await this.queuesService.enqueueOrderSync({ ...job.data, isRetry: true });

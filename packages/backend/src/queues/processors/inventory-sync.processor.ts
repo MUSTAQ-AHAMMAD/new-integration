@@ -17,7 +17,7 @@ export class InventorySyncProcessor {
     private readonly gateway: GatewayService,
   ) {}
 
-  @Process('sync')
+  @Process({ name: 'sync', concurrency: 5 })
   async handleInventorySync(job: Job<{ trackerId: string }>) {
     this.logger.log(`Processing inventory sync: ${job.data.trackerId}`);
     const tracker = await this.prisma.inventorySyncTracker.findUnique({

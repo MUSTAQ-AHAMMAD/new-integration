@@ -33,11 +33,11 @@ describe('CircuitBreakerService', () => {
     it('opens the circuit after reaching the failure threshold', async () => {
       const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         await service.execute('broken', fn).catch(() => undefined);
       }
 
-      const status = service.getStatus('broken') as { state: string } | null;
+      const status = (await service.getStatus('broken')) as { state: string } | null;
       expect(status).not.toBeNull();
       expect(status?.state).toBe(CircuitState.OPEN);
     });
@@ -45,7 +45,7 @@ describe('CircuitBreakerService', () => {
     it('blocks requests when circuit is OPEN', async () => {
       const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 10; i++) {
         await service.execute('blocked', fn).catch(() => undefined);
       }
 
@@ -59,25 +59,31 @@ describe('CircuitBreakerService', () => {
     it('transitions to HALF_OPEN and then CLOSED after successful probe', async () => {
       const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      for (let i = 0; i < 5; i++) {
-        await service.execute('recover', fn, { recoveryTimeout: 1000 }).catch(() => undefined);
+      for (let i = 0; i < 10; i++) {
+        await service
+          .execute('recover', fn, { recoveryTimeout: 1000 })
+          .catch(() => undefined);
       }
 
       // Advance time past recovery timeout
       jest.advanceTimersByTime(1100);
 
       const successFn = jest.fn().mockResolvedValue('recovered');
-      const result = await service.execute('recover', successFn, { recoveryTimeout: 1000 });
+      const result = await service.execute('recover', successFn, {
+        recoveryTimeout: 1000,
+      });
 
       expect(result).toBe('recovered');
-      const status = service.getStatus('recover') as { state: string } | null;
+      const status = (await service.getStatus('recover')) as {
+        state: string;
+      } | null;
       expect(status?.state).toBe(CircuitState.CLOSED);
     });
   });
 
   describe('getStatus', () => {
-    it('returns null for an unknown circuit by name', () => {
-      const status = service.getStatus('unknown-circuit');
+    it('returns null for an unknown circuit by name', async () => {
+      const status = await service.getStatus('unknown-circuit');
       expect(status).toBeNull();
     });
 
@@ -85,7 +91,7 @@ describe('CircuitBreakerService', () => {
       await service.execute('circuit-a', jest.fn().mockResolvedValue('a'));
       await service.execute('circuit-b', jest.fn().mockResolvedValue('b'));
 
-      const status = service.getStatus() as unknown[];
+      const status = (await service.getStatus()) as unknown[];
 
       expect(Array.isArray(status)).toBe(true);
       expect(status.length).toBeGreaterThanOrEqual(2);
@@ -94,7 +100,10 @@ describe('CircuitBreakerService', () => {
     it('returns a single status object for a named circuit', async () => {
       await service.execute('specific', jest.fn().mockResolvedValue('x'));
 
-      const status = service.getStatus('specific') as { name: string; state: string } | null;
+      const status = (await service.getStatus('specific')) as {
+        name: string;
+        state: string;
+      } | null;
 
       expect(status).not.toBeNull();
       expect(status?.name).toBe('specific');

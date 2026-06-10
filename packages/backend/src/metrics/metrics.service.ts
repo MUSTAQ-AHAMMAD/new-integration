@@ -7,6 +7,7 @@ import {
   Histogram,
 } from 'prom-client';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueuesService } from '../queues/queues.service';
 import { SyncStatus } from '@prisma/client';
 
 @Injectable()
@@ -21,7 +22,16 @@ export class MetricsService implements OnModuleInit {
   private readonly activeStores: Gauge;
   private readonly failedTransactionsTotal: Gauge;
 
-  constructor(private readonly prisma: PrismaService) {
+  // BullMQ queue metrics
+  private readonly queueWaiting: Gauge;
+  private readonly queueActive: Gauge;
+  private readonly queueFailed: Gauge;
+  private readonly queueCompleted: Gauge;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queuesService: QueuesService,
+  ) {
     this.registry.setDefaultLabels({ app: 'integration-middleware' });
     collectDefaultMetrics({ register: this.registry });
 
@@ -72,6 +82,34 @@ export class MetricsService implements OnModuleInit {
       help: 'Number of unresolved failed transactions',
       registers: [this.registry],
     });
+
+    this.queueWaiting = new Gauge({
+      name: 'integration_queue_waiting',
+      help: 'Number of jobs waiting in a BullMQ queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.queueActive = new Gauge({
+      name: 'integration_queue_active',
+      help: 'Number of jobs actively being processed in a BullMQ queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.queueFailed = new Gauge({
+      name: 'integration_queue_failed',
+      help: 'Number of failed jobs retained in a BullMQ queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
+
+    this.queueCompleted = new Gauge({
+      name: 'integration_queue_completed',
+      help: 'Number of completed jobs retained in a BullMQ queue',
+      labelNames: ['queue'],
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -89,6 +127,7 @@ export class MetricsService implements OnModuleInit {
       this.refreshAlertStats(),
       this.refreshStoreStats(),
       this.refreshFailedTransactionStats(),
+      this.refreshQueueStats(),
     ]);
   }
 
@@ -128,6 +167,30 @@ export class MetricsService implements OnModuleInit {
       where: { isResolved: false },
     });
     this.failedTransactionsTotal.set(count);
+  }
+
+  private async refreshQueueStats() {
+    const stats = await this.queuesService.getQueueStats();
+
+    this.queueWaiting.set({ queue: 'order-sync' }, stats.orderSync.waiting);
+    this.queueActive.set({ queue: 'order-sync' }, stats.orderSync.active);
+    this.queueFailed.set({ queue: 'order-sync' }, stats.orderSync.failed);
+    this.queueCompleted.set({ queue: 'order-sync' }, stats.orderSync.completed);
+
+    this.queueWaiting.set({ queue: 'inventory-sync' }, stats.inventorySync.waiting);
+    this.queueActive.set({ queue: 'inventory-sync' }, stats.inventorySync.active);
+    this.queueFailed.set({ queue: 'inventory-sync' }, stats.inventorySync.failed);
+    this.queueCompleted.set({ queue: 'inventory-sync' }, stats.inventorySync.completed);
+
+    this.queueWaiting.set({ queue: 'retry' }, stats.retry.waiting);
+    this.queueActive.set({ queue: 'retry' }, stats.retry.active);
+    this.queueFailed.set({ queue: 'retry' }, stats.retry.failed);
+    this.queueCompleted.set({ queue: 'retry' }, stats.retry.completed);
+
+    this.queueWaiting.set({ queue: 'notifications' }, stats.notifications.waiting);
+    this.queueActive.set({ queue: 'notifications' }, stats.notifications.active);
+    this.queueFailed.set({ queue: 'notifications' }, stats.notifications.failed);
+    this.queueCompleted.set({ queue: 'notifications' }, stats.notifications.completed);
   }
 
   recordSyncJobCreated(jobType: string, status: string) {

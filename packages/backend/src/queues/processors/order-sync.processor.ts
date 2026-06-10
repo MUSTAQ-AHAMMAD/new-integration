@@ -38,7 +38,7 @@ export class OrderSyncProcessor {
     private readonly transformationService: FusionTransformationService,
   ) {}
 
-  @Process('sync')
+  @Process({ name: 'sync', concurrency: 10 })
   async handleOrderSync(job: Job<OrderSyncJobData>) {
     const { odooOrderId, branchCode, syncJobId } = job.data;
     const startedAt = Date.now();
