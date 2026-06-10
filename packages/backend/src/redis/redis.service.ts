@@ -1,20 +1,46 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
+
+function resolveRedisOptions(config: ConfigService): RedisOptions {
+  const sentinelHosts = config.get<string>('REDIS_SENTINEL_HOSTS');
+  const masterName = config.get<string>('REDIS_MASTER_NAME', 'mymaster');
+  const password = config.get<string>('REDIS_PASSWORD') || undefined;
+
+  if (sentinelHosts) {
+    const sentinels = sentinelHosts.split(',').map((entry) => {
+      const [host, port] = entry.trim().split(':');
+      return { host, port: Number(port) || 26379 };
+    });
+    return {
+      sentinels,
+      name: masterName,
+      password,
+      sentinelPassword: password,
+      retryStrategy: (times: number) => Math.min(times * 100, 5000),
+      lazyConnect: true,
+      maxRetriesPerRequest: null,
+    } as unknown as RedisOptions;
+  }
+
+  return {
+    host: config.get('REDIS_HOST', 'localhost'),
+    port: config.get<number>('REDIS_PORT', 6379),
+    password,
+    retryStrategy: (times: number) => Math.min(times * 100, 5000),
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+  };
+}
 
 @Injectable()
 export class RedisService extends Redis implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
 
-  constructor(private readonly configService: ConfigService) {
-    super({
-      host: configService.get('REDIS_HOST', 'localhost'),
-      port: configService.get<number>('REDIS_PORT', 6379),
-      password: configService.get('REDIS_PASSWORD') || undefined,
-      retryStrategy: (times) => Math.min(times * 100, 5000),
-      lazyConnect: true,
-      maxRetriesPerRequest: null,
-    });
+  // configService is intentionally not a parameter property so that
+  // super() can be called unconditionally at the root of the constructor.
+  constructor(configService: ConfigService) {
+    super(resolveRedisOptions(configService));
 
     void this.connect().catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);

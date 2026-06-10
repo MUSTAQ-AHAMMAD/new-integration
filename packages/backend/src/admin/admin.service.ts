@@ -56,12 +56,12 @@ export class AdminService {
       delegate.findMany({
         where,
         skip: options.skip ?? 0,
-        take: options.take ?? 50,
+        take: options.take ?? 100,
         orderBy: { createdAt: 'desc' },
       }),
       delegate.count({ where }),
     ]);
-    return { data, total, skip: options.skip ?? 0, take: options.take ?? 50 };
+    return { data, total, skip: options.skip ?? 0, take: options.take ?? 100 };
   }
 
   async getOne(table: string, id: string) {

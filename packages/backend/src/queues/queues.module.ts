@@ -34,24 +34,52 @@ export const QUEUE_NAMES = {
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        redis: {
-          host: config.get('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get('REDIS_PASSWORD') || undefined,
-        },
-        defaultJobOptions: {
-          removeOnComplete: 100,
-          removeOnFail: 500,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const sentinelHosts = config.get<string>('REDIS_SENTINEL_HOSTS');
+        const password = config.get<string>('REDIS_PASSWORD') || undefined;
+
+        const redisConnection = sentinelHosts
+          ? {
+              sentinels: sentinelHosts.split(',').map((entry) => {
+                const [host, port] = entry.trim().split(':');
+                return { host, port: Number(port) || 26379 };
+              }),
+              name: config.get<string>('REDIS_MASTER_NAME', 'mymaster'),
+              password,
+              sentinelPassword: password,
+            }
+          : {
+              host: config.get('REDIS_HOST', 'localhost'),
+              port: config.get<number>('REDIS_PORT', 6379),
+              password,
+            };
+
+        return {
+          redis: redisConnection,
+          defaultJobOptions: {
+            removeOnComplete: 500,
+            removeOnFail: 2000,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5000 },
+          },
+        };
+      },
     }),
     BullModule.registerQueue(
-      { name: QUEUE_NAMES.ORDER_SYNC },
-      { name: QUEUE_NAMES.INVENTORY_SYNC },
-      { name: QUEUE_NAMES.RETRY },
+      {
+        name: QUEUE_NAMES.ORDER_SYNC,
+        // Limit to 30 Oracle calls/second to avoid API saturation
+        limiter: { max: 30, duration: 1000 },
+      },
+      {
+        name: QUEUE_NAMES.INVENTORY_SYNC,
+        limiter: { max: 20, duration: 1000 },
+      },
+      {
+        name: QUEUE_NAMES.RETRY,
+        // Slow the retry lane to avoid hammering Oracle on recovery
+        limiter: { max: 10, duration: 1000 },
+      },
       { name: QUEUE_NAMES.NOTIFICATIONS },
     ),
   ],

@@ -9,6 +9,8 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main",
+    "start:worker": "node dist/worker",
+    "start:worker:dev": "nest start --watch --entryFile worker",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "test": "jest",
     "db:generate": "prisma generate",

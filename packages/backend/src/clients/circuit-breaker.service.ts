@@ -1,8 +1,10 @@
 import {
   Injectable,
   Logger,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { RedisService } from '../redis/redis.service';
 
 export enum CircuitState {
   CLOSED = 'CLOSED',
@@ -16,7 +18,7 @@ export interface CircuitBreakerOptions {
   halfOpenRequests?: number;
 }
 
-interface CircuitRecord {
+interface CircuitSnapshot {
   name: string;
   state: CircuitState;
   failureCount: number;
@@ -43,84 +45,97 @@ interface CircuitStatus {
 }
 
 const DEFAULT_OPTIONS: Required<CircuitBreakerOptions> = {
-  failureThreshold: 5,
-  recoveryTimeout: 30_000,
+  failureThreshold: 10,
+  recoveryTimeout: 60_000,
   halfOpenRequests: 1,
 };
+
+const KEY_PREFIX = 'circuit_breaker';
+const TTL_SECONDS = 300; // auto-expire idle circuits after 5 minutes
 
 @Injectable()
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
-  private readonly circuits = new Map<string, CircuitRecord>();
+  // In-memory fallback when Redis is unavailable
+  private readonly localFallback = new Map<string, CircuitSnapshot>();
+
+  // redis defaults to undefined so that `new CircuitBreakerService()` compiles
+  // in unit tests and inline fallbacks; NestJS DI will inject the real instance.
+  constructor(
+    @Optional() private readonly redis: RedisService | undefined = undefined,
+  ) {}
 
   async execute<T>(
     name: string,
     fn: () => Promise<T>,
     options?: CircuitBreakerOptions,
   ): Promise<T> {
-    const circuit = this.getCircuit(name, options);
+    const opts = { ...DEFAULT_OPTIONS, ...options };
     const now = Date.now();
+    const snap = await this.readCircuit(name, opts);
 
-    if (circuit.state === CircuitState.OPEN) {
-      const openedAt = circuit.openedAt ?? now;
-      if (now - openedAt < circuit.recoveryTimeout) {
+    if (snap.state === CircuitState.OPEN) {
+      const openedAt = snap.openedAt ?? now;
+      if (now - openedAt < snap.recoveryTimeout) {
         throw new ServiceUnavailableException(
           `Circuit ${name} is open and recovering`,
         );
       }
-
-      circuit.state = CircuitState.HALF_OPEN;
-      circuit.halfOpenInFlight = 0;
-      circuit.halfOpenCompleted = 0;
+      // Transition to HALF_OPEN
+      await this.writeField(name, 'state', CircuitState.HALF_OPEN);
+      await this.writeField(name, 'halfOpenInFlight', '0');
+      await this.writeField(name, 'halfOpenCompleted', '0');
+      snap.state = CircuitState.HALF_OPEN;
+      snap.halfOpenInFlight = 0;
+      snap.halfOpenCompleted = 0;
       this.logger.warn(`Circuit ${name} moved to HALF_OPEN`);
     }
 
     if (
-      circuit.state === CircuitState.HALF_OPEN &&
-      circuit.halfOpenInFlight >= circuit.halfOpenRequests
+      snap.state === CircuitState.HALF_OPEN &&
+      snap.halfOpenInFlight >= snap.halfOpenRequests
     ) {
       throw new ServiceUnavailableException(
         `Circuit ${name} is half-open and busy`,
       );
     }
 
-    if (circuit.state === CircuitState.HALF_OPEN) {
-      circuit.halfOpenInFlight += 1;
+    if (snap.state === CircuitState.HALF_OPEN) {
+      await this.incrField(name, 'halfOpenInFlight');
     }
 
     try {
       const result = await fn();
 
-      if (circuit.state === CircuitState.HALF_OPEN) {
-        circuit.halfOpenInFlight -= 1;
-        circuit.halfOpenCompleted += 1;
-
-        if (circuit.halfOpenCompleted >= circuit.halfOpenRequests) {
-          this.closeCircuit(circuit);
+      if (snap.state === CircuitState.HALF_OPEN) {
+        await this.incrField(name, 'halfOpenInFlight', -1);
+        const completed = await this.incrField(name, 'halfOpenCompleted');
+        if (completed >= snap.halfOpenRequests) {
+          await this.closeCircuit(name);
           this.logger.log(`Circuit ${name} closed after recovery`);
         }
       } else {
-        circuit.failureCount = 0;
-        circuit.lastFailureAt = undefined;
+        await this.writeField(name, 'failureCount', '0');
+        await this.writeField(name, 'lastFailureAt', '0');
       }
 
       return result;
     } catch (error: unknown) {
-      if (circuit.state === CircuitState.HALF_OPEN) {
-        circuit.halfOpenInFlight = Math.max(0, circuit.halfOpenInFlight - 1);
+      if (snap.state === CircuitState.HALF_OPEN) {
+        await this.incrField(name, 'halfOpenInFlight', -1);
       }
 
-      circuit.failureCount += 1;
-      circuit.lastFailureAt = Date.now();
+      const failures = await this.incrField(name, 'failureCount');
+      await this.writeField(name, 'lastFailureAt', String(Date.now()));
 
       if (
-        circuit.state === CircuitState.HALF_OPEN ||
-        circuit.failureCount >= circuit.failureThreshold
+        snap.state === CircuitState.HALF_OPEN ||
+        failures >= snap.failureThreshold
       ) {
-        circuit.state = CircuitState.OPEN;
-        circuit.openedAt = Date.now();
-        circuit.halfOpenInFlight = 0;
-        circuit.halfOpenCompleted = 0;
+        await this.writeField(name, 'state', CircuitState.OPEN);
+        await this.writeField(name, 'openedAt', String(Date.now()));
+        await this.writeField(name, 'halfOpenInFlight', '0');
+        await this.writeField(name, 'halfOpenCompleted', '0');
         this.logger.warn(`Circuit ${name} opened after failure`);
       }
 
@@ -128,73 +143,179 @@ export class CircuitBreakerService {
     }
   }
 
-  getStatus(name?: string) {
+  async getStatus(name?: string): Promise<CircuitStatus | CircuitStatus[] | null> {
     if (name) {
-      const circuit = this.circuits.get(name);
-      return circuit ? this.toStatus(circuit) : null;
+      const exists = await this.circuitExists(name);
+      if (!exists) return null;
+      const snap = await this.readCircuit(name, DEFAULT_OPTIONS);
+      return this.toStatus(snap);
     }
-
-    return Array.from(this.circuits.values()).map((circuit) =>
-      this.toStatus(circuit),
+    const keys = await this.keys(`${KEY_PREFIX}:*`);
+    const statuses = await Promise.all(
+      keys.map(async (k) => {
+        const n = k.replace(`${KEY_PREFIX}:`, '');
+        const snap = await this.readCircuit(n, DEFAULT_OPTIONS);
+        return this.toStatus(snap);
+      }),
     );
+    return statuses;
   }
 
-  private getCircuit(
-    name: string,
-    options?: CircuitBreakerOptions,
-  ): CircuitRecord {
-    const normalized = {
-      ...DEFAULT_OPTIONS,
-      ...options,
-    };
-    const existing = this.circuits.get(name);
+  // ── Private helpers ──────────────────────────────────────────────
 
-    if (existing) {
-      existing.failureThreshold = normalized.failureThreshold;
-      existing.recoveryTimeout = normalized.recoveryTimeout;
-      existing.halfOpenRequests = normalized.halfOpenRequests;
-      return existing;
+  private async circuitExists(name: string): Promise<boolean> {
+    try {
+      if (this.redis) {
+        return (await this.redis.exists(`${KEY_PREFIX}:${name}`)) === 1;
+      }
+    } catch {
+      // fall through
     }
+    return this.localFallback.has(name);
+  }
 
-    const circuit: CircuitRecord = {
+  private async readCircuit(
+    name: string,
+    opts: Required<CircuitBreakerOptions>,
+  ): Promise<CircuitSnapshot> {
+    try {
+      if (this.redis) {
+        const raw = await this.redis.hgetall(`${KEY_PREFIX}:${name}`);
+        return {
+          name,
+          state: (raw.state as CircuitState) ?? CircuitState.CLOSED,
+          failureCount: Number(raw.failureCount ?? 0),
+          failureThreshold: opts.failureThreshold,
+          recoveryTimeout: opts.recoveryTimeout,
+          halfOpenRequests: opts.halfOpenRequests,
+          halfOpenInFlight: Number(raw.halfOpenInFlight ?? 0),
+          halfOpenCompleted: Number(raw.halfOpenCompleted ?? 0),
+          openedAt: raw.openedAt ? Number(raw.openedAt) : undefined,
+          lastFailureAt: raw.lastFailureAt ? Number(raw.lastFailureAt) : undefined,
+        };
+      }
+    } catch (err) {
+      this.logger.warn(`Redis unavailable for circuit ${name}, using local fallback`);
+    }
+    return {
+      ...(this.localFallback.get(name) ?? this.emptySnapshot(name)),
+      // Always apply current opts so per-call options (e.g. recoveryTimeout)
+      // are respected, mirroring the behaviour of the Redis path above.
+      failureThreshold: opts.failureThreshold,
+      recoveryTimeout: opts.recoveryTimeout,
+      halfOpenRequests: opts.halfOpenRequests,
+    };
+  }
+
+  private async writeField(name: string, field: string, value: string): Promise<void> {
+    const key = `${KEY_PREFIX}:${name}`;
+    try {
+      if (this.redis) {
+        await this.redis.hset(key, field, value);
+        await this.redis.expire(key, TTL_SECONDS);
+        return;
+      }
+    } catch {
+      // fall through to local fallback
+    }
+    const snap = this.localFallback.get(name) ?? this.emptySnapshot(name);
+    // Coerce numeric strings to numbers so Date(openedAt) works correctly.
+    const parsed =
+      value !== '' && !isNaN(Number(value)) ? Number(value) : value;
+    (snap as unknown as Record<string, unknown>)[field] = parsed;
+    this.localFallback.set(name, snap);
+  }
+
+  private async incrField(name: string, field: string, by = 1): Promise<number> {
+    const key = `${KEY_PREFIX}:${name}`;
+    try {
+      if (this.redis) {
+        const result = await this.redis.hincrby(key, field, by);
+        await this.redis.expire(key, TTL_SECONDS);
+        return result;
+      }
+    } catch {
+      // fall through to local fallback
+    }
+    const snap = this.localFallback.get(name) ?? this.emptySnapshot(name);
+    const current = Number((snap as unknown as Record<string, unknown>)[field] ?? 0);
+    const updated = current + by;
+    (snap as unknown as Record<string, unknown>)[field] = updated;
+    this.localFallback.set(name, snap);
+    return updated;
+  }
+
+  private async closeCircuit(name: string): Promise<void> {
+    const key = `${KEY_PREFIX}:${name}`;
+    try {
+      if (this.redis) {
+        await this.redis.hmset(key, {
+          state: CircuitState.CLOSED,
+          failureCount: '0',
+          openedAt: '0',
+          lastFailureAt: '0',
+          halfOpenInFlight: '0',
+          halfOpenCompleted: '0',
+        });
+        await this.redis.expire(key, TTL_SECONDS);
+        return;
+      }
+    } catch {
+      // fall through to local fallback
+    }
+    // Reset to CLOSED state; keep the entry so getStatus still shows it.
+    const snap = this.localFallback.get(name) ?? this.emptySnapshot(name);
+    snap.state = CircuitState.CLOSED;
+    snap.failureCount = 0;
+    snap.openedAt = undefined;
+    snap.lastFailureAt = undefined;
+    snap.halfOpenInFlight = 0;
+    snap.halfOpenCompleted = 0;
+    this.localFallback.set(name, snap);
+  }
+
+  private async keys(pattern: string): Promise<string[]> {
+    try {
+      if (this.redis) {
+        return await this.redis.keys(pattern);
+      }
+    } catch {
+      // ignore
+    }
+    return Array.from(this.localFallback.keys()).map((n) => `${KEY_PREFIX}:${n}`);
+  }
+
+  private emptySnapshot(name: string): CircuitSnapshot {
+    return {
       name,
       state: CircuitState.CLOSED,
       failureCount: 0,
-      failureThreshold: normalized.failureThreshold,
-      recoveryTimeout: normalized.recoveryTimeout,
-      halfOpenRequests: normalized.halfOpenRequests,
+      failureThreshold: DEFAULT_OPTIONS.failureThreshold,
+      recoveryTimeout: DEFAULT_OPTIONS.recoveryTimeout,
+      halfOpenRequests: DEFAULT_OPTIONS.halfOpenRequests,
       halfOpenInFlight: 0,
       halfOpenCompleted: 0,
     };
-    this.circuits.set(name, circuit);
-    return circuit;
   }
 
-  private closeCircuit(circuit: CircuitRecord) {
-    circuit.state = CircuitState.CLOSED;
-    circuit.failureCount = 0;
-    circuit.openedAt = undefined;
-    circuit.lastFailureAt = undefined;
-    circuit.halfOpenInFlight = 0;
-    circuit.halfOpenCompleted = 0;
-  }
-
-  private toStatus(circuit: CircuitRecord): CircuitStatus {
+  private toStatus(snap: CircuitSnapshot): CircuitStatus {
     return {
-      name: circuit.name,
-      state: circuit.state,
-      failureCount: circuit.failureCount,
-      failureThreshold: circuit.failureThreshold,
-      recoveryTimeout: circuit.recoveryTimeout,
-      halfOpenRequests: circuit.halfOpenRequests,
-      halfOpenInFlight: circuit.halfOpenInFlight,
-      halfOpenCompleted: circuit.halfOpenCompleted,
-      openedAt: circuit.openedAt
-        ? new Date(circuit.openedAt).toISOString()
-        : undefined,
-      lastFailureAt: circuit.lastFailureAt
-        ? new Date(circuit.lastFailureAt).toISOString()
-        : undefined,
+      name: snap.name,
+      state: snap.state,
+      failureCount: snap.failureCount,
+      failureThreshold: snap.failureThreshold,
+      recoveryTimeout: snap.recoveryTimeout,
+      halfOpenRequests: snap.halfOpenRequests,
+      halfOpenInFlight: snap.halfOpenInFlight,
+      halfOpenCompleted: snap.halfOpenCompleted,
+      openedAt:
+        snap.openedAt && snap.openedAt > 0
+          ? new Date(snap.openedAt).toISOString()
+          : undefined,
+      lastFailureAt:
+        snap.lastFailureAt && snap.lastFailureAt > 0
+          ? new Date(snap.lastFailureAt).toISOString()
+          : undefined,
     };
   }
 }
