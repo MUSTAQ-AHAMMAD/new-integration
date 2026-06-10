@@ -54,7 +54,6 @@ const operationalItems: NavItem[] = [
   { href: '/stores', label: 'Store Config Admin', icon: Building2 },
   { href: '/alerts', label: 'Alerts', icon: Bell },
   { href: '/failed', label: 'Failed Transactions', icon: AlertTriangle },
-  { href: '/failed-transactions', label: 'Failed (Legacy)', icon: AlertTriangle },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
   { href: '/refunds', label: 'Refund Reconciliation', icon: RotateCcw },
   { href: '/inventory', label: 'Inventory Warnings', icon: Package },
@@ -63,7 +62,6 @@ const operationalItems: NavItem[] = [
   { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/webhooks', label: 'Webhook Events', icon: Activity },
-  { href: '/activity', label: 'Audit Log (Legacy)', icon: FileText },
 ];
 
 const adminGroups: NavGroup[] = [
