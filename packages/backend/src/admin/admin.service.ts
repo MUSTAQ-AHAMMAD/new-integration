@@ -56,6 +56,7 @@ export class AdminService {
       delegate.findMany({
         where,
         skip: options.skip ?? 0,
+        // Increased from 50 → 100 to reduce round-trips for bulk admin operations.
         take: options.take ?? 100,
         orderBy: { createdAt: 'desc' },
       }),

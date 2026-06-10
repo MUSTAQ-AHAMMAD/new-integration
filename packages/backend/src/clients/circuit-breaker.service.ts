@@ -277,7 +277,21 @@ export class CircuitBreakerService {
   private async keys(pattern: string): Promise<string[]> {
     try {
       if (this.redis) {
-        return await this.redis.keys(pattern);
+        // Use SCAN instead of KEYS to avoid blocking the Redis instance on large keyspaces.
+        const results: string[] = [];
+        let cursor = '0';
+        do {
+          const [nextCursor, batch] = await this.redis.scan(
+            cursor,
+            'MATCH',
+            pattern,
+            'COUNT',
+            100,
+          );
+          cursor = nextCursor;
+          results.push(...batch);
+        } while (cursor !== '0');
+        return results;
       }
     } catch {
       // ignore

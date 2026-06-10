@@ -57,6 +57,8 @@ export const QUEUE_NAMES = {
         return {
           redis: redisConnection,
           defaultJobOptions: {
+            // Increased retention so operators have enough history for debugging
+            // at high throughput: ~500 completed and 2 000 failed jobs in Redis.
             removeOnComplete: 500,
             removeOnFail: 2000,
             attempts: 3,

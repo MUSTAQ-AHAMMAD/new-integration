@@ -49,16 +49,34 @@ export class QueuesService {
       orderFailed,
       orderCompleted,
       inventoryWaiting,
+      inventoryActive,
+      inventoryFailed,
+      inventoryCompleted,
       retryWaiting,
+      retryActive,
+      retryFailed,
+      retryCompleted,
       notificationsWaiting,
+      notificationsActive,
+      notificationsFailed,
+      notificationsCompleted,
     ] = await Promise.all([
       this.orderSyncQueue.getWaitingCount(),
       this.orderSyncQueue.getActiveCount(),
       this.orderSyncQueue.getFailedCount(),
       this.orderSyncQueue.getCompletedCount(),
       this.inventorySyncQueue.getWaitingCount(),
+      this.inventorySyncQueue.getActiveCount(),
+      this.inventorySyncQueue.getFailedCount(),
+      this.inventorySyncQueue.getCompletedCount(),
       this.retryQueue.getWaitingCount(),
+      this.retryQueue.getActiveCount(),
+      this.retryQueue.getFailedCount(),
+      this.retryQueue.getCompletedCount(),
       this.notificationsQueue.getWaitingCount(),
+      this.notificationsQueue.getActiveCount(),
+      this.notificationsQueue.getFailedCount(),
+      this.notificationsQueue.getCompletedCount(),
     ]);
 
     return {
@@ -68,9 +86,24 @@ export class QueuesService {
         failed: orderFailed,
         completed: orderCompleted,
       },
-      inventorySync: { waiting: inventoryWaiting },
-      retry: { waiting: retryWaiting },
-      notifications: { waiting: notificationsWaiting },
+      inventorySync: {
+        waiting: inventoryWaiting,
+        active: inventoryActive,
+        failed: inventoryFailed,
+        completed: inventoryCompleted,
+      },
+      retry: {
+        waiting: retryWaiting,
+        active: retryActive,
+        failed: retryFailed,
+        completed: retryCompleted,
+      },
+      notifications: {
+        waiting: notificationsWaiting,
+        active: notificationsActive,
+        failed: notificationsFailed,
+        completed: notificationsCompleted,
+      },
     };
   }
 }
