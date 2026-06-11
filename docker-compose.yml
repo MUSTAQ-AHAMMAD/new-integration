@@ -190,7 +190,32 @@ services:
       REDIS_MASTER_NAME: mymaster
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      API_PREFIX: ${API_PREFIX:-api/v1}
       LOG_LEVEL: debug
+      # Webhook
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      # Odoo credentials
+      ODOO_BASE_URL: ${ODOO_BASE_URL:-}
+      ODOO_DB: ${ODOO_DB:-}
+      ODOO_USERNAME: ${ODOO_USERNAME:-}
+      ODOO_PASSWORD: ${ODOO_PASSWORD:-}
+      # Oracle credentials
+      ORACLE_REST_BASE_URL: ${ORACLE_REST_BASE_URL:-}
+      ORACLE_SOAP_BASE_URL: ${ORACLE_SOAP_BASE_URL:-}
+      ORACLE_SOAP_WSDL_URL: ${ORACLE_SOAP_WSDL_URL:-}
+      ORACLE_USERNAME: ${ORACLE_USERNAME:-}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-}
+      # VendHQ credentials
+      VENDHQ_BASE_URL: ${VENDHQ_BASE_URL:-}
+      VENDHQ_API_TOKEN: ${VENDHQ_API_TOKEN:-}
+      # SMTP (email notifications)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@integration.com}
     ports:
       - '3001:3001'
     volumes:
@@ -232,6 +257,20 @@ services:
       REDIS_MASTER_NAME: mymaster
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       LOG_LEVEL: debug
+      # Odoo credentials
+      ODOO_BASE_URL: ${ODOO_BASE_URL:-}
+      ODOO_DB: ${ODOO_DB:-}
+      ODOO_USERNAME: ${ODOO_USERNAME:-}
+      ODOO_PASSWORD: ${ODOO_PASSWORD:-}
+      # Oracle credentials
+      ORACLE_REST_BASE_URL: ${ORACLE_REST_BASE_URL:-}
+      ORACLE_SOAP_BASE_URL: ${ORACLE_SOAP_BASE_URL:-}
+      ORACLE_SOAP_WSDL_URL: ${ORACLE_SOAP_WSDL_URL:-}
+      ORACLE_USERNAME: ${ORACLE_USERNAME:-}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-}
+      # VendHQ credentials
+      VENDHQ_BASE_URL: ${VENDHQ_BASE_URL:-}
+      VENDHQ_API_TOKEN: ${VENDHQ_API_TOKEN:-}
     volumes:
       - ./packages/backend/src:/app/packages/backend/src:delegated
       - ./packages/backend/prisma:/app/packages/backend/prisma:delegated
@@ -306,6 +345,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
     networks:

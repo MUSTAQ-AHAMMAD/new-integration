@@ -46,9 +46,8 @@ packages/
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- Node.js 22+
-- pnpm 9+
+- Docker & Docker Compose (v2)
+- Node.js 22+ and pnpm 9+ (local development only)
 
 ### 1. Clone & configure
 
@@ -56,37 +55,37 @@ packages/
 git clone https://github.com/MUSTAQ-AHAMMAD/new-integration
 cd new-integration
 cp .env.example .env
-# Edit .env with your Odoo/Oracle credentials
+# Edit .env with your Odoo/Oracle/VendHQ credentials
 ```
 
-### 2. Start infrastructure
+### 2. Start with Docker (recommended)
 
 ```bash
-docker compose up -d postgres redis
+# Build and start all services
+docker compose up -d
+
+# Run database migrations (required on first run)
+docker compose exec backend pnpm exec prisma migrate deploy
+
+# Tail logs
+docker compose logs -f backend dashboard
 ```
 
-### 3. Install & migrate
+### 3. Local development (alternative)
 
 ```bash
+# Start only the infrastructure
+docker compose up -d postgres redis-master
+
+# Install dependencies
 pnpm install
+
+# Run migrations and generate Prisma client
 pnpm db:migrate
 pnpm db:generate
-```
 
-### 4. Start (development)
-
-```bash
-# Terminal 1
-cd packages/backend && pnpm dev
-
-# Terminal 2
-cd packages/dashboard && pnpm dev
-```
-
-**Or with Docker:**
-
-```bash
-docker compose up -d
+# Start both packages with hot-reload
+pnpm dev
 ```
 
 ### URLs
@@ -98,8 +97,6 @@ docker compose up -d
 | Swagger docs | http://localhost:3001/docs |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3003 (admin/admin) |
-
----
 
 ## API Overview
 
