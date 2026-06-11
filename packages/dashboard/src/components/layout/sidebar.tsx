@@ -145,10 +145,10 @@ function NavLink({ href, label, icon: Icon, onNavigate }: NavItem & { onNavigate
 
 function NavGroupSection({ group, onNavigate }: { group: NavGroup; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const hasActive = group.items.some((i) => pathname === i.href);
   // Start all admin groups open — every table must be visible without extra clicks
   const [open, setOpen] = useState(true);
-  void hasActive; // retain for future use (e.g. auto-scroll to active)
+  const isActive = group.items.some((i) => pathname === i.href);
+  void isActive; // available for future active-item highlighting
   const Icon = group.icon;
 
   return (

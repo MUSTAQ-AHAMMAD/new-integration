@@ -106,6 +106,7 @@ export class VendHqSalesBackupService {
     personalToken: string;
     region: string;
     timezoneOffset: number;
+    currency: string;
   }): Promise<{ saved: number; skipped: number }> {
     const baseUrl = `https://${cred.domainName}.vendhq.com`;
     const resp = await axios.get<{ data?: VendHqSaleRaw[] }>(
@@ -126,7 +127,7 @@ export class VendHqSalesBackupService {
 
     for (const sale of sales) {
       try {
-        const wasNew = await this.upsertSale(sale, cred.region);
+        const wasNew = await this.upsertSale(sale, cred.region, cred.currency);
         if (wasNew) {
           saved++;
         } else {
@@ -156,6 +157,7 @@ export class VendHqSalesBackupService {
   private async upsertSale(
     sale: VendHqSaleRaw,
     region: string,
+    currency: string,
   ): Promise<boolean> {
     const invoiceNumber = sale.invoice_number ?? sale.id;
     const saleDate = sale.sale_date ? new Date(sale.sale_date) : new Date();
@@ -267,7 +269,7 @@ export class VendHqSalesBackupService {
         outletName: sale.outlet_name ?? null,
         registerName: sale.register_name ?? null,
         amount: pmt.amount ?? null,
-        currency: 'AED',
+        currency: currency,
         paymentType: pmtName,
         paymentMethod: pmtName,
         paymentDate: saleDate,
