@@ -2,7 +2,7 @@ import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
 import { NotificationsService } from '../../notifications/notifications.service';
-import { QUEUE_NAMES } from '../queues.module';
+import { QUEUE_NAMES } from '../queues.constants';
 
 export interface NotificationJobData {
   type: 'ERROR_ALERT' | 'INVENTORY_ALERT' | 'DAILY_REPORT' | 'CUSTOM';

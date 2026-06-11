@@ -13,13 +13,9 @@ import { InventorySyncProcessor } from './processors/inventory-sync.processor';
 import { RetryProcessor } from './processors/retry.processor';
 import { NotificationsProcessor } from './processors/notifications.processor';
 import { QueuesService } from './queues.service';
+import { QUEUE_NAMES } from './queues.constants';
 
-export const QUEUE_NAMES = {
-  ORDER_SYNC: 'order-sync',
-  INVENTORY_SYNC: 'inventory-sync',
-  RETRY: 'retry',
-  NOTIFICATIONS: 'notifications',
-} as const;
+export { QUEUE_NAMES };
 
 @Module({
   imports: [

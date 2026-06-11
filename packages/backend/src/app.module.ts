@@ -94,7 +94,7 @@ import { RolesGuard } from './auth/roles.guard';
     AuthModule,
   ],
   providers: [
-    // Rate limiting (all routes)
+    // Rate limiting (applied after auth to avoid wasting tokens on invalid requests)
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
@@ -104,7 +104,7 @@ import { RolesGuard } from './auth/roles.guard';
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-    // Role-based authorisation
+    // Role-based authorisation (after JWT guard so authed users are checked)
     {
       provide: APP_GUARD,
       useClass: RolesGuard,

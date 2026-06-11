@@ -5,7 +5,7 @@
   "description": "Enterprise middleware integration system - Odoo to Oracle Fusion",
   "engines": {
     "node": ">=22",
-    "pnpm": ">=9"
+    "pnpm": ">=9.0.0 <10.0.0"
   },
   "scripts": {
     "dev": "concurrently \"pnpm --filter backend dev\" \"pnpm --filter dashboard dev\"",

@@ -18,7 +18,7 @@ import { StoreConfigService } from '../../store-config/store-config.service';
 import { FusionTransformationService } from '../../sync/fusion-transformation.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
 import { ValidationService } from '../../sync/validation.service';
-import { QUEUE_NAMES } from '../queues.module';
+import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
 
 @Processor(QUEUE_NAMES.ORDER_SYNC)

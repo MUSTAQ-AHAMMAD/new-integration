@@ -5,7 +5,7 @@ import { Job } from 'bull';
 import { AlertsService } from '../../alerts/alerts.service';
 import { GatewayService } from '../../gateway/gateway.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { QUEUE_NAMES } from '../queues.module';
+import { QUEUE_NAMES } from '../queues.constants';
 
 @Processor(QUEUE_NAMES.INVENTORY_SYNC)
 export class InventorySyncProcessor {

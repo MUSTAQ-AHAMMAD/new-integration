@@ -41,7 +41,7 @@ services:
       DB_USER: integration
       DB_PASSWORD: ${POSTGRES_PASSWORD:-integration_pass}
       DB_NAME: integration_db
-      POOL_MODE: transaction
+      POOL_MODE: session
       MAX_CLIENT_CONN: 300
       DEFAULT_POOL_SIZE: 25
       MIN_POOL_SIZE: 5
@@ -191,6 +191,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
+      CORS_ORIGIN: http://localhost:3000
     ports:
       - '3001:3001'
     volumes:
@@ -206,11 +207,11 @@ services:
     networks:
       - integration_net
     healthcheck:
-      test: ['CMD-SHELL', 'curl -f http://localhost:3001/api/v1/health || exit 1']
+      test: ['CMD-SHELL', 'nc -z localhost 3001 || exit 1']
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 40s
+      retries: 5
+      start_period: 60s
 
   # ─────────────────────────────────────────
   # Worker — dedicated BullMQ processor
@@ -231,6 +232,7 @@ services:
       REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       REDIS_MASTER_NAME: mymaster
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
     volumes:
       - ./packages/backend/src:/app/packages/backend/src:delegated
@@ -263,7 +265,8 @@ services:
     volumes:
       - ./packages/dashboard/src:/app/packages/dashboard/src:delegated
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - integration_net
 
@@ -325,6 +328,11 @@ services:
       - '9121:9121'
     depends_on:
       - redis-master
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://localhost:9121/metrics > /dev/null || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - integration_net
 
@@ -342,6 +350,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://localhost:9187/metrics > /dev/null || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - integration_net
 

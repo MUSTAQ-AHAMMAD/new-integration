@@ -1,7 +1,7 @@
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bull';
-import { QUEUE_NAMES } from '../queues.module';
+import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
 
 @Processor(QUEUE_NAMES.RETRY)

@@ -11,7 +11,7 @@ import { ExpressAdapter } from '@bull-board/express';
 import { getQueueToken } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { AppModule } from './app.module';
-import { QUEUE_NAMES } from './queues/queues.module';
+import { QUEUE_NAMES } from './queues/queues.constants';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 async function bootstrap() {
@@ -22,15 +22,17 @@ async function bootstrap() {
 
   app.useLogger(app.get(Logger));
   app.useGlobalFilters(new GlobalExceptionFilter());
+
   // Limit request body size to 10 MB to protect against oversized payloads
   app.use(json({ limit: '10mb' }));
-  // Enable helmet with a relaxed CSP that still allows the Swagger UI to function
+  // Enable helmet with CSP that allows Swagger UI.
+  // Note: unsafe-inline is required for Swagger; consider removing Swagger from production.
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'blob:'],
           connectSrc: ["'self'"],
@@ -40,7 +42,10 @@ async function bootstrap() {
     }),
   );
   app.use(compression());
-  app.enableCors({ origin: process.env.CORS_ORIGIN || '*', credentials: true });
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? false : 'http://localhost:3000'),
+    credentials: true,
+  });
   app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
   app.enableVersioning({ type: VersioningType.URI });
   app.useGlobalPipes(
