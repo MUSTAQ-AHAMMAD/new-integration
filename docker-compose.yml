@@ -174,8 +174,8 @@ services:
   # ─────────────────────────────────────────
   backend:
     build:
-      context: ./packages/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/backend/Dockerfile
       target: development
     container_name: integration_backend
     restart: unless-stopped
@@ -194,8 +194,8 @@ services:
     ports:
       - '3001:3001'
     volumes:
-      - ./packages/backend/src:/app/src:delegated
-      - ./packages/backend/prisma:/app/prisma:delegated
+      - ./packages/backend/src:/app/packages/backend/src:delegated
+      - ./packages/backend/prisma:/app/packages/backend/prisma:delegated
     depends_on:
       postgres:
         condition: service_healthy
@@ -218,8 +218,8 @@ services:
   # ─────────────────────────────────────────
   worker:
     build:
-      context: ./packages/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/backend/Dockerfile
       target: development
     container_name: integration_worker
     restart: unless-stopped
@@ -233,8 +233,8 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       LOG_LEVEL: debug
     volumes:
-      - ./packages/backend/src:/app/src:delegated
-      - ./packages/backend/prisma:/app/prisma:delegated
+      - ./packages/backend/src:/app/packages/backend/src:delegated
+      - ./packages/backend/prisma:/app/packages/backend/prisma:delegated
     depends_on:
       postgres:
         condition: service_healthy
@@ -250,8 +250,8 @@ services:
   # ─────────────────────────────────────────
   dashboard:
     build:
-      context: ./packages/dashboard
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/dashboard/Dockerfile
       target: development
     container_name: integration_dashboard
     restart: unless-stopped
@@ -261,7 +261,7 @@ services:
     ports:
       - '3000:3000'
     volumes:
-      - ./packages/dashboard/src:/app/src:delegated
+      - ./packages/dashboard/src:/app/packages/dashboard/src:delegated
     depends_on:
       - backend
     networks:

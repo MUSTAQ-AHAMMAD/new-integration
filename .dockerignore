@@ -1,0 +1,43 @@
+# Node
+node_modules/
+packages/*/node_modules/
+dist/
+packages/*/dist/
+build/
+packages/*/build/
+.next/
+packages/*/.next/
+out/
+packages/*/out/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Testing
+coverage/
+packages/*/coverage/
+.nyc_output/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Misc
+*.tsbuildinfo
+.turbo/
