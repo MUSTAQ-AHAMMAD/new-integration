@@ -159,10 +159,16 @@ export class OrderSyncProcessor {
           error instanceof Error ? error.message : 'Payment mapping resolution failed';
       }
 
-      // ── 6. Locate the BackupVendhqSales record ────────────────
-      //    The backup job stores the raw sale with its saleNumber equal to odooOrderNumber.
-      const backupSale = await this.prisma.backupVendhqSales.findFirst({
-        where: { saleNumber: order.odooOrderNumber ?? odooOrderId },
+      // ── 6. Locate the BackupVendHqSale record ─────────────────
+      //    The backup job stores the raw sale with its saleNumber / invoiceNumber
+      //    equal to the VendHQ invoice number (= odooOrderNumber here).
+      const backupSale = await this.prisma.backupVendHqSale.findFirst({
+        where: {
+          OR: [
+            { saleNumber: order.odooOrderNumber ?? odooOrderId },
+            { invoiceNumber: order.odooOrderNumber ?? odooOrderId },
+          ],
+        },
       });
 
       let oracleInvoiceNumber: string | null = null;
@@ -320,7 +326,7 @@ export class OrderSyncProcessor {
       } else {
         // No backup sale found — generate a reference but log a warning
         this.logger.warn(
-          `No BackupVendhqSales found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. Oracle SOAP calls skipped.`,
+          `No BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. Oracle SOAP calls skipped.`,
         );
         oracleInvoiceNumber = order.isRefund ? null : `INV-${order.odooOrderNumber}`;
         oracleCreditMemoNumber = order.isRefund ? `CM-${order.odooOrderNumber}` : null;
