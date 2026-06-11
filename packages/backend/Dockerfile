@@ -4,7 +4,10 @@
 FROM node:22-alpine AS deps
 RUN npm install -g pnpm
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/dashboard/package.json ./packages/dashboard/
 RUN pnpm install --frozen-lockfile --prod=false
 
 # ─────────────────────────────────────────
@@ -14,7 +17,11 @@ FROM node:22-alpine AS builder
 RUN npm install -g pnpm
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
+COPY package.json pnpm-workspace.yaml ./
+COPY packages/backend/ ./packages/backend/
+COPY packages/shared/ ./packages/shared/
+WORKDIR /app/packages/backend
 RUN pnpm exec prisma generate
 RUN pnpm run build
 
@@ -22,14 +29,13 @@ RUN pnpm run build
 # Stage 3: Production
 # ─────────────────────────────────────────
 FROM node:22-alpine AS production
-RUN npm install -g pnpm
 WORKDIR /app
 ENV NODE_ENV=production
 
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/prisma ./prisma
-COPY package.json ./
+COPY --from=builder /app/packages/backend/dist ./dist
+COPY --from=builder /app/packages/backend/node_modules ./node_modules
+COPY --from=builder /app/packages/backend/prisma ./prisma
+COPY packages/backend/package.json ./
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
@@ -49,9 +55,14 @@ RUN npm install -g pnpm
 WORKDIR /app
 ENV NODE_ENV=development
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/backend/package.json ./packages/backend/
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/dashboard/package.json ./packages/dashboard/
 RUN pnpm install --frozen-lockfile
-COPY . .
+COPY packages/backend/ ./packages/backend/
+COPY packages/shared/ ./packages/shared/
+WORKDIR /app/packages/backend
 RUN pnpm exec prisma generate
 
 EXPOSE 3001
