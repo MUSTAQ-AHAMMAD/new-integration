@@ -464,6 +464,7 @@ model VendHqCredential {
   region            String
   fusionOrgCode     String?
   timezoneOffset    Float    @default(0)
+  currency          String   @default("AED")
   fusionTaxCode     String?
   businessStartDate DateTime?
   createdAt         DateTime @default(now())
@@ -935,7 +936,11 @@ model FusionInvTxn {
 model BackupVendHqSale {
   id                String   @id @default(cuid())
   invoiceNumber     String
+  /// VendHQ sale identifier / invoice number used as the Oracle sales-order reference
+  saleNumber        String?
   outletName        String?
+  /// VendHQ outlet id — used to look up VendHqOutlet → VendHqRegister
+  outletId          String?
   registerName      String?
   saleDate          DateTime
   totalPrice        Float?
@@ -945,10 +950,16 @@ model BackupVendHqSale {
   version           Int?
   region            String
   customerType      String?
+  /// Raw JSON payload received from VendHQ (preserved for debugging / re-processing)
+  rawJson           Json?
   createdAt         DateTime @default(now())
+
+  backupLineItems BackupVendHqLineItem[]
+  backupPayments  BackupVendHqPayment[]
 
   @@index([region])
   @@index([invoiceNumber])
+  @@index([saleNumber])
   @@index([saleDate])
 }
 
@@ -958,6 +969,10 @@ model BackupVendHqLineItem {
   lineNumber    Int?
   itemNumber    String?
   itemName      String?
+  /// VendHQ product_id (UUID) — used as the Oracle item number when present
+  productId     String?
+  /// Human-readable product name
+  productName   String?
   quantity      Float?
   loyaltyValue  Float?
   totalPrice    Float?
@@ -969,9 +984,14 @@ model BackupVendHqLineItem {
   taxName       String?
   createdAt     DateTime @default(now())
 
+  /// FK to parent BackupVendHqSale
+  saleId String?
+  sale   BackupVendHqSale? @relation(fields: [saleId], references: [id])
+
   @@index([region])
   @@index([invoiceNumber])
   @@index([saleDate])
+  @@index([saleId])
 }
 
 model BackupVendHqPayment {
@@ -982,15 +1002,22 @@ model BackupVendHqPayment {
   amount        Float?
   currency      String    @default("AED")
   paymentType   String?
+  /// Normalised payment method name (mirrors VendHQ payment_type name)
+  paymentMethod String?
   paymentDate   DateTime?
   deletedAt     DateTime?
   region        String
   saleDate      DateTime
   createdAt     DateTime  @default(now())
 
+  /// FK to parent BackupVendHqSale
+  saleId String?
+  sale   BackupVendHqSale? @relation(fields: [saleId], references: [id])
+
   @@index([region])
   @@index([invoiceNumber])
   @@index([saleDate])
+  @@index([saleId])
 }
 
 model BackupVendHqPromotion {

@@ -26,6 +26,7 @@ import { SettingsModule } from './settings/settings.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
+import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 
 @Module({
   imports: [
@@ -92,6 +93,7 @@ import { RolesGuard } from './auth/roles.guard';
     SettingsModule,
     AdminModule,
     AuthModule,
+    VendHqBackupModule,
   ],
   providers: [
     // Rate limiting (applied after auth to avoid wasting tokens on invalid requests)

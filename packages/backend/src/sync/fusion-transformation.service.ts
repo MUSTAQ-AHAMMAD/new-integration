@@ -51,24 +51,36 @@ export class FusionTransformationService {
     transactionNumberOverride?: string,
   ): Promise<TransformResult> {
     // ── 1. Load raw backup data ──────────────────────────────
-    const sale = await this.prisma.backupVendhqSales.findUnique({
+    const sale = await this.prisma.backupVendHqSale.findUnique({
       where: { id: saleDbId },
-      include: { lineItems: true, payments: true },
+      include: { backupLineItems: true, backupPayments: true },
     });
-    if (!sale) throw new Error(`BackupVendhqSales not found: ${saleDbId}`);
+    if (!sale) throw new Error(`BackupVendHqSale not found: ${saleDbId}`);
 
-    const rawJson = sale.rawJson as Record<string, unknown>;
+    const rawJson = (sale.rawJson ?? {}) as Record<string, unknown>;
     const customerType =
-      (rawJson.customer_code as string) ?? (rawJson.customer_type as string) ?? 'NORMAL';
+      sale.customerType ??
+      (rawJson.customer_code as string) ??
+      (rawJson.customer_type as string) ??
+      'NORMAL';
     const registerName =
-      (rawJson.register_name as string) ?? (rawJson.register_id as string) ?? '';
+      (rawJson.register_name as string) ??
+      sale.registerName ??
+      (rawJson.register_id as string) ??
+      '';
 
     // ── 2. Load config tables ────────────────────────────────
+    const outletId = sale.outletId ?? (rawJson.outlet_id as string | undefined);
     const [outlet, salesMeta, buMap, journalMeta] = await Promise.all([
-      this.prisma.vendHqOutlet.findFirst({
-        where: { outletId: sale.outletId, region },
-        include: { registers: true },
-      }),
+      outletId
+        ? this.prisma.vendHqOutlet.findFirst({
+            where: { outletId, region },
+            include: { registers: true },
+          })
+        : this.prisma.vendHqOutlet.findFirst({
+            where: { outletName: sale.outletName ?? undefined, region },
+            include: { registers: true },
+          }),
       this.prisma.fusionSalesMetadata.findFirst({
         where: { customerType, region },
       }),
@@ -95,7 +107,7 @@ export class FusionTransformationService {
       billToLocation: salesMeta.siteNumber ?? '',
       billToAccountNumber: String(salesMeta.billToAccount),
       businessUnit: salesMeta.businessUnit,
-      outletName: sale.outletName,
+      outletName: sale.outletName ?? undefined,
       saleDate,
       transactionSource: salesMeta.txnSource,
       transactionType: salesMeta.txnType,
@@ -105,35 +117,37 @@ export class FusionTransformationService {
     };
 
     // ── 5. Build InvoiceLines ────────────────────────────────
-    for (const li of sale.lineItems) {
+    const saleNumber = sale.saleNumber ?? sale.invoiceNumber;
+    for (const li of sale.backupLineItems) {
       const qty = Number(li.quantity ?? 1);
       if (qty === 0) continue;
       const total = Number(li.totalPrice ?? 0);
       const unitPrice = qty !== 0 ? Math.abs(total / qty) : 0;
-      const isDiscount = li.productName === 'Discount Item';
+      const productName = li.productName ?? li.itemName ?? '';
+      const isDiscount = productName === 'Discount Item';
 
       const invLine: InvoiceLine = {
         lineNumber: invoiceHeader.invoiceLines.length + 1,
-        itemNumber: li.productId,
+        itemNumber: li.productId ?? li.itemNumber ?? undefined,
         memoLineName: isDiscount ? 'Discount Item' : undefined,
-        description: li.productName,
+        description: productName,
         // Java: if Discount Item and total > 0, force qty to 1
         quantity: isDiscount && total > 0 ? 1 : qty,
         unitSellingPrice: unitPrice,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: sale.saleNumber,
+        salesOrder: saleNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
 
     // ── 6. Build Standard Receipts ───────────────────────────
-    const txnNumber = transactionNumberOverride ?? sale.saleNumber;
+    const txnNumber = transactionNumberOverride ?? saleNumber;
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
-    for (const payment of sale.payments) {
-      const pmtMethod = payment.paymentMethod;
+    for (const payment of sale.backupPayments) {
+      const pmtMethod = payment.paymentMethod ?? payment.paymentType ?? '';
       if (pmtMethod.toLowerCase() === 'credit on cust') continue;
 
       const receiptMethod = await this.prisma.fusionReceiptMethod.findFirst({
