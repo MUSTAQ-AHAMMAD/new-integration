@@ -2,6 +2,8 @@ import { AdminModule } from './admin/admin.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { LoggerModule } from 'nestjs-pino';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -72,6 +74,12 @@ import { ItemSyncModule } from './item-sync/item-sync.module';
           },
         },
       },
+    }),
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: true,
+      sortSchema: true,
+      playground: process.env.NODE_ENV !== 'production',
     }),
     ScheduleModule.forRoot(),
     PrismaModule,

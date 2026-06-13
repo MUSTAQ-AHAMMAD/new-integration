@@ -68,4 +68,8 @@ RUN pnpm exec prisma generate
 
 EXPOSE 3001
 
-CMD ["pnpm", "dev"]
+# prisma db push syncs the schema to the DB on every dev restart without
+# requiring versioned migration files. Use `migrate deploy` once migrations
+# are introduced. The `set -e` flag ensures the container exits immediately
+# if the schema push fails rather than starting the app against a bad schema.
+CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate && pnpm dev"]
