@@ -32,6 +32,7 @@ export class OdooClient {
   private readonly logger = new Logger(OdooClient.name);
   private readonly http: AxiosInstance;
   private readonly circuitBreaker: CircuitBreakerService;
+  private readonly apiKey?: string;
   private sessionCookie?: string;
 
   constructor(
@@ -39,13 +40,29 @@ export class OdooClient {
     @Optional() circuitBreaker?: CircuitBreakerService,
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
+    this.apiKey = this.configService.get<string>('ODOO_API_KEY');
     this.http = axios.create({
       baseURL: this.configService.get<string>('ODOO_BASE_URL'),
       timeout: 30_000,
     });
   }
 
-  private async authenticate(forceRefresh = false): Promise<string> {
+  /**
+   * Returns request headers for the chosen auth strategy.
+   * When ODOO_API_KEY is configured the x-api-key header is used and no
+   * session cookie is required.  Otherwise a session cookie is obtained via
+   * username/password authentication.
+   */
+  private async authHeaders(forceRefresh = false): Promise<Record<string, string>> {
+    if (this.apiKey) {
+      return { 'x-api-key': this.apiKey };
+    }
+
+    const cookie = await this.authenticateSession(forceRefresh);
+    return { Cookie: cookie };
+  }
+
+  private async authenticateSession(forceRefresh = false): Promise<string> {
     if (this.sessionCookie && !forceRefresh) {
       return this.sessionCookie;
     }
@@ -79,21 +96,34 @@ export class OdooClient {
     endDate?: string;
     limit?: number;
   }): Promise<OdooOrder[]> {
-    const domain = this.buildOrdersDomain(params);
-
     return this.circuitBreaker.execute(
       'odoo:getOrders',
       () =>
         this.withRetries(async (attempt) => {
-          const cookie = await this.authenticate(attempt > 1);
+          const headers = await this.authHeaders(attempt > 1);
+
+          if (this.apiKey) {
+            // POS REST API — uses query parameters directly
+            const response = await this.http.get('/api/pos/order', {
+              headers,
+              params: {
+                ...(params.branchId !== undefined && { branch_id: params.branchId }),
+                ...(params.startDate && { start_date: params.startDate }),
+                ...(params.endDate && { end_date: params.endDate }),
+              },
+            });
+            return this.extractList<OdooOrder>(response.data);
+          }
+
+          // Session-based fallback: use domain filter on sale.order
+          const domain = this.buildOrdersDomain(params);
           const response = await this.http.get('/api/sale.order', {
-            headers: { Cookie: cookie },
+            headers,
             params: {
               domain: JSON.stringify(domain),
               limit: params.limit ?? 100,
             },
           });
-
           return this.extractList<OdooOrder>(response.data);
         }),
     );
@@ -104,11 +134,11 @@ export class OdooClient {
       'odoo:getOrder',
       () =>
         this.withRetries(async (attempt) => {
-          const cookie = await this.authenticate(attempt > 1);
-          const response = await this.http.get(`/api/sale.order/${orderId}`, {
-            headers: { Cookie: cookie },
-          });
-
+          const headers = await this.authHeaders(attempt > 1);
+          const endpoint = this.apiKey
+            ? `/api/pos/order/${orderId}`
+            : `/api/sale.order/${orderId}`;
+          const response = await this.http.get(endpoint, { headers });
           return this.extractItem<OdooOrder>(response.data);
         }),
     );
@@ -119,9 +149,9 @@ export class OdooClient {
       'odoo:getPaymentMethods',
       () =>
         this.withRetries(async (attempt) => {
-          const cookie = await this.authenticate(attempt > 1);
+          const headers = await this.authHeaders(attempt > 1);
           const response = await this.http.get('/api/account.payment.method', {
-            headers: { Cookie: cookie },
+            headers,
           });
 
           return this.extractList<OdooPaymentMethod>(response.data);
@@ -163,7 +193,10 @@ export class OdooClient {
         throw error;
       }
 
-      this.sessionCookie = undefined;
+      // Only clear the session cookie when using session-based auth
+      if (!this.apiKey) {
+        this.sessionCookie = undefined;
+      }
       await this.delay(200 * 2 ** (attempt - 1));
       return this.withRetries(operation, attempt + 1);
     }
