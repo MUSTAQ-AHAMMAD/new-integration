@@ -129,7 +129,6 @@ export class FusionInvToVendHqService {
       }
 
       const quantity = onHand.OnHandQuantity ?? 0;
-      const startedAt = Date.now();
 
       try {
         // Resolve VendHQ product by SKU (item number)
@@ -200,7 +199,6 @@ export class FusionInvToVendHqService {
         }
       }
 
-      void startedAt; // suppress unused variable warning
     }
 
     return result;

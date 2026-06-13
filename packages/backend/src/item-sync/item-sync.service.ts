@@ -194,7 +194,7 @@ export class ItemSyncService {
   async getItemSyncStatus(region?: string) {
     return this.prisma.vendHqItemMeta.findMany({
       where: region ? { region } : undefined,
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { lastUpdateDate: 'desc' },
       take: 100,
     });
   }
