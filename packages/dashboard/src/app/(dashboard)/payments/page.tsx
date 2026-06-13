@@ -1,14 +1,18 @@
 'use client';
 
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState } from '@/components/ui/error-state';
 
 export default function PaymentMappingsPage() {
   const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const { data: mappings, isLoading, isError } = useQuery({
     queryKey: ['payment-mappings'],
     queryFn: () => api.listPaymentMappings(),
@@ -25,9 +29,46 @@ export default function PaymentMappingsPage() {
 
   const pendingCount = mappings?.filter((mapping) => mapping.requiresApproval && !mapping.approvedAt).length ?? 0;
 
+  const handleExportCsv = () => {
+    const url = api.exportPaymentMappingsCsvUrl();
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'payment-mappings.csv';
+    link.click();
+  };
+
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      // Payment mappings share the same generic admin endpoint under 'payment-mappings'
+      const result = await api.adminImportCsv('payment-mappings', file);
+      toast.success(`Imported ${result.imported} mappings (${result.skipped} skipped)`);
+      if (result.errors.length > 0) toast.warning(`${result.errors.length} rows had errors`);
+      qc.invalidateQueries({ queryKey: ['payment-mappings'] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Payment Method Mappings</h1>
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportCsv} />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold text-gray-900">Payment Method Mappings</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={handleExportCsv} disabled={!mappings?.length}>
+            <Download className="mr-1 h-4 w-4" /> Export CSV
+          </Button>
+          <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="mr-1 h-4 w-4" /> Import CSV
+          </Button>
+        </div>
+      </div>
+
       {pendingCount > 0 && (
         <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
           ⚠️ {pendingCount} payment method(s) require approval before orders can sync

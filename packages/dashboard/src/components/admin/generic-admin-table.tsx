@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Download, Upload, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -107,6 +107,8 @@ export function GenericAdminTable({
   const [skip, setSkip] = useState(0);
   const [editRecord, setEditRecord] = useState<RecordRow | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [oracleOpen, setOracleOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin', table, skip],
@@ -143,6 +145,46 @@ export function GenericAdminTable({
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const oracleImportMutation = useMutation({
+    mutationFn: () => api.oracleImport([table.toUpperCase().replaceAll('-', '_')]),
+    onSuccess: (result) => {
+      const r = result.results[0];
+      if (r) {
+        toast.success(`Oracle import: ${r.imported} imported, ${r.skipped} skipped`);
+      } else {
+        toast.info('Oracle import complete — no matching table found');
+      }
+      setOracleOpen(false);
+      qc.invalidateQueries({ queryKey: ['admin', table] });
+    },
+    onError: (e: Error) => toast.error(`Oracle import failed: ${e.message}`),
+  });
+
+  const handleExportCsv = () => {
+    const url = api.adminExportCsvUrl(table);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${table}-export.csv`;
+    link.click();
+  };
+
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await api.adminImportCsv(table, file);
+      toast.success(`Imported ${result.imported} records (${result.skipped} skipped)`);
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} rows had errors`);
+      }
+      qc.invalidateQueries({ queryKey: ['admin', table] });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const tableFields = fields.filter((f) => !f.tableHidden);
   const emptyRecord = Object.fromEntries(
     fields.filter((f) => !f.hidden && !f.readOnly).map((f) => [f.key, f.type === 'boolean' ? false : f.type === 'number' ? 0 : '']),
@@ -153,28 +195,80 @@ export function GenericAdminTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Hidden file input for CSV import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={handleImportCsv}
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold text-gray-900">{title}</h2>
-        {!readOnly && (
-          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Export CSV */}
+          <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={total === 0}>
+            <Download className="mr-1 h-4 w-4" /> Export CSV
+          </Button>
+
+          {/* Import CSV */}
+          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="mr-1 h-4 w-4" /> Import CSV
+          </Button>
+
+          {/* Import from Oracle DB */}
+          <Dialog open={oracleOpen} onOpenChange={setOracleOpen}>
             <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-1 h-4 w-4" /> New
+              <Button size="sm" variant="outline">
+                <Database className="mr-1 h-4 w-4" /> Import from Oracle
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+            <DialogContent>
               <DialogHeader>
-                <DialogTitle>Create {title}</DialogTitle>
+                <DialogTitle>Import from Oracle DB</DialogTitle>
               </DialogHeader>
-              <RecordForm
-                fields={fields}
-                initial={emptyRecord}
-                onSave={(body) => createMutation.mutate(body)}
-                isPending={createMutation.isPending}
-              />
+              <p className="text-sm text-gray-600">
+                This will connect to the Oracle <strong>ODOO_INTEGRATION</strong> schema and import
+                data for the <strong>{title}</strong> table. Existing records will be updated (upserted).
+              </p>
+              <p className="mt-2 text-xs text-gray-400">
+                Requires <code>ORACLE_DB_HOST</code>, <code>ORACLE_DB_SERVICE</code>,{' '}
+                <code>ORACLE_DB_USERNAME</code> and <code>ORACLE_DB_PASSWORD</code> to be configured
+                in the backend environment.
+              </p>
+              <Button
+                className="mt-4 w-full"
+                onClick={() => oracleImportMutation.mutate()}
+                disabled={oracleImportMutation.isPending}
+              >
+                {oracleImportMutation.isPending ? 'Connecting to Oracle…' : 'Start Oracle Import'}
+              </Button>
             </DialogContent>
           </Dialog>
-        )}
+
+          {/* New record */}
+          {!readOnly && (
+            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus className="mr-1 h-4 w-4" /> New
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>Create {title}</DialogTitle>
+                </DialogHeader>
+                <RecordForm
+                  fields={fields}
+                  initial={emptyRecord}
+                  onSave={(body) => createMutation.mutate(body)}
+                  isPending={createMutation.isPending}
+                />
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
       </div>
 
       <Card>
@@ -313,3 +407,4 @@ export function GenericAdminTable({
     </div>
   );
 }
+

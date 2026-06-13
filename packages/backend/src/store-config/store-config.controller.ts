@@ -1,16 +1,42 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put, Query, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { StoreConfigService } from './store-config.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('store-config')
 @Controller('store-config')
 export class StoreConfigController {
-  constructor(private readonly service: StoreConfigService) {}
+  constructor(
+    private readonly service: StoreConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List store configurations' })
   list(@Query('activeOnly') activeOnly?: string) {
     return this.service.listStores(activeOnly === 'true');
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export store configurations as CSV' })
+  async exportCsv(@Res() res: Response) {
+    const rows = await this.prisma.storeConfiguration.findMany({
+      orderBy: { branchCode: 'asc' },
+    });
+    const escape = (v: unknown) => {
+      const s = v == null ? '' : String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replaceAll('"', '""')}"` : s;
+    };
+    const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+    const csv = [
+      headers.map(escape).join(','),
+      ...rows.map((r) => headers.map((h) => escape((r as Record<string, unknown>)[h])).join(',')),
+    ].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="store-configurations.csv"');
+    res.send(csv);
   }
 
   @Get(':branchCode')
