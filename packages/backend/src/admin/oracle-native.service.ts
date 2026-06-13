@@ -299,7 +299,11 @@ export class OracleNativeService {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const oracledb = require('oracledb') as typeof import('oracledb');
     // Use thin mode — no Oracle Instant Client required
-    oracledb.initOracleClient(); // no-op in thin mode, safe to call
+    try {
+      oracledb.initOracleClient();
+    } catch {
+      // Ignored: initOracleClient is a no-op in thin mode; only throws when Instant Client is missing in thick mode
+    }
     const cfg = this.getConnectionConfig();
 
     const connectString = `${cfg.host}:${cfg.port}/${cfg.serviceName}`;
@@ -319,14 +323,19 @@ export class OracleNativeService {
       throw new BadRequestException(`Failed to connect to Oracle DB: ${msg}`);
     }
 
-    const schema = this.config.get<string>('ORACLE_DB_SCHEMA') ?? 'ODOO_INTEGRATION';
+    const rawSchema = this.config.get<string>('ORACLE_DB_SCHEMA') ?? 'ODOO_INTEGRATION';
+    // Validate schema name to prevent SQL injection through configuration
+    if (!/^[A-Za-z0-9_]+$/.test(rawSchema)) {
+      throw new BadRequestException(`Invalid ORACLE_DB_SCHEMA name: "${rawSchema}"`);
+    }
+    const schema = rawSchema.toUpperCase();
 
     // Discover which tables exist in the schema
     let tablesFound: string[] = [];
     try {
       const result = await connection.execute<[string]>(
         `SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :owner ORDER BY TABLE_NAME`,
-        [schema.toUpperCase()],
+        [schema],
         { outFormat: oracledb.OUT_FORMAT_ARRAY },
       );
       tablesFound = (result.rows ?? []).map((r) => r[0]);

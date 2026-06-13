@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -68,7 +69,7 @@ export class AdminController {
     @Param('table') table: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
-    if (!file) throw new Error('No file uploaded');
+    if (!file) throw new BadRequestException('No file uploaded');
     const csvText = file.buffer.toString('utf-8');
     return this.adminService.importCsv(table, csvText);
   }

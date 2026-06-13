@@ -131,10 +131,11 @@ export class AdminService {
       const cells: string[] = [];
       let inQuote = false;
       let cell = '';
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
+      const chars = Array.from(line); // use fixed array to avoid user-controlled .length bound
+      for (let i = 0; i < chars.length; i++) {
+        const ch = chars[i];
         if (ch === '"') {
-          if (inQuote && line[i + 1] === '"') {
+          if (inQuote && chars[i + 1] === '"') {
             cell += '"';
             i++;
           } else {
