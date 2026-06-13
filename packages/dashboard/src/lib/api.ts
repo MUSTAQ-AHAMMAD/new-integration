@@ -17,7 +17,7 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `****** } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
     ...options,
@@ -156,7 +156,7 @@ export const api = {
     return fetch(`${API_BASE}/admin/${table}/import`, {
       method: 'POST',
       body: form,
-      headers: token ? { Authorization: `****** } : {},
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     }).then(async (res) => {
       if (res.status === 401) {
         authStorage.clearToken();
