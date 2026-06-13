@@ -15,6 +15,7 @@ import {
   CreditCard,
   Database,
   FileText,
+  Globe,
   Heart,
   Key,
   LayoutDashboard,
@@ -45,6 +46,7 @@ interface NavGroup {
 
 const topItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/region-integration', label: 'Region Integration', icon: Globe },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
   { href: '/orders', label: 'Order Manager', icon: ShoppingCart },
   { href: '/push-order', label: 'Push Single Order', icon: Send },
@@ -146,7 +148,7 @@ function NavLink({ href, label, icon: Icon, onNavigate }: NavItem & { onNavigate
 
 function SectionLabel({ label }: { label: string }) {
   return (
-    <p className="px-3 pb-1 pt-3 text-xs font-bold uppercase tracking-widest text-slate-600">
+    <p className="px-3 pb-1 pt-3 text-xs font-bold uppercase tracking-widest text-slate-400">
       {label}
     </p>
   );
@@ -163,7 +165,7 @@ function NavGroupSection({ group, onNavigate }: { group: NavGroup; onNavigate?: 
     <div>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
+        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
       >
         <span className="flex items-center gap-2">
           <Icon className="h-3.5 w-3.5" />
@@ -196,7 +198,7 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
           </div>
           <div>
             <h1 className="text-sm font-bold text-white">Integration Hub</h1>
-            <p className="text-[11px] text-slate-500">Odoo → Oracle Fusion</p>
+            <p className="text-[11px] text-slate-400">Odoo → Oracle Fusion</p>
           </div>
         </div>
       )}
@@ -220,7 +222,7 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
           <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white">
             E
           </div>
-          <span className="text-xs text-slate-500">v0.1.0 · Enterprise</span>
+          <span className="text-xs text-slate-400">v0.1.0 · Enterprise</span>
         </div>
       </div>
     </aside>

@@ -1,10 +1,35 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
 
+// ── Auth token storage ────────────────────────────────────────────
+const TOKEN_KEY = 'integration_hub_token';
+
+export const authStorage = {
+  getToken: (): string | null =>
+    typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null,
+  setToken: (token: string) =>
+    typeof window !== 'undefined' && localStorage.setItem(TOKEN_KEY, token),
+  clearToken: () =>
+    typeof window !== 'undefined' && localStorage.removeItem(TOKEN_KEY),
+};
+
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = authStorage.getToken();
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
     ...options,
   });
+
+  if (res.status === 401) {
+    authStorage.clearToken();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Session expired. Please log in again.');
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
@@ -15,6 +40,28 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // ── Auth ───────────────────────────────────────────────────────
+  login: (email: string, password: string) =>
+    apiRequest<{ accessToken: string }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  // ── Region Integration ────────────────────────────────────────
+  listVendHqRegions: () => apiRequest<VendHqRegionCredential[]>('/vendhq-backup/regions'),
+  triggerVendHqBackupAll: () =>
+    apiRequest<{ ok: boolean; message: string }>('/vendhq-backup/trigger', { method: 'POST' }),
+  triggerVendHqBackupByRegion: (region: string) =>
+    apiRequest<{ ok: boolean; region: string; triggered: number }>(`/vendhq-backup/trigger-region/${encodeURIComponent(region)}`, { method: 'POST' }),
+  triggerItemSyncAll: () =>
+    apiRequest<{ ok: boolean; message: string }>('/item-sync/trigger', { method: 'POST' }),
+  triggerItemSyncByRegion: (region: string) =>
+    apiRequest<{ ok: boolean }>(`/item-sync/trigger/${encodeURIComponent(region)}`, { method: 'POST' }),
+  getItemSyncStatus: (region?: string) => {
+    const qs = region ? `?region=${encodeURIComponent(region)}` : '';
+    return apiRequest<unknown[]>(`/item-sync/status${qs}`);
+  },
+
   getOverview: () => apiRequest<DashboardOverview>('/dashboard/overview'),
   getSyncTrend: (days = 7) => apiRequest<SyncTrendItem[]>(`/dashboard/sync-trend?days=${days}`),
   getFailedTransactions: (limit = 20) => apiRequest<FailedTransaction[]>(`/dashboard/failed-transactions?limit=${limit}`),
@@ -105,7 +152,17 @@ export const api = {
   adminImportCsv: (table: string, file: File): Promise<{ imported: number; skipped: number; errors: string[] }> => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${API_BASE}/admin/${table}/import`, { method: 'POST', body: form }).then(async (res) => {
+    const token = authStorage.getToken();
+    return fetch(`${API_BASE}/admin/${table}/import`, {
+      method: 'POST',
+      body: form,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).then(async (res) => {
+      if (res.status === 401) {
+        authStorage.clearToken();
+        if (typeof window !== 'undefined') window.location.href = '/login';
+        throw new Error('Session expired. Please log in again.');
+      }
       if (!res.ok) {
         const err = await res.json().catch(() => ({ message: res.statusText }));
         throw new Error((err as { message?: string }).message || `API error: ${res.status}`);
@@ -533,4 +590,11 @@ export interface OracleImportSummary {
   results: OracleImportResult[];
   totalImported: number;
   totalErrors: number;
+}
+
+// ─── Region / Integration Trigger types ────────────────────────────
+export interface VendHqRegionCredential {
+  id: string;
+  region: string;
+  domainName: string;
 }

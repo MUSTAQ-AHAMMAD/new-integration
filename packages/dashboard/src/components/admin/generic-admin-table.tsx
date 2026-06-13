@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Download, Upload, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -105,14 +105,15 @@ export function GenericAdminTable({
 }: GenericAdminTableProps) {
   const qc = useQueryClient();
   const [skip, setSkip] = useState(0);
+  const [region, setRegion] = useState('');
   const [editRecord, setEditRecord] = useState<RecordRow | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [oracleOpen, setOracleOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin', table, skip],
-    queryFn: () => api.adminList(table, { skip, take: pageSize }),
+    queryKey: ['admin', table, skip, region],
+    queryFn: () => api.adminList(table, { skip, take: pageSize, region: region || undefined }),
   });
 
   const createMutation = useMutation({
@@ -161,7 +162,7 @@ export function GenericAdminTable({
   });
 
   const handleExportCsv = () => {
-    const url = api.adminExportCsvUrl(table);
+    const url = api.adminExportCsvUrl(table, region || undefined);
     const link = document.createElement('a');
     link.href = url;
     link.download = `${table}-export.csv`;
@@ -207,6 +208,17 @@ export function GenericAdminTable({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold text-gray-900">{title}</h2>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Region filter */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs font-medium text-gray-500 whitespace-nowrap">Region:</label>
+            <input
+              type="text"
+              placeholder="All regions"
+              value={region}
+              onChange={(e) => { setRegion(e.target.value); setSkip(0); }}
+              className="h-8 w-32 rounded border border-gray-300 px-2 text-sm focus:border-indigo-400 focus:outline-none"
+            />
+          </div>
           {/* Export CSV */}
           <Button size="sm" variant="outline" onClick={handleExportCsv} disabled={total === 0}>
             <Download className="mr-1 h-4 w-4" /> Export CSV
@@ -227,6 +239,7 @@ export function GenericAdminTable({
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Import from Oracle DB</DialogTitle>
+                <DialogDescription>Connect to Oracle and upsert records into the {title} table.</DialogDescription>
               </DialogHeader>
               <p className="text-sm text-gray-600">
                 This will connect to the Oracle <strong>ODOO_INTEGRATION</strong> schema and import
@@ -258,6 +271,7 @@ export function GenericAdminTable({
               <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Create {title}</DialogTitle>
+                  <DialogDescription>Fill in the fields below to create a new {title} record.</DialogDescription>
                 </DialogHeader>
                 <RecordForm
                   fields={fields}
@@ -392,6 +406,7 @@ export function GenericAdminTable({
           <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Edit {title}</DialogTitle>
+              <DialogDescription>Update the fields below and save your changes.</DialogDescription>
             </DialogHeader>
             <RecordForm
               fields={fields}

@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useRealtimeUpdates } from '@/hooks/use-realtime-updates';
+import { authStorage } from '@/lib/api';
 import { Menu, X } from 'lucide-react';
 
 function RealtimeUpdater() {
@@ -12,7 +14,25 @@ function RealtimeUpdater() {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!authStorage.getToken()) {
+      router.replace('/login');
+    } else {
+      setReady(true);
+    }
+  }, [router]);
+
+  if (!ready) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="text-sm text-slate-400">Loading…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50">

@@ -1,17 +1,24 @@
 'use client';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { Bell, RefreshCw, Zap } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { api, authStorage } from '@/lib/api';
+import { Bell, LogOut, RefreshCw, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNode }) {
   const qc = useQueryClient();
+  const router = useRouter();
   const { data: overview } = useQuery({
     queryKey: ['dashboard-overview'],
     queryFn: api.getOverview,
     refetchInterval: 30000,
   });
+
+  const handleLogout = () => {
+    authStorage.clearToken();
+    router.replace('/login');
+  };
 
   return (
     <header className="relative flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
@@ -53,6 +60,16 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
         >
           <RefreshCw className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Refresh</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleLogout}
+          className="h-8 gap-1.5 border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600"
+          title="Sign out"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Sign out</span>
         </Button>
       </div>
     </header>
