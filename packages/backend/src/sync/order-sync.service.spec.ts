@@ -10,6 +10,7 @@ jest.mock('../queues/queues.module', () => ({
 }));
 
 import { Prisma, SyncStatus } from '@prisma/client';
+import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { OdooOrderData, OrderSyncService } from './order-sync.service';
@@ -31,6 +32,10 @@ const mockQueues = {
 
 const mockTimezone = {
   normalizeToUtc: jest.fn().mockReturnValue(new Date('2024-01-15T06:00:00.000Z')),
+};
+
+const mockAlerts = {
+  createAlert: jest.fn().mockResolvedValue({}),
 };
 
 function makeOrderData(overrides: Partial<OdooOrderData> = {}): OdooOrderData {
@@ -70,6 +75,7 @@ describe('OrderSyncService', () => {
       mockPrisma as unknown as PrismaService,
       mockQueues as unknown as QueuesService,
       mockTimezone as unknown as TimezoneService,
+      mockAlerts as unknown as AlertsService,
     );
     jest.clearAllMocks();
     mockQueues.enqueueOrderSync.mockResolvedValue({ id: 'job-1' });
@@ -265,6 +271,63 @@ describe('OrderSyncService', () => {
         .mock.calls[0][0].create as { currency: string };
       expect(createData.currency).toBe('AED');
     });
+
+    // ── Auto-refund detection ──────────────────────────────────
+
+    it('auto-sets isRefund when totalAmount is negative and isRefund is not set', async () => {
+      mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
+      mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
+
+      await service.ingestOrder(
+        makeOrderData({ totalAmount: -50, isRefund: false, refundReferenceId: 'ORD-X' }),
+      );
+
+      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
+        .mock.calls[0][0].create as { isRefund: boolean };
+      expect(createData.isRefund).toBe(true);
+    });
+
+    it('fires a REFUND_DETECTED alert when a negative-amount order is auto-classified', async () => {
+      mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
+      mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
+
+      await service.ingestOrder(
+        makeOrderData({ totalAmount: -50, isRefund: false, refundReferenceId: 'ORD-X' }),
+      );
+
+      expect(mockAlerts.createAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ alertType: 'REFUND_DETECTED' }),
+      );
+    });
+
+    it('does NOT fire a REFUND_DETECTED alert when totalAmount is positive', async () => {
+      mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
+
+      await service.ingestOrder(makeOrderData({ totalAmount: 100 }));
+
+      const alertCalls = (mockAlerts.createAlert as jest.Mock).mock.calls;
+      const refundAlert = alertCalls.find(
+        (c: unknown[]) =>
+          (c[0] as { alertType: string }).alertType === 'REFUND_DETECTED',
+      );
+      expect(refundAlert).toBeUndefined();
+    });
+
+    it('does NOT fire a REFUND_DETECTED alert when isRefund is already true', async () => {
+      mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
+      mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
+
+      await service.ingestOrder(
+        makeOrderData({ totalAmount: -50, isRefund: true, refundReferenceId: 'ORD-X' }),
+      );
+
+      const alertCalls = (mockAlerts.createAlert as jest.Mock).mock.calls;
+      const refundAlert = alertCalls.find(
+        (c: unknown[]) =>
+          (c[0] as { alertType: string }).alertType === 'REFUND_DETECTED',
+      );
+      expect(refundAlert).toBeUndefined();
+    });
   });
 
   // ── retryFailedOrders ────────────────────────────────────────
@@ -340,6 +403,70 @@ describe('OrderSyncService', () => {
           }),
         }),
       );
+    });
+  });
+
+  // ── retryNegativeInventoryOrders ─────────────────────────────
+
+  describe('retryNegativeInventoryOrders', () => {
+    it('re-enqueues all NEGATIVE_INVENTORY_HOLD orders', async () => {
+      const heldOrders = [
+        { id: 'q-1', odooOrderId: 'ORD-H1', branchCode: 'DXB' },
+        { id: 'q-2', odooOrderId: 'ORD-H2', branchCode: 'DXB' },
+      ];
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValue(heldOrders);
+
+      const result = await service.retryNegativeInventoryOrders();
+
+      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledTimes(2);
+      expect(result.enqueued).toBe(2);
+    });
+
+    it('queries by NEGATIVE_INVENTORY_HOLD status', async () => {
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValue([]);
+
+      await service.retryNegativeInventoryOrders();
+
+      expect(mockPrisma.orderSyncQueue.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
+          }),
+        }),
+      );
+    });
+
+    it('filters by branchCode when provided', async () => {
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValue([]);
+
+      await service.retryNegativeInventoryOrders('AUH');
+
+      expect(mockPrisma.orderSyncQueue.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ branchCode: 'AUH' }),
+        }),
+      );
+    });
+
+    it('marks re-enqueued orders with isRetry=true', async () => {
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValue([
+        { id: 'q-1', odooOrderId: 'ORD-H1', branchCode: 'DXB' },
+      ]);
+
+      await service.retryNegativeInventoryOrders();
+
+      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledWith(
+        expect.objectContaining({ isRetry: true }),
+      );
+    });
+
+    it('returns enqueued count of 0 when no held orders exist', async () => {
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValue([]);
+
+      const result = await service.retryNegativeInventoryOrders();
+
+      expect(result.enqueued).toBe(0);
+      expect(mockQueues.enqueueOrderSync).not.toHaveBeenCalled();
     });
   });
 });

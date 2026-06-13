@@ -105,7 +105,69 @@ export class OrderSyncProcessor {
         return;
       }
 
-      await this.storeConfigService.getValidatedConfig(branchCode);
+      // ── 2b. Negative-inventory hold ──────────────────────────
+      if (validation.holdForNegativeInventory) {
+        await this.prisma.orderSyncQueue.update({
+          where: { id: order.id },
+          data: { status: SyncStatus.NEGATIVE_INVENTORY_HOLD },
+        });
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
+        });
+        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'skipped');
+        this.logger.warn(
+          `Order ${odooOrderId} held due to negative inventory — use retry-negative-inventory to re-process after stock correction`,
+        );
+        return;
+      }
+
+      // ── 2c. Store configuration check ────────────────────────
+      try {
+        await this.storeConfigService.getValidatedConfig(branchCode);
+      } catch (configErr) {
+        const configMsg =
+          configErr instanceof Error ? configErr.message : 'Store config error';
+        await this.prisma.orderSyncQueue
+          .update({
+            where: { id: order.id },
+            data: {
+              status: SyncStatus.FAILED,
+              validationErrors: { error: configMsg },
+            },
+          })
+          .catch((dbErr) => {
+            this.logger.error(
+              `Failed to mark order ${odooOrderId} as FAILED after config error: ${(dbErr as Error).message}`,
+            );
+          });
+        await this.prisma.failedTransaction
+          .create({
+            data: {
+              orderSyncQueueId: order.id,
+              originalPayload: order,
+              errorType: ErrorType.CONFIGURATION_ERROR,
+              errorMessage: configMsg,
+              errorStack: configErr instanceof Error ? configErr.stack : undefined,
+            },
+          })
+          .catch((dbErr) => {
+            this.logger.error(
+              `Failed to create FailedTransaction for order ${odooOrderId}: ${(dbErr as Error).message}`,
+            );
+          });
+        await this.alertsService.createAlert({
+          alertType: 'STORE_CONFIG_INVALID',
+          severity: 'ERROR',
+          title: `Store configuration error — ${branchCode}`,
+          message: `Order ${odooOrderId} failed due to store configuration: ${configMsg}`,
+          relatedEntityId: branchCode,
+          relatedEntityType: 'STORE_CONFIGURATION',
+        });
+        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.FAILED });
+        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'failed').catch(() => undefined);
+        return;
+      }
 
       // ── 3. Idempotency guard ──────────────────────────────────
       const idempotencyKey = this.idempotencyService.generateKey(
@@ -151,13 +213,13 @@ export class OrderSyncProcessor {
         : order.branchName?.trim()
           ? `${order.branchName.trim()}-DEFAULT`
           : 'DEFAULT';
-      let fallbackAlert: string | null = null;
-      try {
-        await this.paymentMappingService.resolvePaymentMethod('ODOO', paymentMethodName);
-      } catch (error) {
-        fallbackAlert =
-          error instanceof Error ? error.message : 'Payment mapping resolution failed';
-      }
+      const resolvedMapping = await this.paymentMappingService.resolvePaymentMethod(
+        'ODOO',
+        paymentMethodName,
+      );
+      const fallbackAlert = resolvedMapping === null
+        ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
+        : null;
 
       // ── 6. Locate the BackupVendHqSale record ─────────────────
       //    The backup job stores the raw sale with its saleNumber / invoiceNumber
@@ -359,14 +421,9 @@ export class OrderSyncProcessor {
       }
 
       if (order.negativeInventoryFlag) {
-        await this.alertsService.createAlert({
-          alertType: 'NEGATIVE_INVENTORY',
-          severity: 'WARNING',
-          title: 'Negative inventory detected',
-          message: `Order ${order.odooOrderNumber} contains negative inventory items but was synced.`,
-          relatedEntityId: order.id,
-          relatedEntityType: 'ORDER_SYNC_QUEUE',
-        });
+        this.logger.warn(
+          `Order ${order.odooOrderNumber} has negative inventory items but was released for sync (Finance already notified).`,
+        );
       }
 
       // ── 14. Mark SYNCED ───────────────────────────────────────

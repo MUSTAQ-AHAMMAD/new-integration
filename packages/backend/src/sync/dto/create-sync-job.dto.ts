@@ -37,6 +37,15 @@ export class CreateSyncJobDto {
   @IsDateString()
   endDate?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'IANA timezone name used to interpret startDate/endDate (e.g. "Asia/Dubai"). Defaults to UTC.',
+    example: 'Asia/Dubai',
+  })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

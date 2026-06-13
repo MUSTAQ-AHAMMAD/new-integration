@@ -19,6 +19,7 @@ export class SyncService {
     if (dto.branchCode) scopeValue.branchCode = dto.branchCode;
     if (dto.startDate) scopeValue.startDate = dto.startDate;
     if (dto.endDate) scopeValue.endDate = dto.endDate;
+    if (dto.timezone) scopeValue.timezone = dto.timezone;
 
     const job = await this.prisma.syncJob.create({
       data: {
@@ -120,6 +121,10 @@ export class SyncService {
         typeof parsedScope.endDate === 'string'
           ? parsedScope.endDate
           : undefined,
+      timezone:
+        typeof parsedScope.timezone === 'string'
+          ? parsedScope.timezone
+          : undefined,
       createdBy: job.createdBy,
     };
 
@@ -192,12 +197,8 @@ export class SyncService {
       });
     }
 
-    if (
-      dto.scopeType === ScopeType.DATE_RANGE &&
-      dto.startDate &&
-      dto.endDate
-    ) {
-      const timezone = 'UTC';
+    if (dto.scopeType === ScopeType.DATE_RANGE && dto.startDate && dto.endDate) {
+      const timezone = dto.timezone ?? 'UTC';
       const range = this.timezoneService.getDateRangeUtc(
         dto.startDate,
         dto.endDate,
@@ -205,6 +206,27 @@ export class SyncService {
       );
       return this.prisma.orderSyncQueue.findMany({
         where: { orderDateUtc: { gte: range.start, lte: range.end } },
+        orderBy: { orderDateUtc: 'asc' },
+      });
+    }
+
+    if (
+      dto.scopeType === ScopeType.BRANCH_DATE_RANGE &&
+      dto.branchCode &&
+      dto.startDate &&
+      dto.endDate
+    ) {
+      const timezone = dto.timezone ?? 'UTC';
+      const range = this.timezoneService.getDateRangeUtc(
+        dto.startDate,
+        dto.endDate,
+        timezone,
+      );
+      return this.prisma.orderSyncQueue.findMany({
+        where: {
+          branchCode: dto.branchCode,
+          orderDateUtc: { gte: range.start, lte: range.end },
+        },
         orderBy: { orderDateUtc: 'asc' },
       });
     }

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { AlertSeverity, AlertType } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,9 +44,9 @@ export class PaymentMappingService {
         update: { requiresApproval: true },
       });
 
-      throw new NotFoundException(
-        `Payment method "${sourcePaymentName}" is not mapped to Oracle. Admin notified.`,
-      );
+      // Return null so the caller can gracefully queue the order rather than
+      // halting the entire integration run.
+      return null;
     }
 
     if (!mapping.isActive) {

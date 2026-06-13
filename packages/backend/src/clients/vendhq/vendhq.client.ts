@@ -329,6 +329,41 @@ export class VendHqClient {
     );
   }
 
+  /**
+   * Update inventory level for a product at a specific outlet.
+   * PUT /api/2.0/products/{product_id}/inventory
+   * Equivalent to Java FusionInvToVendHQInvIntegration push step.
+   */
+  async updateInventory(params: {
+    productId: string;
+    outletId: string;
+    current: number;
+  }): Promise<VendHqInventory> {
+    return this.circuitBreaker.execute(
+      'vendhq:updateInventory',
+      () =>
+        this.withRetries(async () => {
+          const resp = await this.http.put<{
+            data: { inventory: VendHqInventory[] };
+          }>(`/api/2.0/products/${params.productId}/inventory`, {
+            outlet_id: params.outletId,
+            current: params.current,
+          });
+          const inventoryList =
+            resp.data?.data?.inventory ??
+            (resp.data as unknown as VendHqInventory[]);
+          const entry = Array.isArray(inventoryList)
+            ? inventoryList[0]
+            : inventoryList;
+          return entry ?? {
+            product_id: params.productId,
+            outlet_id: params.outletId,
+            current: params.current,
+          };
+        }),
+    );
+  }
+
   // ── Test connection ───────────────────────────────────────
 
   /**
