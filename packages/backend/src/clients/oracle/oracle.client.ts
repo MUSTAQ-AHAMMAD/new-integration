@@ -43,6 +43,27 @@ export interface OracleCreditMemoResult {
   [key: string]: unknown;
 }
 
+export interface OracleInventoryItem {
+  ItemNumber: string;
+  ItemDescription?: string;
+  PrimaryUOMCode?: string;
+  ItemStatus?: string;
+  ListPrice?: number;
+  OrganizationCode?: string;
+  OrganizationId?: number;
+  [key: string]: unknown;
+}
+
+export interface OracleOnHandQuantity {
+  ItemNumber: string;
+  OrganizationCode?: string;
+  OrganizationId?: number;
+  SubinventoryCode?: string;
+  OnHandQuantity?: number;
+  UOMCode?: string;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class OracleClient {
   private readonly logger = new Logger(OracleClient.name);
@@ -96,6 +117,79 @@ export class OracleClient {
           `/receivables/invoices/${invoiceNumber}`,
         );
         return this.extractObject<OracleInvoiceResult>(response.data);
+      }),
+    );
+  }
+
+  /**
+   * Fetches inventory items from Oracle Fusion SCM.
+   * Equivalent to Java FusionItemsToVendHQItemsIntegration item fetch.
+   * GET /fscmRestApi/resources/11.13.18.05/inventoryItems
+   */
+  async getInventoryItems(params: {
+    organizationCode?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<OracleInventoryItem[]> {
+    return this.circuitBreaker.execute('oracle:getInventoryItems', () =>
+      this.withRetries(async () => {
+        const query: Record<string, string | number> = {
+          limit: params.limit ?? 500,
+          offset: params.offset ?? 0,
+        };
+        if (params.organizationCode)
+          query['q'] = `OrganizationCode=${params.organizationCode}`;
+
+        const response = await this.http.get(
+          '/fscmRestApi/resources/11.13.18.05/inventoryItems',
+          { params: query },
+        );
+        const data = this.isRecord(response.data) ? response.data : {};
+        const items = Array.isArray((data as Record<string, unknown>)['items'])
+          ? ((data as Record<string, unknown>)['items'] as OracleInventoryItem[])
+          : [];
+        return items;
+      }),
+    );
+  }
+
+  /**
+   * Fetches on-hand inventory quantities from Oracle Fusion.
+   * Equivalent to Java FusionOnHandQtyFetch + FusionInvToVendHQInvIntegration.
+   * GET /fscmRestApi/resources/11.13.18.05/inventoryOnhandQuantities
+   */
+  async getInventoryOnHand(params: {
+    organizationCode?: string;
+    itemNumber?: string;
+    subinventoryCode?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<OracleOnHandQuantity[]> {
+    return this.circuitBreaker.execute('oracle:getInventoryOnHand', () =>
+      this.withRetries(async () => {
+        const queryParts: string[] = [];
+        if (params.organizationCode)
+          queryParts.push(`OrganizationCode=${params.organizationCode}`);
+        if (params.itemNumber)
+          queryParts.push(`ItemNumber=${params.itemNumber}`);
+        if (params.subinventoryCode)
+          queryParts.push(`SubinventoryCode=${params.subinventoryCode}`);
+
+        const query: Record<string, string | number> = {
+          limit: params.limit ?? 500,
+          offset: params.offset ?? 0,
+        };
+        if (queryParts.length > 0) query['q'] = queryParts.join(';');
+
+        const response = await this.http.get(
+          '/fscmRestApi/resources/11.13.18.05/inventoryOnhandQuantities',
+          { params: query },
+        );
+        const data = this.isRecord(response.data) ? response.data : {};
+        const items = Array.isArray((data as Record<string, unknown>)['items'])
+          ? ((data as Record<string, unknown>)['items'] as OracleOnHandQuantity[])
+          : [];
+        return items;
       }),
     );
   }
