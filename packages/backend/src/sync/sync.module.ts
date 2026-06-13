@@ -8,6 +8,7 @@ import { SyncController } from './sync.controller';
 import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OrderSyncService } from './order-sync.service';
+import { StalledOrdersService } from './stalled-orders.service';
 import { SyncResolver } from './sync.resolver';
 import { SyncService } from './sync.service';
 import { TimezoneService } from './timezone.service';
@@ -29,6 +30,7 @@ import { ValidationService } from './validation.service';
     TimezoneService,
     ValidationService,
     FusionTransformationService,
+    StalledOrdersService,
     SyncResolver,
   ],
   exports: [
@@ -38,6 +40,7 @@ import { ValidationService } from './validation.service';
     TimezoneService,
     ValidationService,
     FusionTransformationService,
+    StalledOrdersService,
   ],
 })
 export class SyncModule {}

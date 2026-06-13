@@ -76,6 +76,11 @@ class CreateSyncJobInput {
   @Field({ nullable: true })
   @IsOptional()
   @IsString()
+  timezone?: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
   createdBy?: string;
 }
 

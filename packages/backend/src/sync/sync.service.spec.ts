@@ -160,6 +160,77 @@ describe('SyncService', () => {
     });
   });
 
+  describe('createSyncJob — DATE_RANGE timezone', () => {
+    it('passes the caller-supplied timezone to getDateRangeUtc', async () => {
+      mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-tz' });
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-tz', status: 'PENDING' });
+
+      await service.createSyncJob({
+        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
+        scopeType: 'DATE_RANGE' as import('@prisma/client').ScopeType,
+        startDate: '2024-04-01',
+        endDate: '2024-04-30',
+        timezone: 'Asia/Dubai',
+      });
+
+      expect(mockTimezone.getDateRangeUtc).toHaveBeenCalledWith(
+        '2024-04-01',
+        '2024-04-30',
+        'Asia/Dubai',
+      );
+    });
+
+    it('defaults to UTC when no timezone is supplied', async () => {
+      mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-utc' });
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-utc', status: 'PENDING' });
+
+      await service.createSyncJob({
+        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
+        scopeType: 'DATE_RANGE' as import('@prisma/client').ScopeType,
+        startDate: '2024-04-01',
+        endDate: '2024-04-30',
+      });
+
+      expect(mockTimezone.getDateRangeUtc).toHaveBeenCalledWith(
+        '2024-04-01',
+        '2024-04-30',
+        'UTC',
+      );
+    });
+  });
+
+  describe('createSyncJob — BRANCH_DATE_RANGE', () => {
+    it('filters by both branchCode and date range', async () => {
+      mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-bdr' });
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-bdr', status: 'PENDING' });
+
+      await service.createSyncJob({
+        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
+        scopeType: 'BRANCH_DATE_RANGE' as import('@prisma/client').ScopeType,
+        branchCode: 'DXB',
+        startDate: '2024-04-01',
+        endDate: '2024-04-30',
+        timezone: 'Asia/Dubai',
+      });
+
+      expect(mockPrisma.orderSyncQueue.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            branchCode: 'DXB',
+          }),
+        }),
+      );
+      expect(mockTimezone.getDateRangeUtc).toHaveBeenCalledWith(
+        '2024-04-01',
+        '2024-04-30',
+        'Asia/Dubai',
+      );
+    });
+  });
+
   describe('getQueueStats', () => {
     it('delegates to queues service', async () => {
       const stats = { orderSync: { waiting: 5, active: 2 } };

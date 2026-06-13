@@ -8,6 +8,7 @@ import {
 } from 'prom-client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
+import { StalledOrdersService } from '../sync/stalled-orders.service';
 import { SyncStatus } from '@prisma/client';
 
 @Injectable()
@@ -28,9 +29,13 @@ export class MetricsService implements OnModuleInit {
   private readonly queueFailed: Gauge;
   private readonly queueCompleted: Gauge;
 
+  // Stalled-order metric
+  private readonly stalledOrdersTotal: Gauge;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly queuesService: QueuesService,
+    private readonly stalledOrdersService: StalledOrdersService,
   ) {
     this.registry.setDefaultLabels({ app: 'integration-middleware' });
     collectDefaultMetrics({ register: this.registry });
@@ -110,6 +115,12 @@ export class MetricsService implements OnModuleInit {
       labelNames: ['queue'],
       registers: [this.registry],
     });
+
+    this.stalledOrdersTotal = new Gauge({
+      name: 'integration_stalled_orders_total',
+      help: `Number of orders stuck in PENDING status for more than the stale threshold`,
+      registers: [this.registry],
+    });
   }
 
   onModuleInit() {
@@ -128,6 +139,7 @@ export class MetricsService implements OnModuleInit {
       this.refreshStoreStats(),
       this.refreshFailedTransactionStats(),
       this.refreshQueueStats(),
+      this.refreshStalledOrderStats(),
     ]);
   }
 
@@ -191,6 +203,11 @@ export class MetricsService implements OnModuleInit {
     this.queueActive.set({ queue: 'notifications' }, stats.notifications.active);
     this.queueFailed.set({ queue: 'notifications' }, stats.notifications.failed);
     this.queueCompleted.set({ queue: 'notifications' }, stats.notifications.completed);
+  }
+
+  private async refreshStalledOrderStats() {
+    const count = await this.stalledOrdersService.getStalledCount();
+    this.stalledOrdersTotal.set(count);
   }
 
   recordSyncJobCreated(jobType: string, status: string) {

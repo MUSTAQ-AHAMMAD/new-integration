@@ -1,0 +1,96 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { AlertSeverity, AlertType, SyncStatus } from '@prisma/client';
+import { AlertsService } from '../alerts/alerts.service';
+import { PrismaService } from '../prisma/prisma.service';
+
+/** Orders that have been in PENDING status for longer than this threshold are
+ *  considered stalled and will trigger a SYNC_STALLED alert. */
+const STALE_THRESHOLD_HOURS = 6;
+
+@Injectable()
+export class StalledOrdersService {
+  private readonly logger = new Logger(StalledOrdersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly alertsService: AlertsService,
+  ) {}
+
+  /**
+   * Runs every night at 01:00.
+   * Finds orders stuck in PENDING for more than STALE_THRESHOLD_HOURS,
+   * groups them by branch, and fires one SYNC_STALLED alert per branch.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async detectStalledOrders(): Promise<void> {
+    const cutoff = new Date(
+      Date.now() - STALE_THRESHOLD_HOURS * 60 * 60 * 1000,
+    );
+
+    const stalledOrders = await this.prisma.orderSyncQueue.findMany({
+      where: {
+        status: SyncStatus.PENDING,
+        createdAt: { lt: cutoff },
+      },
+      select: {
+        id: true,
+        odooOrderId: true,
+        odooOrderNumber: true,
+        branchCode: true,
+        createdAt: true,
+      },
+      orderBy: { branchCode: 'asc' },
+    });
+
+    if (stalledOrders.length === 0) {
+      return;
+    }
+
+    // Group by branch for targeted alerts
+    const byBranch = stalledOrders.reduce<
+      Record<string, typeof stalledOrders>
+    >((acc, order) => {
+      (acc[order.branchCode] ??= []).push(order);
+      return acc;
+    }, {});
+
+    for (const [branchCode, orders] of Object.entries(byBranch)) {
+      const orderList = orders
+        .slice(0, 10)
+        .map((o) => o.odooOrderNumber ?? o.odooOrderId)
+        .join(', ');
+      const overflow = orders.length > 10 ? ` … and ${orders.length - 10} more` : '';
+
+      await this.alertsService.createAlert({
+        alertType: AlertType.SYNC_STALLED,
+        severity: AlertSeverity.WARNING,
+        title: `Stalled orders detected — branch ${branchCode}`,
+        message:
+          `${orders.length} order(s) in branch ${branchCode} have been in PENDING status ` +
+          `for more than ${STALE_THRESHOLD_HOURS} hours and may have been missed. ` +
+          `Orders: ${orderList}${overflow}. ` +
+          `Use POST /sync/jobs with scopeType=BRANCH_DATE_RANGE to re-sync the affected period.`,
+        relatedEntityId: branchCode,
+        relatedEntityType: 'BRANCH',
+      });
+
+      this.logger.warn(
+        `Stalled orders detected for branch ${branchCode}: ${orders.length} order(s)`,
+      );
+    }
+  }
+
+  /** Returns the count of orders currently stalled (for dashboard/metrics). */
+  async getStalledCount(): Promise<number> {
+    const cutoff = new Date(
+      Date.now() - STALE_THRESHOLD_HOURS * 60 * 60 * 1000,
+    );
+    return this.prisma.orderSyncQueue.count({
+      where: {
+        status: SyncStatus.PENDING,
+        createdAt: { lt: cutoff },
+      },
+    });
+  }
+}

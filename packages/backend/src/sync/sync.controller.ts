@@ -1,12 +1,16 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
+import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
 
 @ApiTags('sync')
 @Controller('sync')
 export class SyncController {
-  constructor(private readonly syncService: SyncService) {}
+  constructor(
+    private readonly syncService: SyncService,
+    private readonly orderSyncService: OrderSyncService,
+  ) {}
 
   @Post('jobs')
   @ApiOperation({ summary: 'Create a new sync job (selective sync)' })
@@ -67,5 +71,14 @@ export class SyncController {
   @ApiOperation({ summary: 'Get sync status for specific order' })
   getOrderStatus(@Param('odooOrderId') odooOrderId: string) {
     return this.syncService.getOrderStatus(odooOrderId);
+  }
+
+  @Post('orders/retry-negative-inventory')
+  @ApiOperation({
+    summary:
+      'Re-queue orders held for negative inventory (call after Finance corrects stock)',
+  })
+  retryNegativeInventoryOrders(@Query('branchCode') branchCode?: string) {
+    return this.orderSyncService.retryNegativeInventoryOrders(branchCode);
   }
 }

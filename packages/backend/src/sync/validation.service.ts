@@ -1,18 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ValidationStatus } from '@prisma/client';
+import { AlertSeverity, AlertType, ValidationStatus } from '@prisma/client';
+import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
+  /** True when the order is otherwise valid but must be held due to negative inventory. */
+  holdForNegativeInventory: boolean;
 }
 
 @Injectable()
 export class ValidationService {
   private readonly logger = new Logger(ValidationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly alertsService: AlertsService,
+  ) {}
 
   async validateOrder(
     odooOrderId: string,
@@ -27,7 +33,7 @@ export class ValidationService {
 
     if (!order) {
       errors.push(`Order ${odooOrderId} not found in sync queue`);
-      return { isValid: false, errors, warnings };
+      return { isValid: false, errors, warnings, holdForNegativeInventory: false };
     }
 
     if (!order.isPaid) {
@@ -54,10 +60,39 @@ export class ValidationService {
       );
     }
 
+    // Negative inventory: fire a structured alert with SKU details and hold the order.
     if (order.negativeInventoryFlag) {
-      warnings.push(
-        'Order contains items with negative inventory - will sync but inventory team notified',
-      );
+      const skuList = Array.isArray(order.negativeInventoryItems)
+        ? (order.negativeInventoryItems as Array<{ sku: string; quantity: number }>)
+            .map((i) => `${i.sku} (qty: ${i.quantity})`)
+            .join(', ')
+        : 'unknown SKUs';
+
+      await this.alertsService.createAlert({
+        alertType: AlertType.NEGATIVE_INVENTORY,
+        severity: AlertSeverity.WARNING,
+        title: `Negative inventory detected — branch ${branchCode}`,
+        message:
+          `Order ${order.odooOrderNumber ?? odooOrderId} contains items with negative ` +
+          `inventory in branch ${branchCode}: ${skuList}. ` +
+          `Order held until Finance corrects stock. Use the retry-negative-inventory ` +
+          `endpoint to re-process once resolved.`,
+        relatedEntityId: order.id,
+        relatedEntityType: 'ORDER_SYNC_QUEUE',
+      });
+
+      if (warnings.length > 0) {
+        this.logger.warn(
+          `Validation warnings for ${odooOrderId}: ${warnings.join('; ')}`,
+        );
+      }
+
+      return {
+        isValid: errors.length === 0,
+        errors,
+        warnings,
+        holdForNegativeInventory: errors.length === 0,
+      };
     }
 
     if (warnings.length > 0) {
@@ -66,6 +101,6 @@ export class ValidationService {
       );
     }
 
-    return { isValid: errors.length === 0, errors, warnings };
+    return { isValid: errors.length === 0, errors, warnings, holdForNegativeInventory: false };
   }
 }
