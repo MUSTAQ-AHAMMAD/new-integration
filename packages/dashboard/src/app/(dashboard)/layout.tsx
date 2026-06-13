@@ -15,7 +15,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-screen bg-slate-50">
       <RealtimeUpdater />
 
       {/* Desktop sidebar */}
@@ -25,15 +25,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setMobileNavOpen(false)}
           />
-          <div className="relative z-50 flex h-full w-64 flex-col bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b p-4">
-              <span className="font-bold text-gray-900">Navigation</span>
+          <div className="relative z-50 flex h-full w-64 flex-col bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-4">
+              <span className="text-sm font-bold text-white">Navigation</span>
               <button
                 onClick={() => setMobileNavOpen(false)}
-                className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -48,7 +48,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           mobileMenuButton={
             <button
               onClick={() => setMobileNavOpen(true)}
-              className="rounded p-2 text-gray-500 hover:bg-gray-100 lg:hidden"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 lg:hidden"
               aria-label="Open navigation"
             >
               <Menu className="h-5 w-5" />
