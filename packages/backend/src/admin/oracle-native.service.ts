@@ -298,12 +298,7 @@ export class OracleNativeService {
   async importFromOracle(tables?: string[]): Promise<OracleImportSummary> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const oracledb = require('oracledb') as typeof import('oracledb');
-    // Use thin mode — no Oracle Instant Client required
-    try {
-      oracledb.initOracleClient();
-    } catch {
-      // Ignored: initOracleClient is a no-op in thin mode; only throws when Instant Client is missing in thick mode
-    }
+    // oracledb v6+ defaults to thin mode (pure JS, no Oracle Instant Client required)
     const cfg = this.getConnectionConfig();
 
     const connectString = `${cfg.host}:${cfg.port}/${cfg.serviceName}`;

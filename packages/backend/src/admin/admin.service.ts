@@ -126,29 +126,25 @@ export class AdminService {
     const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
     if (lines.length < 2) return [];
 
-    // Simple CSV parser that handles quoted fields
+    // Regex-based CSV parser — handles quoted fields and escaped double-quotes
     const parseRow = (line: string): string[] => {
       const cells: string[] = [];
-      let inQuote = false;
-      let cell = '';
-      const chars = Array.from(line); // use fixed array to avoid user-controlled .length bound
-      for (let i = 0; i < chars.length; i++) {
-        const ch = chars[i];
-        if (ch === '"') {
-          if (inQuote && chars[i + 1] === '"') {
-            cell += '"';
-            i++;
-          } else {
-            inQuote = !inQuote;
-          }
-        } else if (ch === ',' && !inQuote) {
-          cells.push(cell);
-          cell = '';
-        } else {
-          cell += ch;
+      // Match each field: optionally quoted (with "" escape) or plain (no comma)
+      const fieldPattern = /(?:^|,)("(?:[^"]|"")*"|[^,]*)/g;
+      let match: RegExpExecArray | null;
+      let lastIndex = 0;
+      while ((match = fieldPattern.exec(line)) !== null) {
+        lastIndex = fieldPattern.lastIndex;
+        let value = match[1] ?? '';
+        if (value.startsWith('"') && value.endsWith('"')) {
+          value = value.slice(1, -1).replace(/""/g, '"');
         }
+        cells.push(value);
       }
-      cells.push(cell);
+      // If the line ends with a comma, fieldPattern won't capture the trailing empty field
+      if (lastIndex < line.length + 1 && line.endsWith(',')) {
+        cells.push('');
+      }
       return cells;
     };
 
