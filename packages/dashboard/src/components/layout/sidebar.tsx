@@ -15,6 +15,7 @@ import {
   CreditCard,
   Database,
   FileText,
+  Globe,
   Heart,
   Key,
   LayoutDashboard,
@@ -45,6 +46,7 @@ interface NavGroup {
 
 const topItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/region-integration', label: 'Region Integration', icon: Globe },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
   { href: '/orders', label: 'Order Manager', icon: ShoppingCart },
   { href: '/push-order', label: 'Push Single Order', icon: Send },

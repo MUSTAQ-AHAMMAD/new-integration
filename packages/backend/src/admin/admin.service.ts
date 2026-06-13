@@ -82,7 +82,7 @@ export class AdminService {
   async update(table: string, id: string, body: Record<string, unknown>) {
     await this.getOne(table, id);
     const delegate = this.getDelegate(table);
-    const { id: _id, createdAt: _ca, ...data } = body as any;
+    const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body as any;
     return delegate.update({ where: { id }, data });
   }
 
