@@ -136,7 +136,11 @@ export class OrderSyncProcessor {
               validationErrors: { error: configMsg },
             },
           })
-          .catch(() => undefined);
+          .catch((dbErr) => {
+            this.logger.error(
+              `Failed to mark order ${odooOrderId} as FAILED after config error: ${(dbErr as Error).message}`,
+            );
+          });
         await this.prisma.failedTransaction
           .create({
             data: {
@@ -147,7 +151,11 @@ export class OrderSyncProcessor {
               errorStack: configErr instanceof Error ? configErr.stack : undefined,
             },
           })
-          .catch(() => undefined);
+          .catch((dbErr) => {
+            this.logger.error(
+              `Failed to create FailedTransaction for order ${odooOrderId}: ${(dbErr as Error).message}`,
+            );
+          });
         await this.alertsService.createAlert({
           alertType: 'STORE_CONFIG_INVALID',
           severity: 'ERROR',
@@ -210,7 +218,7 @@ export class OrderSyncProcessor {
         paymentMethodName,
       );
       const fallbackAlert = resolvedMapping === null
-        ? `Payment method "${paymentMethodName}" has no Oracle mapping — admin notified`
+        ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
         : null;
 
       // ── 6. Locate the BackupVendHqSale record ─────────────────

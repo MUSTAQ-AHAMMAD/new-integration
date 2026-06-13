@@ -60,7 +60,7 @@ export class StalledOrdersService {
         .slice(0, 10)
         .map((o) => o.odooOrderNumber ?? o.odooOrderId)
         .join(', ');
-      const overflow = orders.length > 10 ? ` … and ${orders.length - 10} more` : '';
+      const overflow = orders.length > 10 ? ` ... and ${orders.length - 10} more` : '';
 
       await this.alertsService.createAlert({
         alertType: AlertType.SYNC_STALLED,

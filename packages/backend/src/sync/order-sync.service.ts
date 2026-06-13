@@ -37,8 +37,9 @@ export class OrderSyncService {
   async ingestOrder(data: OdooOrderData): Promise<void> {
     // Auto-detect refunds: negative total amount must be treated as a credit note
     // even when the caller did not explicitly set isRefund.
+    let processedData = data;
     if (data.totalAmount < 0 && !data.isRefund) {
-      data = { ...data, isRefund: true };
+      processedData = { ...data, isRefund: true };
       await this.alertsService.createAlert({
         alertType: AlertType.REFUND_DETECTED,
         severity: AlertSeverity.WARNING,
@@ -50,100 +51,100 @@ export class OrderSyncService {
     }
 
     const orderDateUtc = this.timezoneService.normalizeToUtc(
-      data.orderDate,
-      data.originalTimezone,
+      processedData.orderDate,
+      processedData.originalTimezone,
     );
-    const hasNegativeInventory = (data.negativeInventoryItems?.length ?? 0) > 0;
+    const hasNegativeInventory = (processedData.negativeInventoryItems?.length ?? 0) > 0;
 
     const order = await this.prisma.orderSyncQueue.upsert({
       where: {
         odooOrderId_branchCode: {
-          odooOrderId: data.odooOrderId,
-          branchCode: data.branchCode,
+          odooOrderId: processedData.odooOrderId,
+          branchCode: processedData.branchCode,
         },
       },
       create: {
-        odooOrderId: data.odooOrderId,
-        odooOrderNumber: data.odooOrderNumber,
-        branchCode: data.branchCode,
-        branchName: data.branchName,
-        orderDate: data.orderDate,
+        odooOrderId: processedData.odooOrderId,
+        odooOrderNumber: processedData.odooOrderNumber,
+        branchCode: processedData.branchCode,
+        branchName: processedData.branchName,
+        orderDate: processedData.orderDate,
         orderDateUtc,
-        originalTimezone: data.originalTimezone,
-        customerName: data.customerName,
-        customerEmail: data.customerEmail,
-        totalAmount: new Prisma.Decimal(data.totalAmount),
-        currency: data.currency || 'AED',
-        isPaid: data.isPaid,
-        isCancelled: data.isCancelled ?? false,
-        isRefund: data.isRefund ?? false,
-        refundReferenceId: data.refundReferenceId,
+        originalTimezone: processedData.originalTimezone,
+        customerName: processedData.customerName,
+        customerEmail: processedData.customerEmail,
+        totalAmount: new Prisma.Decimal(processedData.totalAmount),
+        currency: processedData.currency || 'AED',
+        isPaid: processedData.isPaid,
+        isCancelled: processedData.isCancelled ?? false,
+        isRefund: processedData.isRefund ?? false,
+        refundReferenceId: processedData.refundReferenceId,
         negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: data.negativeInventoryItems
-          ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue)
+        negativeInventoryItems: processedData.negativeInventoryItems
+          ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
           : undefined,
         status:
-          data.isPaid && !(data.isCancelled ?? false)
+          processedData.isPaid && !(processedData.isCancelled ?? false)
             ? SyncStatus.PENDING
             : SyncStatus.SKIPPED,
       },
       update: {
-        odooOrderNumber: data.odooOrderNumber,
-        branchName: data.branchName,
-        orderDate: data.orderDate,
+        odooOrderNumber: processedData.odooOrderNumber,
+        branchName: processedData.branchName,
+        orderDate: processedData.orderDate,
         orderDateUtc,
-        originalTimezone: data.originalTimezone,
-        customerName: data.customerName,
-        customerEmail: data.customerEmail,
-        totalAmount: new Prisma.Decimal(data.totalAmount),
-        currency: data.currency || 'AED',
-        isPaid: data.isPaid,
-        isCancelled: data.isCancelled ?? false,
-        isRefund: data.isRefund ?? false,
-        refundReferenceId: data.refundReferenceId,
+        originalTimezone: processedData.originalTimezone,
+        customerName: processedData.customerName,
+        customerEmail: processedData.customerEmail,
+        totalAmount: new Prisma.Decimal(processedData.totalAmount),
+        currency: processedData.currency || 'AED',
+        isPaid: processedData.isPaid,
+        isCancelled: processedData.isCancelled ?? false,
+        isRefund: processedData.isRefund ?? false,
+        refundReferenceId: processedData.refundReferenceId,
         negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: data.negativeInventoryItems
-          ? (data.negativeInventoryItems as unknown as Prisma.InputJsonValue)
+        negativeInventoryItems: processedData.negativeInventoryItems
+          ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
           : Prisma.JsonNull,
         status:
-          data.isPaid && !(data.isCancelled ?? false)
+          processedData.isPaid && !(processedData.isCancelled ?? false)
             ? SyncStatus.PENDING
             : SyncStatus.SKIPPED,
       },
     });
 
-    if (data.isRefund && data.refundReferenceId) {
+    if (processedData.isRefund && processedData.refundReferenceId) {
       await this.prisma.refundTracking.upsert({
-        where: { refundOrderId: data.odooOrderId },
+        where: { refundOrderId: processedData.odooOrderId },
         create: {
-          originalOrderId: data.refundReferenceId,
-          originalOrderNumber: data.refundReferenceId,
-          refundOrderId: data.odooOrderId,
-          refundOrderNumber: data.odooOrderNumber,
-          refundAmount: new Prisma.Decimal(Math.abs(data.totalAmount)),
+          originalOrderId: processedData.refundReferenceId,
+          originalOrderNumber: processedData.refundReferenceId,
+          refundOrderId: processedData.odooOrderId,
+          refundOrderNumber: processedData.odooOrderNumber,
+          refundAmount: new Prisma.Decimal(Math.abs(processedData.totalAmount)),
           refundReason: 'Webhook refund event',
           refundDate: orderDateUtc,
           oracleCreditMemoNumber: '',
           creditMemoStatus: SyncStatus.PENDING,
         },
         update: {
-          refundAmount: new Prisma.Decimal(Math.abs(data.totalAmount)),
+          refundAmount: new Prisma.Decimal(Math.abs(processedData.totalAmount)),
           refundDate: orderDateUtc,
           creditMemoStatus: SyncStatus.PENDING,
         },
       });
     }
 
-    if (data.isPaid && !(data.isCancelled ?? false)) {
+    if (processedData.isPaid && !(processedData.isCancelled ?? false)) {
       await this.queues.enqueueOrderSync({
         orderSyncQueueId: order.id,
-        odooOrderId: data.odooOrderId,
-        branchCode: data.branchCode,
+        odooOrderId: processedData.odooOrderId,
+        branchCode: processedData.branchCode,
       });
     }
 
     this.logger.log(
-      `Order ${data.odooOrderId} ingested for branch ${data.branchCode}`,
+      `Order ${processedData.odooOrderId} ingested for branch ${processedData.branchCode}`,
     );
   }
 
