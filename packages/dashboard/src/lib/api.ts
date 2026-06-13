@@ -94,6 +94,38 @@ export const api = {
     apiRequest<T>(`/admin/${table}/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   adminDelete: (table: string, id: string) =>
     apiRequest<void>(`/admin/${table}/${id}`, { method: 'DELETE' }),
+
+  /** Download all records for an admin table as a CSV blob URL */
+  adminExportCsvUrl: (table: string, region?: string) => {
+    const qs = region ? `?region=${encodeURIComponent(region)}` : '';
+    return `${API_BASE}/admin/${table}/export${qs}`;
+  },
+
+  /** Upload a CSV file to bulk-import records into an admin table */
+  adminImportCsv: (table: string, file: File): Promise<{ imported: number; skipped: number; errors: string[] }> => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch(`${API_BASE}/admin/${table}/import`, { method: 'POST', body: form }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: res.statusText }));
+        throw new Error((err as { message?: string }).message || `API error: ${res.status}`);
+      }
+      return res.json() as Promise<{ imported: number; skipped: number; errors: string[] }>;
+    });
+  },
+
+  /** Trigger Oracle ODOO_INTEGRATION schema import */
+  oracleImport: (tables?: string[]) =>
+    apiRequest<OracleImportSummary>('/admin/oracle-import', {
+      method: 'POST',
+      body: JSON.stringify({ tables }),
+    }),
+
+  /** Export payment mappings as CSV */
+  exportPaymentMappingsCsvUrl: () => `${API_BASE}/payment-mappings/export`,
+
+  /** Export store configs as CSV */
+  exportStoresCsvUrl: () => `${API_BASE}/store-config/export`,
 };
 
 export interface DashboardOverview {
@@ -484,3 +516,21 @@ export interface VendHqItemMeta {
   updatedAt: string;
 }
 
+
+
+// ─── Oracle Import ─────────────────────────────────────────────────
+export interface OracleImportResult {
+  table: string;
+  oracleTable: string;
+  imported: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface OracleImportSummary {
+  connectedAs: string;
+  tablesFound: string[];
+  results: OracleImportResult[];
+  totalImported: number;
+  totalErrors: number;
+}

@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type StoreConfig, type UpsertStoreConfigDto } from '@/lib/api';
 import { getStatusColor } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, ShieldCheck, Send } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, Send, Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -147,6 +147,7 @@ function storeToFormDto(store: StoreConfig): UpsertStoreConfigDto {
 
 export default function StoresPage() {
   const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: stores, isLoading, isError } = useQuery({
     queryKey: ['stores'],
@@ -184,22 +185,55 @@ export default function StoresPage() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['stores'] });
 
+  const handleExportCsv = () => {
+    const url = api.exportStoresCsvUrl();
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'store-configurations.csv';
+    link.click();
+  };
+
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await api.adminImportCsv('store-configs', file);
+      toast.success(`Imported ${result.imported} stores (${result.skipped} skipped)`);
+      if (result.errors.length > 0) toast.warning(`${result.errors.length} rows had errors`);
+      refresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportCsv} />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Store Configurations</h1>
           <p className="text-sm text-gray-500">Manage store branch configuration (admin panel)</p>
         </div>
-        <StoreFormDialog
-          trigger={
-            <Button>
-              <Plus className="mr-1 h-4 w-4" /> New Store
-            </Button>
-          }
-          mode="create"
-          onSaved={refresh}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={handleExportCsv} disabled={!stores?.length}>
+            <Download className="mr-1 h-4 w-4" /> Export CSV
+          </Button>
+          <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="mr-1 h-4 w-4" /> Import CSV
+          </Button>
+          <StoreFormDialog
+            trigger={
+              <Button>
+                <Plus className="mr-1 h-4 w-4" /> New Store
+              </Button>
+            }
+            mode="create"
+            onSaved={refresh}
+          />
+        </div>
       </div>
 
       <Card>

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,22 +10,71 @@ import {
   Post,
   Put,
   Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { AdminService } from './admin.service';
+import { OracleNativeService } from './oracle-native.service';
 import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('admin')
 @Controller('admin')
 @Roles('ADMIN')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly oracleNative: OracleNativeService,
+  ) {}
 
   @Get('tables')
   @ApiOperation({ summary: 'List all managed admin tables' })
   listTables() {
     return AdminService.tables();
   }
+
+  // ── Oracle import ──────────────────────────────────────────────
+
+  @Post('oracle-import')
+  @ApiOperation({ summary: 'Import configuration data directly from Oracle ODOO_INTEGRATION schema' })
+  oracleImport(@Body() body: { tables?: string[] }) {
+    return this.oracleNative.importFromOracle(body?.tables);
+  }
+
+  // ── CSV export/import ──────────────────────────────────────────
+
+  @Get(':table/export')
+  @ApiOperation({ summary: 'Export all records as CSV' })
+  @ApiQuery({ name: 'region', required: false })
+  async exportCsv(
+    @Param('table') table: string,
+    @Query('region') region: string | undefined,
+    @Res() res: Response,
+  ) {
+    const csv = await this.adminService.exportCsv(table, region);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${table}-export.csv"`);
+    res.send(csv);
+  }
+
+  @Post(':table/import')
+  @ApiOperation({ summary: 'Import records from a CSV file' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @UseInterceptors(FileInterceptor('file'))
+  async importCsv(
+    @Param('table') table: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('No file uploaded');
+    const csvText = file.buffer.toString('utf-8');
+    return this.adminService.importCsv(table, csvText);
+  }
+
+  // ── Generic CRUD ───────────────────────────────────────────────
 
   @Get(':table')
   @ApiOperation({ summary: 'List records for a table' })
