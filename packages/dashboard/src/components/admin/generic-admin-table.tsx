@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Download, Upload, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -227,6 +227,7 @@ export function GenericAdminTable({
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Import from Oracle DB</DialogTitle>
+                <DialogDescription>Connect to Oracle and upsert records into the {title} table.</DialogDescription>
               </DialogHeader>
               <p className="text-sm text-gray-600">
                 This will connect to the Oracle <strong>ODOO_INTEGRATION</strong> schema and import
@@ -258,6 +259,7 @@ export function GenericAdminTable({
               <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>Create {title}</DialogTitle>
+                  <DialogDescription>Fill in the fields below to create a new {title} record.</DialogDescription>
                 </DialogHeader>
                 <RecordForm
                   fields={fields}
@@ -392,6 +394,7 @@ export function GenericAdminTable({
           <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Edit {title}</DialogTitle>
+              <DialogDescription>Update the fields below and save your changes.</DialogDescription>
             </DialogHeader>
             <RecordForm
               fields={fields}

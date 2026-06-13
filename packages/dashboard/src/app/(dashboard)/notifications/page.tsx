@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ErrorState } from '@/components/ui/error-state';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function NotificationsPage() {
   const qc = useQueryClient();
@@ -140,6 +140,7 @@ export default function NotificationsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Notification Recipient</DialogTitle>
+            <DialogDescription>Enter the recipient details and choose which notifications they should receive.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">

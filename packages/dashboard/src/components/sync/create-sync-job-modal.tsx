@@ -6,7 +6,7 @@ import { api, type CreateSyncJobDto } from '@/lib/api';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -46,6 +46,7 @@ export function CreateSyncJobModal() {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Create Sync Job</DialogTitle>
+          <DialogDescription>Configure the job type and scope, then submit to queue a new sync job.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div>
