@@ -44,7 +44,7 @@ export function AlertsPanel() {
                 key={alert.id}
                 className={cn('flex items-start gap-3 rounded-lg border border-transparent px-3 py-2.5 transition-colors', s.bg)}
               >
-                <div className="mt-1 flex items-center gap-1.5 shrink-0">
+                <div className="mt-1 shrink-0 flex items-center gap-1.5">
                   <span className={cn('h-2 w-2 rounded-full', s.dot)} />
                   <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1', s.badge)}>
                     {alert.severity}

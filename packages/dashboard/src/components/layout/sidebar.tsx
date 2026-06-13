@@ -146,7 +146,7 @@ function NavLink({ href, label, icon: Icon, onNavigate }: NavItem & { onNavigate
 
 function SectionLabel({ label }: { label: string }) {
   return (
-    <p className="px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-widest text-slate-600">
+    <p className="px-3 pb-1 pt-3 text-xs font-bold uppercase tracking-widest text-slate-600">
       {label}
     </p>
   );
