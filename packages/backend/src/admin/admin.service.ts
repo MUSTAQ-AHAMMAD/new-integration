@@ -142,7 +142,7 @@ export class AdminService {
         cells.push(value);
       }
       // If the line ends with a comma, fieldPattern won't capture the trailing empty field
-      if (lastIndex < line.length + 1 && line.endsWith(',')) {
+      if (lastIndex === line.length && line.endsWith(',')) {
         cells.push('');
       }
       return cells;

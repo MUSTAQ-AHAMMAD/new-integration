@@ -173,7 +173,7 @@ const MAPPINGS: OracleTableMapping[] = [
       outletId: str(r, 'OUTLET_ID'),
       outletName: str(r, 'OUTLET_NAME'),
       currency: str(r, 'CURRENCY') || 'AED',
-      version: num(r, 'VERSION') || 1,
+      version: num(r, 'VERSION') ?? 1,
       region: str(r, 'REGION'),
     }),
     upsertWhere: (r) => ({
@@ -197,7 +197,7 @@ const MAPPINGS: OracleTableMapping[] = [
       bankAccountId: optNum(r, 'BANK_ACCOUNT_ID'),
       giftAccount: optStr(r, 'GIFT_ACCOUNT'),
       giftAccountId: optNum(r, 'GIFT_ACCOUNT_ID'),
-      version: num(r, 'VERSION') || 1,
+      version: num(r, 'VERSION') ?? 1,
       region: str(r, 'REGION'),
     }),
     upsertWhere: (r) => ({
@@ -241,7 +241,7 @@ const MAPPINGS: OracleTableMapping[] = [
     mapRow: (r) => ({
       taxId: str(r, 'TAX_ID'),
       taxName: str(r, 'TAX_NAME'),
-      version: num(r, 'VERSION') || 1,
+      version: num(r, 'VERSION') ?? 1,
       fusionName: optStr(r, 'FUSION_NAME'),
       region: str(r, 'REGION'),
     }),
