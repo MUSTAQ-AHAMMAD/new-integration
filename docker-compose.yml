@@ -188,6 +188,8 @@ services:
       
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       LOG_LEVEL: debug
       CORS_ORIGIN: http://localhost:3000
     ports:
