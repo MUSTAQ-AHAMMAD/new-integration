@@ -1,0 +1,34 @@
+services:
+  # ... (keeping all services the same until backend section)
+  # ─────────────────────────────────────────
+  # Backend (NestJS) — API server
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+      target: production
+    container_name: integration_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
+      DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
+      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      REDIS_MASTER_NAME: mymaster
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      LOG_LEVEL: debug
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis-master:
+        condition: service_healthy
+    networks:
+      - integration_net

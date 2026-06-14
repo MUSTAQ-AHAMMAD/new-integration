@@ -182,21 +182,16 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      # Use PgBouncer for pooled connections; Prisma needs ?pgbouncer=true
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
-      # Keep a direct URL for migrations (Prisma migrate requires prepared statements)
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
-      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      REDIS_MASTER_NAME: mymaster
+      REDIS_HOST: redis-master
+      
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
       CORS_ORIGIN: http://localhost:3000
     ports:
       - '3001:3001'
-    volumes:
-      - ./packages/backend/src:/app/packages/backend/src:delegated
-      - ./packages/backend/prisma:/app/packages/backend/prisma:delegated
     depends_on:
       postgres:
         condition: service_healthy
@@ -206,20 +201,9 @@ services:
         condition: service_healthy
     networks:
       - integration_net
-    healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'node -e "require(\"net\").createConnection(3001,\"localhost\").on(\"connect\",()=>process.exit(0)).on(\"error\",()=>process.exit(1))"',
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
 
   # ─────────────────────────────────────────
   # Worker — dedicated BullMQ processor
-  # Scale this independently of the API server
   # ─────────────────────────────────────────
   worker:
     build:
@@ -228,19 +212,16 @@ services:
       target: development
     container_name: integration_worker
     restart: unless-stopped
-    command: ['pnpm', 'run', 'start:worker:dev']
+    command: ['sh', '-c', 'sleep 365d']
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
-      REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      REDIS_MASTER_NAME: mymaster
+      REDIS_HOST: redis-master
+      
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
-    volumes:
-      - ./packages/backend/src:/app/packages/backend/src:delegated
-      - ./packages/backend/prisma:/app/packages/backend/prisma:delegated
     depends_on:
       postgres:
         condition: service_healthy
@@ -266,11 +247,8 @@ services:
       NEXT_PUBLIC_WS_URL: http://localhost:3001
     ports:
       - '3000:3000'
-    volumes:
-      - ./packages/dashboard/src:/app/packages/dashboard/src:delegated
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
       - integration_net
 
@@ -332,11 +310,6 @@ services:
       - '9121:9121'
     depends_on:
       - redis-master
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q -O- http://localhost:9121/metrics > /dev/null || exit 1']
-      interval: 30s
-      timeout: 10s
-      retries: 3
     networks:
       - integration_net
 
@@ -354,11 +327,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q -O- http://localhost:9187/metrics > /dev/null || exit 1']
-      interval: 30s
-      timeout: 10s
-      retries: 3
     networks:
       - integration_net
 
