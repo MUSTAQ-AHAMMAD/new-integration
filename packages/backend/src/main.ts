@@ -76,20 +76,7 @@ async function bootstrap() {
 
     const port = process.env.PORT || 3001;
     console.log(`[main.ts] Starting server on port ${port}...`);
-    
-    // Use Promise.race with a timeout to prevent infinite hanging
-    const listenPromise = app.listen(port);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('app.listen() timeout after 30s')), 30000)
-    );
-    
-    try {
-      await Promise.race([listenPromise, timeoutPromise]);
-    } catch (err) {
-      console.error('[main.ts] app.listen() timed out or failed:', err);
-      console.log('[main.ts] App will continue running despite listen error');
-    }
-    
+    await app.listen(port);
     console.log(`[main.ts] Server listening on port ${port}!`);
   } catch (error) {
     console.error('[main.ts] Bootstrap failed:', error);
