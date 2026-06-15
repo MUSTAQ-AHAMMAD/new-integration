@@ -193,11 +193,11 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
     <aside className={mobile ? 'flex flex-1 flex-col overflow-y-auto bg-slate-900' : 'hidden w-64 flex-col bg-slate-900 lg:flex'}>
       {!mobile && (
         <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 shadow-lg shadow-indigo-900/50">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-900/60">
             <Zap className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-white">Integration Hub</h1>
+            <h1 className="text-sm font-black text-white">Integration Hub</h1>
             <p className="text-[11px] text-slate-400">Odoo → Oracle Fusion</p>
           </div>
         </div>

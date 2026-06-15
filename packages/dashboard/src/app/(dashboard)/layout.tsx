@@ -28,14 +28,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!ready) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-50">
+      <div className="flex h-screen items-center justify-center bg-slate-100">
         <div className="text-sm text-slate-400">Loading…</div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-screen bg-slate-100">
       <RealtimeUpdater />
 
       {/* Desktop sidebar */}
