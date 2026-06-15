@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────
 # Stage 1: Dependencies
 # ─────────────────────────────────────────
-FROM node:22-alpine AS deps
+FROM node:22-slim AS deps
 RUN npm install -g "pnpm@^9"
 WORKDIR /app
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -13,7 +13,7 @@ RUN pnpm install --no-frozen-lockfile
 # ─────────────────────────────────────────
 # Stage 2: Builder
 # ─────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 RUN npm install -g "pnpm@^9"
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -29,13 +29,32 @@ RUN pnpm run build
 # ─────────────────────────────────────────
 # Stage 3: Production
 # ─────────────────────────────────────────
-FROM node:22-alpine AS production
+FROM node:22-slim AS production
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Install glibc compatibility + libaio so Oracle Instant Client shared libraries
-# can be loaded when ORACLE_DB_THICK_MODE=true (Alpine uses musl by default).
-RUN apk add --no-cache gcompat libaio
+# Install Oracle Instant Client dependencies and tools
+RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    libaio1 \
+    libaio-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install Oracle Instant Client
+RUN cd /opt && \
+    wget --quiet --no-check-certificate \
+    https://download.oracle.com/otn_software/linux/instantclient/2113000/instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    unzip -q instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    rm instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    mv instantclient_21_13 instantclient && \
+    chmod -R 755 /opt/instantclient
+
+# Set Oracle environment variables
+ENV LD_LIBRARY_PATH=/opt/instantclient:$LD_LIBRARY_PATH
+ENV PATH=/opt/instantclient:$PATH
+ENV ORACLE_HOME=/opt/instantclient
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/backend/node_modules ./packages/backend/node_modules
@@ -44,7 +63,7 @@ COPY --from=builder /app/packages/backend/dist ./packages/backend/dist
 COPY --from=builder /app/packages/backend/prisma ./packages/backend/prisma
 COPY packages/backend/package.json ./packages/backend/
 
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 USER appuser
 
 EXPOSE 3001
@@ -55,11 +74,31 @@ CMD ["node", "dist/main"]
 # ─────────────────────────────────────────
 # Stage 4: Development (hot-reload)
 # ─────────────────────────────────────────
-FROM node:22-alpine AS development
+FROM node:22-slim AS development
 RUN npm install -g "pnpm@^9"
-# Install glibc compatibility + libaio so Oracle Instant Client shared libraries
-# can be loaded when ORACLE_DB_THICK_MODE=true (Alpine uses musl by default).
-RUN apk add --no-cache gcompat libaio
+
+# Install Oracle Instant Client dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    libaio1 \
+    libaio-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install Oracle Instant Client
+RUN cd /opt && \
+    wget --quiet --no-check-certificate \
+    https://download.oracle.com/otn_software/linux/instantclient/2113000/instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    unzip -q instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    rm instantclient-basic-linux.x64-21.13.0.0.0dbru.zip && \
+    mv instantclient_21_13 instantclient && \
+    chmod -R 755 /opt/instantclient
+
+ENV LD_LIBRARY_PATH=/opt/instantclient:$LD_LIBRARY_PATH
+ENV PATH=/opt/instantclient:$PATH
+ENV ORACLE_HOME=/opt/instantclient
+
 WORKDIR /app
 ENV NODE_ENV=development
 

@@ -23,6 +23,20 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       LOG_LEVEL: debug
       CORS_ORIGIN: http://localhost:3000
+      # Oracle Database Configuration
+      ORACLE_DB_THICK_MODE: "true"
+      ORACLE_DB_INSTANT_CLIENT_DIR: "/opt/instantclient"
+      ORACLE_DB_HOST: ${ORACLE_DB_HOST:-193.122.68.27}
+      ORACLE_DB_PORT: ${ORACLE_DB_PORT:-1521}
+      ORACLE_DB_SERVICE: ${ORACLE_DB_SERVICE:-TestDB_jed1sw.dbsubnet.testvcn.oraclevcn.com}
+      ORACLE_DB_USERNAME: ${ORACLE_DB_USERNAME:-SYS}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-Tamer_innovate123}
+      ORACLE_DB_ROLE: ${ORACLE_DB_ROLE:-SYSDBA}
+      ORACLE_REST_BASE_URL: ${ORACLE_REST_BASE_URL:-https://oracle-instance/fscmRestApi/resources/11.13.18.05}
+      ORACLE_USERNAME: ${ORACLE_USERNAME:-oracle_user}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-oracle_password}
+      ORACLE_SOAP_BASE_URL: ${ORACLE_SOAP_BASE_URL:-https://oracle-instance}
+      ORACLE_SOAP_WSDL_URL: ${ORACLE_SOAP_WSDL_URL:-https://oracle-instance/services/v2}
     ports:
       - '3001:3001'
     depends_on:
