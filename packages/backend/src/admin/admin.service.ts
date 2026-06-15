@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Map of route slug → Prisma delegate name
@@ -35,6 +36,69 @@ const TABLE_MAP: Record<string, keyof PrismaService> = {
   'backup-promotions': 'backupVendHqPromotion',
 };
 
+// ── Prisma DMMF helpers ─────────────────────────────────────────────────────
+
+/**
+ * Converts a TABLE_MAP delegate name (lowerCamelCase) to the Prisma model
+ * name (PascalCase) so we can look it up in Prisma.dmmf at runtime.
+ */
+function delegateToModelName(delegateName: string): string {
+  return delegateName.charAt(0).toUpperCase() + delegateName.slice(1);
+}
+
+/** Returns a Map<fieldName, prismaType> for the given table slug. */
+function getModelFieldTypes(table: string): Map<string, string> {
+  const delegateName = TABLE_MAP[table];
+  if (!delegateName) return new Map();
+  const modelName = delegateToModelName(String(delegateName));
+  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+  if (!model) return new Map();
+  return new Map(model.fields.map((f) => [f.name, f.type]));
+}
+
+/**
+ * Returns the best `orderBy` clause for a table.
+ * Uses `createdAt` when available, falls back to `updatedAt`, then `id`.
+ * This prevents runtime errors on models that lack `createdAt`
+ * (e.g. SalesIntegrationStatus only has `updatedAt`).
+ */
+function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
+  const fields = getModelFieldTypes(table);
+  if (fields.has('createdAt')) return { createdAt: 'desc' };
+  if (fields.has('updatedAt')) return { updatedAt: 'desc' };
+  return { id: 'desc' };
+}
+
+/**
+ * Coerces a CSV string value to the correct JS type based on the Prisma
+ * field type.  CSV export always produces strings, so without this step
+ * Prisma would reject numeric and boolean columns.
+ */
+function coerceCsvValue(value: unknown, prismaType: string): unknown {
+  if (value === null || value === undefined || value === '') return null;
+  const s = String(value);
+  switch (prismaType) {
+    case 'Int':
+    case 'BigInt': {
+      const n = parseInt(s, 10);
+      return isNaN(n) ? null : n;
+    }
+    case 'Float':
+    case 'Decimal': {
+      const n = parseFloat(s);
+      return isNaN(n) ? null : n;
+    }
+    case 'Boolean':
+      return ['true', '1', 'yes', 'y'].includes(s.toLowerCase());
+    case 'DateTime': {
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    default:
+      return value;
+  }
+}
+
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
@@ -51,13 +115,14 @@ export class AdminService {
   ) {
     const delegate = this.getDelegate(table);
     const where = options.region ? { region: options.region } : {};
+    const orderBy = getOrderBy(table);
     const [data, total] = await Promise.all([
       delegate.findMany({
         where,
         skip: options.skip ?? 0,
         // Increased from 50 → 100 to reduce round-trips for bulk admin operations.
         take: options.take ?? 100,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
       }),
       delegate.count({ where }),
     ]);
@@ -161,9 +226,10 @@ export class AdminService {
   async exportCsv(table: string, region?: string): Promise<string> {
     const delegate = this.getDelegate(table);
     const where = region ? { region } : {};
+    const orderBy = getOrderBy(table);
     const rows = (await delegate.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       take: 10000,
     })) as Record<string, unknown>[];
     return AdminService.rowsToCsv(rows);
@@ -176,6 +242,7 @@ export class AdminService {
   ): Promise<{ imported: number; skipped: number; errors: string[] }> {
     const delegate = this.getDelegate(table);
     const rows = AdminService.parseCsvToRows(csvText);
+    const fieldTypes = getModelFieldTypes(table);
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
@@ -184,9 +251,14 @@ export class AdminService {
       try {
         // Strip system / read-only columns so the DB generates them
         const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = row as Record<string, unknown>;
-        // Coerce empty strings to null for optional fields
+        // Coerce each field to its correct Prisma type (CSV values are all
+        // strings; without coercion Prisma rejects Int, Float and Boolean fields)
         const cleaned = Object.fromEntries(
-          Object.entries(data).map(([k, v]) => [k, v === '' ? null : v]),
+          Object.entries(data).map(([k, v]) => {
+            if (v === '' || v === null || v === undefined) return [k, null];
+            const prismaType = fieldTypes.get(k);
+            return [k, prismaType ? coerceCsvValue(v, prismaType) : v];
+          }),
         );
         await delegate.create({ data: cleaned });
         imported++;

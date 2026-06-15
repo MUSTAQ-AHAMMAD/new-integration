@@ -69,7 +69,7 @@ USER appuser
 EXPOSE 3001
 
 WORKDIR /app/packages/backend
-CMD ["node", "dist/main"]
+CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node dist/main"]
 
 # ─────────────────────────────────────────
 # Stage 4: Development (hot-reload)
