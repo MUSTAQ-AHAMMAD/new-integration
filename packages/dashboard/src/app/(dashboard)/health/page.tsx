@@ -178,11 +178,14 @@ export default function HealthPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">System Health</h1>
-          <p className="text-sm text-gray-500">Track service availability, queue depth, and unresolved platform alerts in one view.</p>
-          <p className="mt-2 text-xs text-gray-400">Last checked: {lastChecked ? formatDate(lastChecked) : '—'}</p>
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">System Health</h1>
+            <p className="mt-0.5 text-sm text-slate-500">Track service availability, queue depth, and unresolved platform alerts in one view.</p>
+            <p className="mt-1 text-xs text-slate-400">Last checked: {lastChecked ? formatDate(lastChecked) : '—'}</p>
+          </div>
         </div>
         <Button onClick={() => healthCheckMutation.mutate()} disabled={healthCheckMutation.isPending}>
           <RefreshCw className="h-4 w-4" /> Run Health Check

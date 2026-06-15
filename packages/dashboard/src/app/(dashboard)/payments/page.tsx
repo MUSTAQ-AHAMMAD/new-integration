@@ -57,8 +57,11 @@ export default function PaymentMappingsPage() {
     <div className="space-y-6">
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportCsv} />
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold text-gray-900">Payment Method Mappings</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+          <h1 className="text-xl font-bold text-slate-900">Payment Method Mappings</h1>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleExportCsv} disabled={!mappings?.length}>
             <Download className="mr-1 h-4 w-4" /> Export CSV

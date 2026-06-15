@@ -208,7 +208,18 @@ export function GenericAdminTable({
   const currentPage = Math.floor(skip / pageSize) + 1;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {/* Page header */}
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">{title}</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            {readOnly ? 'Read-only archive — export & view only' : 'Full CRUD · create, edit, delete, import & export'}
+          </p>
+        </div>
+      </div>
+
       {/* Hidden file input for CSV import */}
       <input
         ref={fileInputRef}

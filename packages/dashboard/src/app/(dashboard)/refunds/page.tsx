@@ -193,10 +193,13 @@ export default function RefundsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Refund Reconciliation</h1>
-          <p className="text-sm text-gray-500">Manage refund credit memo status, manual interventions, and reconciliation notes.</p>
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Refund Reconciliation</h1>
+            <p className="mt-0.5 text-sm text-slate-500">Manage refund credit memo status, manual interventions, and reconciliation notes.</p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={exportFilteredRefunds} disabled={filteredRefunds.length === 0}>

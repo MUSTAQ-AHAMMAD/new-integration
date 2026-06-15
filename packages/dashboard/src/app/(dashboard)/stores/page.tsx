@@ -213,10 +213,13 @@ export default function StoresPage() {
     <div className="space-y-6">
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportCsv} />
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Store Configurations</h1>
-          <p className="text-sm text-gray-500">Manage store branch configuration (admin panel)</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Store Configurations</h1>
+            <p className="mt-0.5 text-sm text-slate-500">Manage store branch configuration (admin panel)</p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleExportCsv} disabled={!stores?.length}>

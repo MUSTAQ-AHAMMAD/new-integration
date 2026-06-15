@@ -38,7 +38,10 @@ export default function ActivityPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Audit Log</h1>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <h1 className="text-xl font-bold text-slate-900">Audit Log</h1>
+      </div>
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

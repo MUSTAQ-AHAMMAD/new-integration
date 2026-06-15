@@ -172,13 +172,16 @@ export default function FailedPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Failed Transactions</h1>
-            <Badge variant="destructive">{filteredTransactions.length} unresolved</Badge>
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="mt-1 h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-bold text-slate-900">Failed Transactions</h1>
+              <Badge variant="destructive">{filteredTransactions.length} unresolved</Badge>
+            </div>
+            <p className="text-sm text-slate-500">Inspect payloads, resolve failures, and re-queue transactions with corrected input.</p>
           </div>
-          <p className="text-sm text-gray-500">Inspect payloads, resolve failures, and re-queue transactions with corrected input.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button

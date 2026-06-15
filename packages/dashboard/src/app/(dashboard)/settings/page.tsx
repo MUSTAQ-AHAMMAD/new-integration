@@ -295,9 +295,12 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Integration Settings</h1>
-        <p className="text-sm text-gray-500">Manage notification routing, operational thresholds, schedules, and retry behavior.</p>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Integration Settings</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Manage notification routing, operational thresholds, schedules, and retry behavior.</p>
+        </div>
       </div>
 
       <Tabs defaultValue="notifications" className="space-y-6">

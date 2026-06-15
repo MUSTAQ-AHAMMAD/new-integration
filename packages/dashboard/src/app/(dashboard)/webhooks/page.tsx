@@ -41,9 +41,12 @@ export default function WebhookEventsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Webhook Events</h1>
-        <p className="mt-1 text-sm text-gray-500">Inbound events received from Odoo and other systems</p>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Webhook Events</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Inbound events received from Odoo and other systems</p>
+        </div>
       </div>
 
       {(pendingCount > 0 || failedCount > 0) && (

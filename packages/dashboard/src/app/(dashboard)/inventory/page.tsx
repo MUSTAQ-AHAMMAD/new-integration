@@ -15,7 +15,10 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Inventory Alerts</h1>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <h1 className="text-xl font-bold text-slate-900">Inventory Alerts</h1>
+      </div>
       {(items?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 text-orange-800">
           ⚠️ {items?.length} product(s) with negative inventory detected. Orders are syncing but inventory team should review.
