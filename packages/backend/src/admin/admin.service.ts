@@ -89,8 +89,12 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
       return isNaN(n) ? null : n;
     }
     case 'Boolean':
+      // Any value in the truthy list → true; everything else (including 'false',
+      // '0', 'no', 'n', or any unrecognised string) → false.
       return ['true', '1', 'yes', 'y'].includes(s.toLowerCase());
     case 'DateTime': {
+      // Dates exported by the app are in ISO 8601 format (YYYY-MM-DD or full
+      // ISO string), so new Date() parses them consistently.
       const d = new Date(s);
       return isNaN(d.getTime()) ? null : d;
     }
@@ -252,7 +256,9 @@ export class AdminService {
         // Strip system / read-only columns so the DB generates them
         const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = row as Record<string, unknown>;
         // Coerce each field to its correct Prisma type (CSV values are all
-        // strings; without coercion Prisma rejects Int, Float and Boolean fields)
+        // strings; without coercion Prisma rejects Int, Float and Boolean fields).
+        // Fields not found in the DMMF are passed through as-is; Prisma will
+        // then validate them (unknown columns are rejected at the DB layer).
         const cleaned = Object.fromEntries(
           Object.entries(data).map(([k, v]) => {
             if (v === '' || v === null || v === undefined) return [k, null];
