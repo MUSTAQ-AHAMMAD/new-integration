@@ -97,11 +97,12 @@ export default function RegionIntegrationPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Region Integration</h1>
-        <p className="text-sm text-gray-500">
-          Trigger VendHQ sales backup and item sync for individual regions or all regions at once.
-        </p>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Region Integration</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Trigger VendHQ sales backup and item sync for individual regions or all regions at once.</p>
+        </div>
       </div>
 
       {/* Global triggers */}

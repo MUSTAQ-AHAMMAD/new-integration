@@ -29,7 +29,10 @@ export default function FailedTransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Failed Transactions</h1>
+      <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
+        <h1 className="text-xl font-bold text-slate-900">Failed Transactions</h1>
+      </div>
       {(transactions?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
           ⚠️ {transactions?.length} unresolved failed transaction(s) require attention.
