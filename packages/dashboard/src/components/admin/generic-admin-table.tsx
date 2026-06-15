@@ -65,8 +65,11 @@ function RecordForm({
                   checked={!!form[f.key]}
                   onChange={(e) => set(f.key, e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                  aria-label={`${f.label}: ${form[f.key] ? 'Enabled' : 'Disabled'}`}
                 />
-                <span className="text-sm text-slate-500">{form[f.key] ? 'Enabled' : 'Disabled'}</span>
+                <label htmlFor={f.key} className="cursor-pointer text-sm text-slate-500">
+                  {form[f.key] ? 'Enabled' : 'Disabled'}
+                </label>
               </div>
             ) : f.type === 'textarea' ? (
               <textarea
@@ -157,7 +160,8 @@ export function GenericAdminTable({
   });
 
   const oracleImportMutation = useMutation({
-    mutationFn: () => api.oracleImport(oracleTable ? [oracleTable] : undefined),
+    // oracleTable is always defined here — the button is only rendered when oracleTable is set
+    mutationFn: () => api.oracleImport([oracleTable!]),
     onSuccess: (result) => {
       const r = result.results[0];
       if (r) {
