@@ -118,4 +118,4 @@ RUN pnpm exec prisma generate
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "set -e && pnpm exec prisma migrate deploy && pnpm dev"]
+CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate && pnpm dev"]
