@@ -450,7 +450,7 @@ model WebhookEvent {
 
 model FusionCredential {
   id         String   @id @default(cuid())
-  hostName   String
+  hostName   String   @unique
   server     String
   username   String
   password   String
@@ -463,7 +463,7 @@ model FusionCredential {
 
 model VendHqCredential {
   id                String   @id @default(cuid())
-  domainName        String
+  domainName        String   @unique
   personalToken     String
   active            Boolean  @default(true)
   region            String
@@ -481,7 +481,7 @@ model VendHqCredential {
 
 model OutletIntegrationConfig {
   id         String   @id @default(cuid())
-  outletName String
+  outletName String   @unique
   integMode  String
   region     String
   createdAt  DateTime @default(now())
@@ -506,7 +506,7 @@ model FusionBusinessUnitMap {
 model FusionReceiptMethod {
   id                  String   @id @default(cuid())
   receiptMethodId     Int
-  receiptMethodName   String
+  receiptMethodName   String   @unique
   receiptIsCash       Boolean  @default(false)
   receiptBankCharge   Float    @default(0)
   receiptMethodTax    Float    @default(0)
@@ -520,7 +520,7 @@ model FusionReceiptMethod {
 
 model FusionSalesMetadata {
   id                   String   @id @default(cuid())
-  billToName           String
+  billToName           String   @unique
   billToAccount        Int
   siteNumber           String?
   businessUnit         String
@@ -548,7 +548,7 @@ model ServiceProviderJournalMeta {
   ledgerId          Int
   taxGroupId        Int?
   chartOfAccountsId Int
-  serviceProvider   String
+  serviceProvider   String   @unique
   creditDebit       String?
   costIssue         String?
   costRma           String?
@@ -655,7 +655,7 @@ model VendHqRegister {
 model VendHqServiceProvider {
   id              String   @id @default(cuid())
   region          String
-  serviceProvider String
+  serviceProvider String   @unique
   vendHqCustomerId String?
   isCash          Boolean  @default(false)
   createdAt       DateTime @default(now())

@@ -192,6 +192,17 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       LOG_LEVEL: debug
       CORS_ORIGIN: http://localhost:3000
+      # Oracle DB — fill in your instance details in .env (copy from .env.example)
+      # These are required when using the "Import from Oracle" button in the dashboard
+      ORACLE_DB_HOST: ${ORACLE_DB_HOST:-}
+      ORACLE_DB_PORT: ${ORACLE_DB_PORT:-1521}
+      ORACLE_DB_SERVICE: ${ORACLE_DB_SERVICE:-}
+      ORACLE_DB_SCHEMA: ${ORACLE_DB_SCHEMA:-ODOO_INTEGRATION}
+      ORACLE_DB_USERNAME: ${ORACLE_DB_USERNAME:-}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD:-}
+      ORACLE_DB_ROLE: ${ORACLE_DB_ROLE:-}
+      ORACLE_DB_THICK_MODE: ${ORACLE_DB_THICK_MODE:-false}
+      ORACLE_DB_INSTANT_CLIENT_DIR: ${ORACLE_DB_INSTANT_CLIENT_DIR:-}
     ports:
       - '3001:3001'
     depends_on:
