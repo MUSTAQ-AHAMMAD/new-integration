@@ -33,6 +33,10 @@ FROM node:22-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Install glibc compatibility + libaio so Oracle Instant Client shared libraries
+# can be loaded when ORACLE_DB_THICK_MODE=true (Alpine uses musl by default).
+RUN apk add --no-cache gcompat libaio
+
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/backend/node_modules ./packages/backend/node_modules
 COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
@@ -53,6 +57,9 @@ CMD ["node", "dist/main"]
 # ─────────────────────────────────────────
 FROM node:22-alpine AS development
 RUN npm install -g "pnpm@^9"
+# Install glibc compatibility + libaio so Oracle Instant Client shared libraries
+# can be loaded when ORACLE_DB_THICK_MODE=true (Alpine uses musl by default).
+RUN apk add --no-cache gcompat libaio
 WORKDIR /app
 ENV NODE_ENV=development
 
