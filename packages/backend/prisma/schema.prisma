@@ -657,6 +657,7 @@ model VendHqServiceProvider {
   region          String
   serviceProvider String   @unique
   vendHqCustomerId String?
+  isCash          Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
