@@ -9,10 +9,11 @@ export const SYS_FIELDS: FieldDef[] = [
 
 export const ADMIN_TABLE_CONFIGS: Record<
   string,
-  { title: string; fields: FieldDef[]; readOnly?: boolean }
+  { title: string; fields: FieldDef[]; readOnly?: boolean; oracleTable?: string }
 > = {
   'fusion-credentials': {
     title: 'Fusion Credentials',
+    oracleTable: 'FUSION_CREDENTIALS',
     fields: [
       ...SYS_FIELDS,
       { key: 'hostName', label: 'Host Name', required: true },
@@ -24,6 +25,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-credentials': {
     title: 'VendHQ Credentials',
+    oracleTable: 'VENDHQ_CREDENTIALS',
     fields: [
       ...SYS_FIELDS,
       { key: 'domainName', label: 'Domain Name', required: true },
@@ -38,6 +40,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'outlet-config': {
     title: 'Outlet Integration Config',
+    oracleTable: 'OUTLET_INTEGRATION_CONFIG',
     fields: [
       ...SYS_FIELDS,
       { key: 'outletName', label: 'Outlet Name', required: true },
@@ -47,6 +50,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'fusion-bu-map': {
     title: 'Fusion Business Unit Map',
+    oracleTable: 'FUSION_BU_MAP',
     fields: [
       ...SYS_FIELDS,
       { key: 'businessUnitId', label: 'Business Unit ID', type: 'number', required: true },
@@ -56,6 +60,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'fusion-receipt-methods': {
     title: 'Fusion Receipt Methods',
+    oracleTable: 'FUSION_RECEIPT_METHODS',
     fields: [
       ...SYS_FIELDS,
       { key: 'receiptMethodId', label: 'Method ID', type: 'number', required: true },
@@ -68,6 +73,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'fusion-sales-metadata': {
     title: 'Fusion Sales Metadata',
+    oracleTable: 'FUSION_SALES_METADATA',
     fields: [
       ...SYS_FIELDS,
       { key: 'region', label: 'Region', required: true },
@@ -89,6 +95,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'service-provider-journal-meta': {
     title: 'Service Provider Journal Meta',
+    oracleTable: 'SERVICE_PROVIDER_JOURNAL_META',
     fields: [
       ...SYS_FIELDS,
       { key: 'region', label: 'Region', required: true },
@@ -124,6 +131,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-discount-items': {
     title: 'VendHQ Discount Items',
+    oracleTable: 'VENDHQ_DISCOUNT_ITEMS',
     fields: [
       ...SYS_FIELDS,
       { key: 'discountItemId', label: 'Discount Item ID', required: true },
@@ -132,6 +140,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-tax-meta': {
     title: 'VendHQ Tax Meta',
+    oracleTable: 'VENDHQ_TAX_META',
     fields: [
       ...SYS_FIELDS,
       { key: 'taxId', label: 'Tax ID', required: true },
@@ -143,6 +152,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-outlets': {
     title: 'VendHQ Outlets',
+    oracleTable: 'VENDHQ_OUTLETS',
     fields: [
       ...SYS_FIELDS,
       { key: 'outletId', label: 'Outlet ID', required: true },
@@ -155,6 +165,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-registers': {
     title: 'VendHQ Registers',
+    oracleTable: 'VENDHQ_REGISTERS',
     fields: [
       ...SYS_FIELDS,
       { key: 'registerId', label: 'Register ID', required: true },
@@ -173,6 +184,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'vendhq-service-providers': {
     title: 'VendHQ Service Providers',
+    oracleTable: 'VENDHQ_SERVICE_PROVIDERS',
     fields: [
       ...SYS_FIELDS,
       { key: 'region', label: 'Region', required: true },
