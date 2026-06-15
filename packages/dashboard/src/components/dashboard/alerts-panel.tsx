@@ -57,7 +57,7 @@ export function AlertsPanel() {
                 )}
               >
                 <div className="mt-0.5 shrink-0">
-                  <span className={cn('h-2 w-2 rounded-full block mt-1', s.dot)} />
+                  <span className={cn('block h-2 w-2 rounded-full mt-1', s.dot)} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
