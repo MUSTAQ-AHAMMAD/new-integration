@@ -298,7 +298,27 @@ export class OracleNativeService {
   async importFromOracle(tables?: string[]): Promise<OracleImportSummary> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const oracledb = require('oracledb') as typeof import('oracledb');
-    // oracledb v6+ defaults to thin mode (pure JS, no Oracle Instant Client required)
+
+    // Enable thick mode when configured (required for Native Network Encryption / ORA-12660).
+    // Thick mode requires Oracle Instant Client to be installed on the host.
+    // Set ORACLE_DB_THICK_MODE=true and optionally ORACLE_DB_INSTANT_CLIENT_DIR to the
+    // directory containing the Instant Client shared libraries.
+    const useThickMode = ['true', '1', 'yes'].includes(
+      (this.config.get<string>('ORACLE_DB_THICK_MODE') ?? '').toLowerCase(),
+    );
+    if (useThickMode && oracledb.thin) {
+      const libDir = this.config.get<string>('ORACLE_DB_INSTANT_CLIENT_DIR');
+      try {
+        oracledb.initOracleClient(libDir ? { libDir } : {});
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadRequestException(
+          `Failed to initialise Oracle thick mode: ${msg}. ` +
+            'Ensure Oracle Instant Client is installed and ORACLE_DB_INSTANT_CLIENT_DIR points to its library directory.',
+        );
+      }
+    }
+
     const cfg = this.getConnectionConfig();
 
     const connectString = `${cfg.host}:${cfg.port}/${cfg.serviceName}`;
