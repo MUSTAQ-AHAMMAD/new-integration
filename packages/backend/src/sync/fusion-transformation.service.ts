@@ -2,8 +2,8 @@
  * FusionTransformationService — TypeScript port of the Java
  * VendHQSalesToFusionInvRecTransBackup transformation layer.
  *
- * Maps raw backup data (BackupVendHqSales / BackupVendHqLineItems /
- * BackupVendHqPayments) + config tables (FusionSalesMetadata,
+ * Maps raw backup data (BackupVendhqSales / BackupVendhqLineItems /
+ * BackupVendhqPayments) + config tables (FusionSalesMetadata,
  * VendHqOutlet, FusionReceiptMethod) into the SOAP model objects
  * consumed by OracleSoapClient.
  */
@@ -51,21 +51,19 @@ export class FusionTransformationService {
     transactionNumberOverride?: string,
   ): Promise<TransformResult> {
     // ── 1. Load raw backup data ──────────────────────────────
-    const sale = await this.prisma.backupVendHqSale.findUnique({
+    const sale = await this.prisma.backupVendhqSales.findUnique({
       where: { id: saleDbId },
-      include: { backupLineItems: true, backupPayments: true },
+      include: { lineItems: true, payments: true },
     });
-    if (!sale) throw new Error(`BackupVendHqSale not found: ${saleDbId}`);
+    if (!sale) throw new Error(`BackupVendhqSales not found: ${saleDbId}`);
 
     const rawJson = (sale.rawJson ?? {}) as Record<string, unknown>;
     const customerType =
-      sale.customerType ??
       (rawJson.customer_code as string) ??
       (rawJson.customer_type as string) ??
       'NORMAL';
     const registerName =
       (rawJson.register_name as string) ??
-      sale.registerName ??
       (rawJson.register_id as string) ??
       '';
 
@@ -117,18 +115,18 @@ export class FusionTransformationService {
     };
 
     // ── 5. Build InvoiceLines ────────────────────────────────
-    const saleNumber = sale.saleNumber ?? sale.invoiceNumber;
-    for (const li of sale.backupLineItems) {
+    const saleNumber = sale.saleNumber;
+    for (const li of sale.lineItems) {
       const qty = Number(li.quantity ?? 1);
       if (qty === 0) continue;
       const total = Number(li.totalPrice ?? 0);
       const unitPrice = qty !== 0 ? Math.abs(total / qty) : 0;
-      const productName = li.productName ?? li.itemName ?? '';
+      const productName = li.productName ?? '';
       const isDiscount = productName === 'Discount Item';
 
       const invLine: InvoiceLine = {
         lineNumber: invoiceHeader.invoiceLines.length + 1,
-        itemNumber: li.productId ?? li.itemNumber ?? undefined,
+        itemNumber: li.productId ?? undefined,
         memoLineName: isDiscount ? 'Discount Item' : undefined,
         description: productName,
         // Java: if Discount Item and total > 0, force qty to 1
@@ -146,8 +144,8 @@ export class FusionTransformationService {
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
-    for (const payment of sale.backupPayments) {
-      const pmtMethod = payment.paymentMethod ?? payment.paymentType ?? '';
+    for (const payment of sale.payments) {
+      const pmtMethod = payment.paymentMethod ?? '';
       if (pmtMethod.toLowerCase() === 'credit on cust') continue;
 
       const receiptMethod = await this.prisma.fusionReceiptMethod.findFirst({
