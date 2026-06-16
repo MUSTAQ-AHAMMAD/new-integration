@@ -194,6 +194,8 @@ services:
       CORS_ORIGIN: http://localhost:3000
       # Oracle DB — fill in your instance details in .env (copy from .env.example)
       # These are required when using the "Import from Oracle" button in the dashboard
+            # Oracle DB — fill in your instance details in .env (copy from .env.example)
+      # These are required when using the "Import from Oracle" button in the dashboard
       ORACLE_DB_HOST: ${ORACLE_DB_HOST:-}
       ORACLE_DB_PORT: ${ORACLE_DB_PORT:-1521}
       ORACLE_DB_SERVICE: ${ORACLE_DB_SERVICE:-}
