@@ -42,7 +42,7 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
     ...options,
