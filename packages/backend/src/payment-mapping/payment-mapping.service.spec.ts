@@ -128,7 +128,9 @@ describe('PaymentMappingService', () => {
 
   describe('approvePendingMapping', () => {
     it('sets requiresApproval=false, isActive=true, and records approvedBy', async () => {
-      mockPrisma.paymentMethodMapping.update.mockResolvedValueOnce({ id: 'm-5' });
+      mockPrisma.paymentMethodMapping.update.mockResolvedValueOnce({
+        id: 'm-5',
+      });
 
       await service.approvePendingMapping('m-5', 'admin@example.com');
 

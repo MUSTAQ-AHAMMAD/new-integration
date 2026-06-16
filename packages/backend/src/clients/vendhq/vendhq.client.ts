@@ -5,12 +5,7 @@
  * API docs: https://docs.vendhq.com/
  * Base URL:  https://{domain}.vendhq.com/api/2.0
  */
-import {
-  Injectable,
-  Logger,
-  Optional,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
@@ -161,23 +156,21 @@ export class VendHqClient {
     since?: string;
     pageSize?: number;
   }): Promise<VendHqSale[]> {
-    return this.circuitBreaker.execute(
-      'vendhq:getSales',
-      () =>
-        this.withRetries(async () => {
-          const query: Record<string, string | number> = {};
-          if (params.afterVersion !== undefined)
-            query.after = params.afterVersion;
-          if (params.outletId) query.outlet_id = params.outletId;
-          if (params.since) query.since = params.since;
-          query.page_size = params.pageSize ?? 200;
+    return this.circuitBreaker.execute('vendhq:getSales', () =>
+      this.withRetries(async () => {
+        const query: Record<string, string | number> = {};
+        if (params.afterVersion !== undefined)
+          query.after = params.afterVersion;
+        if (params.outletId) query.outlet_id = params.outletId;
+        if (params.since) query.since = params.since;
+        query.page_size = params.pageSize ?? 200;
 
-          const resp = await this.http.get<{ data: VendHqSale[] }>(
-            '/api/2.0/sales',
-            { params: query },
-          );
-          return resp.data?.data ?? [];
-        }),
+        const resp = await this.http.get<{ data: VendHqSale[] }>(
+          '/api/2.0/sales',
+          { params: query },
+        );
+        return resp.data?.data ?? [];
+      }),
     );
   }
 
@@ -186,15 +179,13 @@ export class VendHqClient {
    * GET /api/2.0/sales/{id}
    */
   async getSale(saleId: string): Promise<VendHqSale> {
-    return this.circuitBreaker.execute(
-      'vendhq:getSale',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.get<{ data: VendHqSale }>(
-            `/api/2.0/sales/${saleId}`,
-          );
-          return resp.data?.data ?? (resp.data as unknown as VendHqSale);
-        }),
+    return this.circuitBreaker.execute('vendhq:getSale', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.get<{ data: VendHqSale }>(
+          `/api/2.0/sales/${saleId}`,
+        );
+        return resp.data?.data ?? (resp.data as unknown as VendHqSale);
+      }),
     );
   }
 
@@ -209,23 +200,21 @@ export class VendHqClient {
     pageSize?: number;
     page?: number;
   }): Promise<VendHqProduct[]> {
-    return this.circuitBreaker.execute(
-      'vendhq:getProducts',
-      () =>
-        this.withRetries(async () => {
-          const query: Record<string, string | number> = {
-            page_size: params.pageSize ?? 200,
-            page: params.page ?? 1,
-          };
-          if (params.afterVersion !== undefined)
-            query.after = params.afterVersion;
+    return this.circuitBreaker.execute('vendhq:getProducts', () =>
+      this.withRetries(async () => {
+        const query: Record<string, string | number> = {
+          page_size: params.pageSize ?? 200,
+          page: params.page ?? 1,
+        };
+        if (params.afterVersion !== undefined)
+          query.after = params.afterVersion;
 
-          const resp = await this.http.get<{ data: VendHqProduct[] }>(
-            '/api/2.0/products',
-            { params: query },
-          );
-          return resp.data?.data ?? [];
-        }),
+        const resp = await this.http.get<{ data: VendHqProduct[] }>(
+          '/api/2.0/products',
+          { params: query },
+        );
+        return resp.data?.data ?? [];
+      }),
     );
   }
 
@@ -234,16 +223,14 @@ export class VendHqClient {
    * POST /api/2.0/products
    */
   async upsertProduct(product: VendHqProductCreate): Promise<VendHqProduct> {
-    return this.circuitBreaker.execute(
-      'vendhq:upsertProduct',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.post<{ data: VendHqProduct }>(
-            '/api/2.0/products',
-            product,
-          );
-          return resp.data?.data ?? (resp.data as unknown as VendHqProduct);
-        }),
+    return this.circuitBreaker.execute('vendhq:upsertProduct', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.post<{ data: VendHqProduct }>(
+          '/api/2.0/products',
+          product,
+        );
+        return resp.data?.data ?? (resp.data as unknown as VendHqProduct);
+      }),
     );
   }
 
@@ -257,20 +244,18 @@ export class VendHqClient {
     outletId?: string;
     productId?: string;
   }): Promise<VendHqInventory[]> {
-    return this.circuitBreaker.execute(
-      'vendhq:getInventory',
-      () =>
-        this.withRetries(async () => {
-          const query: Record<string, string> = {};
-          if (params.outletId) query.outlet_id = params.outletId;
-          if (params.productId) query.product_id = params.productId;
+    return this.circuitBreaker.execute('vendhq:getInventory', () =>
+      this.withRetries(async () => {
+        const query: Record<string, string> = {};
+        if (params.outletId) query.outlet_id = params.outletId;
+        if (params.productId) query.product_id = params.productId;
 
-          const resp = await this.http.get<{ data: VendHqInventory[] }>(
-            '/api/2.0/inventory',
-            { params: query },
-          );
-          return resp.data?.data ?? [];
-        }),
+        const resp = await this.http.get<{ data: VendHqInventory[] }>(
+          '/api/2.0/inventory',
+          { params: query },
+        );
+        return resp.data?.data ?? [];
+      }),
     );
   }
 
@@ -280,15 +265,13 @@ export class VendHqClient {
    * GET /api/2.0/outlets
    */
   async getOutlets(): Promise<VendHqOutlet[]> {
-    return this.circuitBreaker.execute(
-      'vendhq:getOutlets',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.get<{ data: VendHqOutlet[] }>(
-            '/api/2.0/outlets',
-          );
-          return resp.data?.data ?? [];
-        }),
+    return this.circuitBreaker.execute('vendhq:getOutlets', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.get<{ data: VendHqOutlet[] }>(
+          '/api/2.0/outlets',
+        );
+        return resp.data?.data ?? [];
+      }),
     );
   }
 
@@ -298,15 +281,13 @@ export class VendHqClient {
    * GET /api/2.0/registers
    */
   async getRegisters(): Promise<VendHqRegister[]> {
-    return this.circuitBreaker.execute(
-      'vendhq:getRegisters',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.get<{ data: VendHqRegister[] }>(
-            '/api/2.0/registers',
-          );
-          return resp.data?.data ?? [];
-        }),
+    return this.circuitBreaker.execute('vendhq:getRegisters', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.get<{ data: VendHqRegister[] }>(
+          '/api/2.0/registers',
+        );
+        return resp.data?.data ?? [];
+      }),
     );
   }
 
@@ -316,16 +297,14 @@ export class VendHqClient {
    * GET /api/2.0/customers?code={code}
    */
   async getCustomerByCode(code: string): Promise<VendHqCustomer | null> {
-    return this.circuitBreaker.execute(
-      'vendhq:getCustomer',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.get<{ data: VendHqCustomer[] }>(
-            '/api/2.0/customers',
-            { params: { code } },
-          );
-          return resp.data?.data?.[0] ?? null;
-        }),
+    return this.circuitBreaker.execute('vendhq:getCustomer', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.get<{ data: VendHqCustomer[] }>(
+          '/api/2.0/customers',
+          { params: { code } },
+        );
+        return resp.data?.data?.[0] ?? null;
+      }),
     );
   }
 
@@ -339,28 +318,28 @@ export class VendHqClient {
     outletId: string;
     current: number;
   }): Promise<VendHqInventory> {
-    return this.circuitBreaker.execute(
-      'vendhq:updateInventory',
-      () =>
-        this.withRetries(async () => {
-          const resp = await this.http.put<{
-            data: { inventory: VendHqInventory[] };
-          }>(`/api/2.0/products/${params.productId}/inventory`, {
-            outlet_id: params.outletId,
-            current: params.current,
-          });
-          const inventoryList =
-            resp.data?.data?.inventory ??
-            (resp.data as unknown as VendHqInventory[]);
-          const entry = Array.isArray(inventoryList)
-            ? inventoryList[0]
-            : inventoryList;
-          return entry ?? {
+    return this.circuitBreaker.execute('vendhq:updateInventory', () =>
+      this.withRetries(async () => {
+        const resp = await this.http.put<{
+          data: { inventory: VendHqInventory[] };
+        }>(`/api/2.0/products/${params.productId}/inventory`, {
+          outlet_id: params.outletId,
+          current: params.current,
+        });
+        const inventoryList =
+          resp.data?.data?.inventory ??
+          (resp.data as unknown as VendHqInventory[]);
+        const entry = Array.isArray(inventoryList)
+          ? inventoryList[0]
+          : inventoryList;
+        return (
+          entry ?? {
             product_id: params.productId,
             outlet_id: params.outletId,
             current: params.current,
-          };
-        }),
+          }
+        );
+      }),
     );
   }
 

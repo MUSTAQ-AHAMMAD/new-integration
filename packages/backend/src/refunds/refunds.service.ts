@@ -150,11 +150,13 @@ export class RefundsService {
       FROM "RefundTracking"
     `);
 
-    return stats ?? {
-      total: 0,
-      reconciled: 0,
-      pending: 0,
-      failed: 0,
-    };
+    return (
+      stats ?? {
+        total: 0,
+        reconciled: 0,
+        pending: 0,
+        failed: 0,
+      }
+    );
   }
 }

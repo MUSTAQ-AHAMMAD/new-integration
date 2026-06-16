@@ -96,7 +96,14 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         create: jest.fn().mockResolvedValue({}),
       } as unknown as PrismaService['fusionJournalLine'],
       syncJob: {
-        update: jest.fn().mockResolvedValue({ id: 'sj-1', processedRecords: 1, totalRecords: 1, failedCount: 0, skippedCount: 0, successCount: 1 }),
+        update: jest.fn().mockResolvedValue({
+          id: 'sj-1',
+          processedRecords: 1,
+          totalRecords: 1,
+          failedCount: 0,
+          skippedCount: 0,
+          successCount: 1,
+        }),
       } as unknown as PrismaService['syncJob'],
       backupVendHqSale: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -148,8 +155,12 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         customerTrxId: 'TRX-001',
         serviceStatus: 'SUCCESS',
       }),
-      createStandardReceipt: jest.fn().mockResolvedValue({ receiptNumber: 'SR-001' }),
-      createMiscellaneousReceipt: jest.fn().mockResolvedValue({ receiptNumber: 'MR-001' }),
+      createStandardReceipt: jest
+        .fn()
+        .mockResolvedValue({ receiptNumber: 'SR-001' }),
+      createMiscellaneousReceipt: jest
+        .fn()
+        .mockResolvedValue({ receiptNumber: 'MR-001' }),
       createApplyReceipt: jest.fn().mockResolvedValue({}),
       importJournalEntry: jest.fn().mockResolvedValue('JE-001'),
     };
@@ -190,12 +201,28 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
     jest.clearAllMocks();
     // Re-apply default mocks after clearAllMocks
-    (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue(BASE_ORDER);
-    (mockPrisma.orderSyncQueue!.update as jest.Mock).mockResolvedValue({ ...BASE_ORDER, status: SyncStatus.SYNCED });
+    (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue(
+      BASE_ORDER,
+    );
+    (mockPrisma.orderSyncQueue!.update as jest.Mock).mockResolvedValue({
+      ...BASE_ORDER,
+      status: SyncStatus.SYNCED,
+    });
     (mockPrisma.failedTransaction!.create as jest.Mock).mockResolvedValue({});
-    (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(null);
-    (mockPrisma.fusionInvoiceHeader!.create as jest.Mock).mockResolvedValue({ id: 'hdr-1' });
-    (mockPrisma.syncJob!.update as jest.Mock).mockResolvedValue({ id: 'sj-1', processedRecords: 1, totalRecords: 1, failedCount: 0, skippedCount: 0, successCount: 1 });
+    (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(
+      null,
+    );
+    (mockPrisma.fusionInvoiceHeader!.create as jest.Mock).mockResolvedValue({
+      id: 'hdr-1',
+    });
+    (mockPrisma.syncJob!.update as jest.Mock).mockResolvedValue({
+      id: 'sj-1',
+      processedRecords: 1,
+      totalRecords: 1,
+      failedCount: 0,
+      skippedCount: 0,
+      successCount: 1,
+    });
     (mockValidation.validateOrder as jest.Mock).mockResolvedValue({
       isValid: true,
       errors: [],
@@ -205,8 +232,13 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     (mockIdempotency.generateKey as jest.Mock).mockReturnValue('idem-key-001');
     (mockIdempotency.isDuplicate as jest.Mock).mockResolvedValue(false);
     (mockIdempotency.recordOperation as jest.Mock).mockResolvedValue({});
-    (mockStoreConfig.getValidatedConfig as jest.Mock).mockResolvedValue({ branchCode: 'DXB' });
-    (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue({ id: 'pm-1', isActive: true });
+    (mockStoreConfig.getValidatedConfig as jest.Mock).mockResolvedValue({
+      branchCode: 'DXB',
+    });
+    (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue({
+      id: 'pm-1',
+      isActive: true,
+    });
     (mockAlerts.createAlert as jest.Mock).mockResolvedValue({});
     (mockQueues.enqueueNotification as jest.Mock).mockResolvedValue({});
     (mockGateway.emitOrderStatus as jest.Mock).mockReturnValue(undefined);
@@ -215,32 +247,42 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
   describe('payment method null handling', () => {
     it('continues processing when resolvePaymentMethod returns null', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(null);
+      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       await processor.handleOrderSync(makeJob());
 
       // Order should be marked SYNCED, not FAILED
-      const updateCall = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock.calls.find(
+      const updateCall = (
+        mockPrisma.orderSyncQueue!.update as jest.Mock
+      ).mock.calls.find(
         (c: unknown[]) =>
-          (c[0] as { data: { status: SyncStatus } }).data?.status === SyncStatus.SYNCED,
+          (c[0] as { data: { status: SyncStatus } }).data?.status ===
+          SyncStatus.SYNCED,
       );
       expect(updateCall).toBeDefined();
     });
 
     it('does not mark the order as FAILED when payment method is unmapped', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(null);
+      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       await processor.handleOrderSync(makeJob());
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock.calls as Array<
-        [{ data: { status?: SyncStatus } }]
-      >;
-      const failedUpdate = updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED);
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const failedUpdate = updateCalls.find(
+        (c) => c[0].data?.status === SyncStatus.FAILED,
+      );
       expect(failedUpdate).toBeUndefined();
     });
 
     it('records a fallback warning in the audit log when payment method is unmapped', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(null);
+      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
+        null,
+      );
 
       await processor.handleOrderSync(makeJob());
 
@@ -289,7 +331,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       );
 
       // Must resolve without throwing
-      await expect(processor.handleOrderSync(makeJob())).resolves.toBeUndefined();
+      await expect(
+        processor.handleOrderSync(makeJob()),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -334,9 +378,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         holdForNegativeInventory: true,
       });
 
-      await processor.handleOrderSync(
-        makeJob({ syncJobId: 'sj-1' }),
-      );
+      await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
 
       expect(mockPrisma.syncJob!.update).toHaveBeenCalledWith(
         expect.objectContaining({

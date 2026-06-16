@@ -33,7 +33,12 @@ export class ValidationService {
 
     if (!order) {
       errors.push(`Order ${odooOrderId} not found in sync queue`);
-      return { isValid: false, errors, warnings, holdForNegativeInventory: false };
+      return {
+        isValid: false,
+        errors,
+        warnings,
+        holdForNegativeInventory: false,
+      };
     }
 
     if (!order.isPaid) {
@@ -63,7 +68,12 @@ export class ValidationService {
     // Negative inventory: fire a structured alert with SKU details and hold the order.
     if (order.negativeInventoryFlag) {
       const skuList = Array.isArray(order.negativeInventoryItems)
-        ? (order.negativeInventoryItems as Array<{ sku: string; quantity: number }>)
+        ? (
+            order.negativeInventoryItems as Array<{
+              sku: string;
+              quantity: number;
+            }>
+          )
             .map((i) => `${i.sku} (qty: ${i.quantity})`)
             .join(', ')
         : 'unknown SKUs';
@@ -101,6 +111,11 @@ export class ValidationService {
       );
     }
 
-    return { isValid: errors.length === 0, errors, warnings, holdForNegativeInventory: false };
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      holdForNegativeInventory: false,
+    };
   }
 }

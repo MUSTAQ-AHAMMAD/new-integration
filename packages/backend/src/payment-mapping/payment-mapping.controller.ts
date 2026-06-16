@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { PaymentMappingService } from './payment-mapping.service';
@@ -25,17 +34,24 @@ export class PaymentMappingController {
       orderBy: { sourcePaymentName: 'asc' },
     });
     const escape = (v: unknown) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
       const s = v == null ? '' : String(v);
       return s.includes(',') || s.includes('"') || s.includes('\n')
-        ? `"${s.replaceAll('"', '""')}"` : s;
+        ? `"${s.replaceAll('"', '""')}"`
+        : s;
     };
     const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
     const csv = [
       headers.map(escape).join(','),
-      ...rows.map((r) => headers.map((h) => escape((r as Record<string, unknown>)[h])).join(',')),
+      ...rows.map((r) =>
+        headers.map((h) => escape((r as Record<string, unknown>)[h])).join(','),
+      ),
     ].join('\n');
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="payment-mappings.csv"');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="payment-mappings.csv"',
+    );
     res.send(csv);
   }
 

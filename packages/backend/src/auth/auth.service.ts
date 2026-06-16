@@ -13,7 +13,7 @@ export class AuthService {
    * Validate admin credentials against environment variables.
    * Returns a signed JWT token on success, throws UnauthorizedException on failure.
    */
-  async login(email: string, password: string): Promise<{ accessToken: string }> {
+  login(email: string, password: string): { accessToken: string } {
     const adminEmail = this.config.get<string>('ADMIN_EMAIL');
     const adminPassword = this.config.get<string>('ADMIN_PASSWORD');
 

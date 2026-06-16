@@ -23,14 +23,17 @@ export class NotificationsService implements OnModuleInit {
     if (smtpHost && smtpUser && smtpPass) {
       const smtpPort = this.config.get<number>('SMTP_PORT') ?? 587;
       // Use implicit TLS (secure) when port is 465; otherwise use STARTTLS
-      const secure = this.config.get<string>('SMTP_SECURE') === 'true' || smtpPort === 465;
+      const secure =
+        this.config.get<string>('SMTP_SECURE') === 'true' || smtpPort === 465;
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: smtpPort,
         secure,
         auth: { user: smtpUser, pass: smtpPass },
       });
-      this.logger.log(`SMTP transport configured (host: ${smtpHost}, port: ${smtpPort}, secure: ${secure})`);
+      this.logger.log(
+        `SMTP transport configured (host: ${smtpHost}, port: ${smtpPort}, secure: ${secure})`,
+      );
     } else {
       this.logger.warn(
         'SMTP not configured — email notifications will be logged only. ' +

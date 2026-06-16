@@ -41,9 +41,7 @@ export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listNegativeInventory(params?: ListNegativeInventoryParams) {
-    const conditions: Prisma.Sql[] = [
-      Prisma.sql`"isNegativeInventory" = TRUE`,
-    ];
+    const conditions: Prisma.Sql[] = [Prisma.sql`"isNegativeInventory" = TRUE`];
 
     if (params?.branchCode) {
       conditions.push(Prisma.sql`"branchCode" = ${params.branchCode}`);

@@ -10,7 +10,12 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import { RefundsService } from './refunds.service';
 
 class ListRefundsQueryDto {
@@ -111,10 +116,7 @@ export class RefundsController {
 
   @Put(':id/reconcile')
   @ApiOperation({ summary: 'Mark a refund as reconciled' })
-  reconcileRefund(
-    @Param('id') id: string,
-    @Body() body: ReconcileRefundDto,
-  ) {
+  reconcileRefund(@Param('id') id: string, @Body() body: ReconcileRefundDto) {
     return this.refundsService.reconcileRefund(id, body.reconcileNote);
   }
 

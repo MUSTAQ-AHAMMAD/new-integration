@@ -15,7 +15,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Response } from 'express';
 import { AdminService } from './admin.service';
 import { OracleNativeService } from './oracle-native.service';
@@ -39,7 +45,10 @@ export class AdminController {
   // ── Oracle import ──────────────────────────────────────────────
 
   @Post('oracle-import')
-  @ApiOperation({ summary: 'Import configuration data directly from Oracle ODOO_INTEGRATION schema' })
+  @ApiOperation({
+    summary:
+      'Import configuration data directly from Oracle ODOO_INTEGRATION schema',
+  })
   oracleImport(@Body() body: { tables?: string[] }) {
     return this.oracleNative.importFromOracle(body?.tables);
   }
@@ -56,14 +65,22 @@ export class AdminController {
   ) {
     const csv = await this.adminService.exportCsv(table, region);
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${table}-export.csv"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${table}-export.csv"`,
+    );
     res.send(csv);
   }
 
   @Post(':table/import')
   @ApiOperation({ summary: 'Import records from a CSV file' })
   @ApiConsumes('multipart/form-data')
-  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
   @UseInterceptors(FileInterceptor('file'))
   async importCsv(
     @Param('table') table: string,
@@ -102,10 +119,7 @@ export class AdminController {
 
   @Post(':table')
   @ApiOperation({ summary: 'Create a record' })
-  create(
-    @Param('table') table: string,
-    @Body() body: Record<string, unknown>,
-  ) {
+  create(@Param('table') table: string, @Body() body: Record<string, unknown>) {
     return this.adminService.create(table, body);
   }
 

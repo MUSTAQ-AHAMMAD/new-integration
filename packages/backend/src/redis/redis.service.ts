@@ -20,7 +20,7 @@ function resolveRedisOptions(config: ConfigService): RedisOptions {
       retryStrategy: (times: number) => Math.min(times * 100, 5000),
       lazyConnect: true,
       maxRetriesPerRequest: null,
-    } as unknown as RedisOptions;
+    };
   }
 
   return {

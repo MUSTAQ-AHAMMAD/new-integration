@@ -38,7 +38,9 @@ export class HealthController {
   }
 
   @Post('check')
-  @ApiOperation({ summary: 'Trigger an immediate health check for all services' })
+  @ApiOperation({
+    summary: 'Trigger an immediate health check for all services',
+  })
   async triggerHealthCheck() {
     await this.healthService.runHealthChecks();
     return this.prisma.integrationHealthCheck.findMany({

@@ -189,20 +189,44 @@ export class MetricsService implements OnModuleInit {
     this.queueFailed.set({ queue: 'order-sync' }, stats.orderSync.failed);
     this.queueCompleted.set({ queue: 'order-sync' }, stats.orderSync.completed);
 
-    this.queueWaiting.set({ queue: 'inventory-sync' }, stats.inventorySync.waiting);
-    this.queueActive.set({ queue: 'inventory-sync' }, stats.inventorySync.active);
-    this.queueFailed.set({ queue: 'inventory-sync' }, stats.inventorySync.failed);
-    this.queueCompleted.set({ queue: 'inventory-sync' }, stats.inventorySync.completed);
+    this.queueWaiting.set(
+      { queue: 'inventory-sync' },
+      stats.inventorySync.waiting,
+    );
+    this.queueActive.set(
+      { queue: 'inventory-sync' },
+      stats.inventorySync.active,
+    );
+    this.queueFailed.set(
+      { queue: 'inventory-sync' },
+      stats.inventorySync.failed,
+    );
+    this.queueCompleted.set(
+      { queue: 'inventory-sync' },
+      stats.inventorySync.completed,
+    );
 
     this.queueWaiting.set({ queue: 'retry' }, stats.retry.waiting);
     this.queueActive.set({ queue: 'retry' }, stats.retry.active);
     this.queueFailed.set({ queue: 'retry' }, stats.retry.failed);
     this.queueCompleted.set({ queue: 'retry' }, stats.retry.completed);
 
-    this.queueWaiting.set({ queue: 'notifications' }, stats.notifications.waiting);
-    this.queueActive.set({ queue: 'notifications' }, stats.notifications.active);
-    this.queueFailed.set({ queue: 'notifications' }, stats.notifications.failed);
-    this.queueCompleted.set({ queue: 'notifications' }, stats.notifications.completed);
+    this.queueWaiting.set(
+      { queue: 'notifications' },
+      stats.notifications.waiting,
+    );
+    this.queueActive.set(
+      { queue: 'notifications' },
+      stats.notifications.active,
+    );
+    this.queueFailed.set(
+      { queue: 'notifications' },
+      stats.notifications.failed,
+    );
+    this.queueCompleted.set(
+      { queue: 'notifications' },
+      stats.notifications.completed,
+    );
   }
 
   private async refreshStalledOrderStats() {

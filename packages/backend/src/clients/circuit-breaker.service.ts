@@ -143,7 +143,9 @@ export class CircuitBreakerService {
     }
   }
 
-  async getStatus(name?: string): Promise<CircuitStatus | CircuitStatus[] | null> {
+  async getStatus(
+    name?: string,
+  ): Promise<CircuitStatus | CircuitStatus[] | null> {
     if (name) {
       const exists = await this.circuitExists(name);
       if (!exists) return null;
@@ -191,11 +193,15 @@ export class CircuitBreakerService {
           halfOpenInFlight: Number(raw.halfOpenInFlight ?? 0),
           halfOpenCompleted: Number(raw.halfOpenCompleted ?? 0),
           openedAt: raw.openedAt ? Number(raw.openedAt) : undefined,
-          lastFailureAt: raw.lastFailureAt ? Number(raw.lastFailureAt) : undefined,
+          lastFailureAt: raw.lastFailureAt
+            ? Number(raw.lastFailureAt)
+            : undefined,
         };
       }
-    } catch (err) {
-      this.logger.warn(`Redis unavailable for circuit ${name}, using local fallback`);
+    } catch {
+      this.logger.warn(
+        `Redis unavailable for circuit ${name}, using local fallback`,
+      );
     }
     return {
       ...(this.localFallback.get(name) ?? this.emptySnapshot(name)),
@@ -207,7 +213,11 @@ export class CircuitBreakerService {
     };
   }
 
-  private async writeField(name: string, field: string, value: string): Promise<void> {
+  private async writeField(
+    name: string,
+    field: string,
+    value: string,
+  ): Promise<void> {
     const key = `${KEY_PREFIX}:${name}`;
     try {
       if (this.redis) {
@@ -226,7 +236,11 @@ export class CircuitBreakerService {
     this.localFallback.set(name, snap);
   }
 
-  private async incrField(name: string, field: string, by = 1): Promise<number> {
+  private async incrField(
+    name: string,
+    field: string,
+    by = 1,
+  ): Promise<number> {
     const key = `${KEY_PREFIX}:${name}`;
     try {
       if (this.redis) {
@@ -238,7 +252,9 @@ export class CircuitBreakerService {
       // fall through to local fallback
     }
     const snap = this.localFallback.get(name) ?? this.emptySnapshot(name);
-    const current = Number((snap as unknown as Record<string, unknown>)[field] ?? 0);
+    const current = Number(
+      (snap as unknown as Record<string, unknown>)[field] ?? 0,
+    );
     const updated = current + by;
     (snap as unknown as Record<string, unknown>)[field] = updated;
     this.localFallback.set(name, snap);
@@ -296,7 +312,9 @@ export class CircuitBreakerService {
     } catch {
       // ignore
     }
-    return Array.from(this.localFallback.keys()).map((n) => `${KEY_PREFIX}:${n}`);
+    return Array.from(this.localFallback.keys()).map(
+      (n) => `${KEY_PREFIX}:${n}`,
+    );
   }
 
   private emptySnapshot(name: string): CircuitSnapshot {

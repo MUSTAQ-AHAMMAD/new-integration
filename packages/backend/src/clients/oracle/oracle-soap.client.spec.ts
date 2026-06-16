@@ -13,7 +13,9 @@ import {
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-function makeInvoiceHeader(overrides: Partial<InvoiceHeader> = {}): InvoiceHeader {
+function makeInvoiceHeader(
+  overrides: Partial<InvoiceHeader> = {},
+): InvoiceHeader {
   return {
     billToCustomerName: 'Test Customer',
     billToLocation: 'DXB-SITE',
@@ -88,7 +90,9 @@ function makeMiscReceiptRequest(
   };
 }
 
-function makeJournalHeader(overrides: Partial<JournalHeader> = {}): JournalHeader {
+function makeJournalHeader(
+  overrides: Partial<JournalHeader> = {},
+): JournalHeader {
   return {
     batchName: 'Jan-24: SERVICE',
     batchDescription: 'Journal Import: SALE-001',
@@ -280,7 +284,9 @@ describe('OracleSoapClient', () => {
         }),
       });
 
-      const result = await client.createStandardReceipt(makeStandardReceiptRequest());
+      const result = await client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
 
       expect(result.receiptNumber).toBe('Cash-SALE-001');
       expect(result.customerReceiptReference).toBe('REF-001');
@@ -301,10 +307,16 @@ describe('OracleSoapClient', () => {
     });
 
     it('throws on SOAP fault', async () => {
-      mockHttpPost.mockResolvedValue({ data: buildFaultXml('ReceiptMethodNotFound') });
+      mockHttpPost.mockResolvedValue({
+        data: buildFaultXml('ReceiptMethodNotFound'),
+      });
 
-      const promise = client.createStandardReceipt(makeStandardReceiptRequest());
-      const assertion = expect(promise).rejects.toThrow('Oracle SOAP fault [createStandardReceipt]');
+      const promise = client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle SOAP fault [createStandardReceipt]',
+      );
       await jest.runAllTimersAsync();
       await assertion;
     });
@@ -350,7 +362,9 @@ describe('OracleSoapClient', () => {
         }),
       });
 
-      const result = await client.createMiscellaneousReceipt(makeMiscReceiptRequest());
+      const result = await client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest(),
+      );
 
       expect(result.receivablesTransactionId).toBe('MISC-001');
       expect(result.receiptNumber).toBe('Credit Card-SALE-001-MISC');
@@ -361,7 +375,9 @@ describe('OracleSoapClient', () => {
         data: buildSuccessXml({ ReceiptNumber: 'Credit Card-SALE-001-MISC' }),
       });
 
-      await client.createMiscellaneousReceipt(makeMiscReceiptRequest({ receiptAmount: -2.5 }));
+      await client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest({ receiptAmount: -2.5 }),
+      );
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('-2.5');
@@ -434,7 +450,9 @@ describe('OracleSoapClient', () => {
     });
 
     it('throws on SOAP fault', async () => {
-      mockHttpPost.mockResolvedValue({ data: buildFaultXml('CustomerNotFound') });
+      mockHttpPost.mockResolvedValue({
+        data: buildFaultXml('CustomerNotFound'),
+      });
 
       const promise = client.getCustomerProfile('UNKNOWN');
       const assertion = expect(promise).rejects.toThrow(

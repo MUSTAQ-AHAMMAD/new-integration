@@ -1,6 +1,22 @@
-import { Field, InputType, Int, Mutation, ObjectType, Query, Resolver, registerEnumType, Args } from '@nestjs/graphql';
+import {
+  Field,
+  InputType,
+  Int,
+  Mutation,
+  ObjectType,
+  Query,
+  Resolver,
+  registerEnumType,
+  Args,
+} from '@nestjs/graphql';
 import { JobStatus, JobType, ScopeType } from '@prisma/client';
-import { IsArray, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { SyncService } from './sync.service';
 
 registerEnumType(JobType, { name: 'SyncJobTypeEnum' });

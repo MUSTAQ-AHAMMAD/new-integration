@@ -85,9 +85,7 @@ export class OracleClient {
     });
   }
 
-  async createInvoice(
-    data: OracleInvoiceData,
-  ): Promise<OracleInvoiceResult> {
+  async createInvoice(data: OracleInvoiceData): Promise<OracleInvoiceResult> {
     return this.circuitBreaker.execute('oracle:createInvoice', () =>
       this.withRetries(async () => {
         const response = await this.http.post('/receivables/invoices', data);
@@ -101,10 +99,7 @@ export class OracleClient {
   ): Promise<OracleCreditMemoResult> {
     return this.circuitBreaker.execute('oracle:createCreditMemo', () =>
       this.withRetries(async () => {
-        const response = await this.http.post(
-          '/receivables/creditMemos',
-          data,
-        );
+        const response = await this.http.post('/receivables/creditMemos', data);
         return this.extractObject<OracleCreditMemoResult>(response.data);
       }),
     );
@@ -145,8 +140,8 @@ export class OracleClient {
           { params: query },
         );
         const data = this.isRecord(response.data) ? response.data : {};
-        const items = Array.isArray((data as Record<string, unknown>)['items'])
-          ? ((data as Record<string, unknown>)['items'] as OracleInventoryItem[])
+        const items = Array.isArray(data['items'])
+          ? (data['items'] as OracleInventoryItem[])
           : [];
         return items;
       }),
@@ -186,8 +181,8 @@ export class OracleClient {
           { params: query },
         );
         const data = this.isRecord(response.data) ? response.data : {};
-        const items = Array.isArray((data as Record<string, unknown>)['items'])
-          ? ((data as Record<string, unknown>)['items'] as OracleOnHandQuantity[])
+        const items = Array.isArray(data['items'])
+          ? (data['items'] as OracleOnHandQuantity[])
           : [];
         return items;
       }),

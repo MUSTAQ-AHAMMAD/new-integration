@@ -197,7 +197,11 @@ export class SyncService {
       });
     }
 
-    if (dto.scopeType === ScopeType.DATE_RANGE && dto.startDate && dto.endDate) {
+    if (
+      dto.scopeType === ScopeType.DATE_RANGE &&
+      dto.startDate &&
+      dto.endDate
+    ) {
       const timezone = dto.timezone ?? 'UTC';
       const range = this.timezoneService.getDateRangeUtc(
         dto.startDate,

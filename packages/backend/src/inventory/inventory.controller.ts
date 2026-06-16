@@ -1,7 +1,12 @@
 import { Body, Controller, Get, Param, Put, Query } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
-import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
 
 class NegativeInventoryQueryDto {

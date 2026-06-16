@@ -54,7 +54,7 @@ describe('RefundsService', () => {
 
       await service.listRefunds({ status: 'SUCCESS' });
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         strings: string[];
         values: unknown[];
       };
@@ -67,7 +67,7 @@ describe('RefundsService', () => {
 
       await service.listRefunds({ month: 3 });
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         strings: string[];
       };
       const queryStr = sqlCall.strings.join('');
@@ -79,7 +79,7 @@ describe('RefundsService', () => {
 
       await service.listRefunds({ year: 2024 });
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         strings: string[];
       };
       const queryStr = sqlCall.strings.join('');
@@ -91,7 +91,7 @@ describe('RefundsService', () => {
 
       await service.listRefunds();
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         strings: string[];
         values: unknown[];
       };
@@ -104,7 +104,7 @@ describe('RefundsService', () => {
 
       await service.listRefunds({ limit: 10 });
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         values: unknown[];
       };
       expect(sqlCall.values).toContain(10);
@@ -142,10 +142,16 @@ describe('RefundsService', () => {
 
   describe('reconcileRefund', () => {
     it('marks the refund as reconciled with a note', async () => {
-      const updated = makeRefundRecord({ isReconciled: true, reconcileNote: 'Verified by finance' });
+      const updated = makeRefundRecord({
+        isReconciled: true,
+        reconcileNote: 'Verified by finance',
+      });
       mockPrisma.$queryRaw.mockResolvedValue([updated]);
 
-      const result = await service.reconcileRefund('ref-1', 'Verified by finance');
+      const result = await service.reconcileRefund(
+        'ref-1',
+        'Verified by finance',
+      );
 
       expect(result.isReconciled).toBe(true);
       expect(result.reconcileNote).toBe('Verified by finance');
@@ -164,7 +170,7 @@ describe('RefundsService', () => {
 
       await service.reconcileRefund('ref-1', 'Finance approved');
 
-      const sqlCall = (mockPrisma.$queryRaw as jest.Mock).mock.calls[0][0] as {
+      const sqlCall = mockPrisma.$queryRaw.mock.calls[0][0] as {
         values: unknown[];
       };
       expect(sqlCall.values).toContain('Finance approved');
@@ -201,8 +207,9 @@ describe('RefundsService', () => {
 
       await service.createManualCreditMemo(creditMemoInput);
 
-      const data = (mockPrisma.refundTracking.create as jest.Mock).mock
-        .calls[0][0].data as { refundAmount: Prisma.Decimal };
+      const data = mockPrisma.refundTracking.create.mock.calls[0][0].data as {
+        refundAmount: Prisma.Decimal;
+      };
       expect(data.refundAmount instanceof Prisma.Decimal).toBe(true);
       expect(data.refundAmount.toNumber()).toBe(200);
     });
@@ -212,8 +219,9 @@ describe('RefundsService', () => {
 
       await service.createManualCreditMemo(creditMemoInput);
 
-      const data = (mockPrisma.refundTracking.create as jest.Mock).mock
-        .calls[0][0].data as { creditMemoStatus: SyncStatus };
+      const data = mockPrisma.refundTracking.create.mock.calls[0][0].data as {
+        creditMemoStatus: SyncStatus;
+      };
       expect(data.creditMemoStatus).toBe(SyncStatus.PENDING);
     });
 

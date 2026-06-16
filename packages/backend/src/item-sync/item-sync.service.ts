@@ -11,9 +11,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import {
-  OracleInventoryItem,
-} from '../clients/oracle/oracle.client';
+import { OracleInventoryItem } from '../clients/oracle/oracle.client';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';

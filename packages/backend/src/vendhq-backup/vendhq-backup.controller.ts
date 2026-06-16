@@ -24,7 +24,9 @@ export class VendHqBackupController {
    */
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Manually trigger VendHQ sales backup for all regions' })
+  @ApiOperation({
+    summary: 'Manually trigger VendHQ sales backup for all regions',
+  })
   async triggerAll() {
     await this.backupService.runBackupJob();
     return { ok: true, message: 'Backup triggered for all active credentials' };
@@ -35,13 +37,18 @@ export class VendHqBackupController {
    */
   @Post('trigger/:credentialId')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Trigger VendHQ sales backup for a specific credential' })
+  @ApiOperation({
+    summary: 'Trigger VendHQ sales backup for a specific credential',
+  })
   async triggerOne(@Param('credentialId') credentialId: string) {
     const cred = await this.prisma.vendHqCredential.findUnique({
       where: { id: credentialId },
     });
     if (!cred || !cred.active) {
-      return { ok: false, message: `Credential ${credentialId} not found or inactive` };
+      return {
+        ok: false,
+        message: `Credential ${credentialId} not found or inactive`,
+      };
     }
     const result = await this.backupService.backupRegion(cred);
     return { ok: true, ...result };
@@ -52,13 +59,18 @@ export class VendHqBackupController {
    */
   @Post('trigger-region/:region')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Trigger VendHQ sales backup for all credentials in a region' })
+  @ApiOperation({
+    summary: 'Trigger VendHQ sales backup for all credentials in a region',
+  })
   async triggerByRegion(@Param('region') region: string) {
     const creds = await this.prisma.vendHqCredential.findMany({
       where: { region, active: true },
     });
     if (creds.length === 0) {
-      return { ok: false, message: `No active credentials found for region: ${region}` };
+      return {
+        ok: false,
+        message: `No active credentials found for region: ${region}`,
+      };
     }
     const results = await Promise.all(
       creds.map((cred) => this.backupService.backupRegion(cred)),
@@ -70,7 +82,9 @@ export class VendHqBackupController {
    * List all available regions (from active credentials).
    */
   @Get('regions')
-  @ApiOperation({ summary: 'List all regions that have active VendHQ credentials' })
+  @ApiOperation({
+    summary: 'List all regions that have active VendHQ credentials',
+  })
   async listRegions() {
     const creds = await this.prisma.vendHqCredential.findMany({
       where: { active: true },

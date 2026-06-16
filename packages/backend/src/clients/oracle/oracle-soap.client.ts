@@ -157,10 +157,6 @@ function xmlDate(d: Date): string {
   return d.toISOString().split('T')[0];
 }
 
-function xmlDateTime(d: Date): string {
-  return d.toISOString().replace(/\.\d+Z$/, 'Z');
-}
-
 function opt(tag: string, val: string | number | undefined | null): string {
   if (val === undefined || val === null || val === '') return '';
   return `<typ:${tag}>${val}</typ:${tag}>`;
@@ -378,7 +374,10 @@ function escapeXml(s: string): string {
 // ──────────────────────────────────────────────────────────────
 
 function extractTag(xml: string, tag: string): string {
-  const re = new RegExp(`<[^:>]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${tag}>`, 'i');
+  const re = new RegExp(
+    `<[^:>]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${tag}>`,
+    'i',
+  );
   const m = re.exec(xml);
   return m ? m[1].trim() : '';
 }
@@ -435,10 +434,16 @@ export class OracleSoapClient {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createSimpleInvoice');
-        const serviceStatus = extractTag(xml, 'ServiceStatus') || extractTag(xml, 'serviceStatus');
-        const transactionNumber = extractTag(xml, 'TransactionNumber') || extractTag(xml, 'transactionNumber');
-        const customerTrxId = extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
-        this.logger.log(`Invoice created: txn=${transactionNumber} status=${serviceStatus}`);
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') || extractTag(xml, 'serviceStatus');
+        const transactionNumber =
+          extractTag(xml, 'TransactionNumber') ||
+          extractTag(xml, 'transactionNumber');
+        const customerTrxId =
+          extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
+        this.logger.log(
+          `Invoice created: txn=${transactionNumber} status=${serviceStatus}`,
+        );
         return { serviceStatus, transactionNumber, customerTrxId };
       }),
     );
@@ -468,8 +473,11 @@ export class OracleSoapClient {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
-        const receiptNumber = extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
-        const customerReceiptReference = extractTag(xml, 'CustomerReceiptReference') || extractTag(xml, 'customerReceiptReference');
+        const receiptNumber =
+          extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
+        const customerReceiptReference =
+          extractTag(xml, 'CustomerReceiptReference') ||
+          extractTag(xml, 'customerReceiptReference');
         this.logger.log(`Standard receipt created: ${receiptNumber}`);
         return { receiptNumber, customerReceiptReference };
       }),
@@ -498,8 +506,10 @@ export class OracleSoapClient {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
-        const customerTrxId = extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
-        const receiptNumber = extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
+        const customerTrxId =
+          extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
+        const receiptNumber =
+          extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
         this.logger.log(`Apply receipt created: receipt=${receiptNumber}`);
         return { customerTrxId, receiptNumber };
       }),
@@ -515,26 +525,32 @@ export class OracleSoapClient {
   async createMiscellaneousReceipt(
     req: MiscReceiptRequest,
   ): Promise<MiscReceiptResponse> {
-    return this.circuitBreaker.execute('oracle:createMiscellaneousReceipt', () =>
-      this.withRetries(async () => {
-        const body = buildMiscReceiptSoap(req);
-        const resp = await this.http.post(
-          '/fscmService/MiscellaneousReceiptService',
-          body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
+    return this.circuitBreaker.execute(
+      'oracle:createMiscellaneousReceipt',
+      () =>
+        this.withRetries(async () => {
+          const body = buildMiscReceiptSoap(req);
+          const resp = await this.http.post(
+            '/fscmService/MiscellaneousReceiptService',
+            body,
+            {
+              headers: {
+                SOAPAction:
+                  'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
+              },
             },
-          },
-        );
-        const xml = resp.data as string;
-        this.assertNoFault(xml, 'createMiscellaneousReceipt');
-        const receivablesTransactionId = extractTag(xml, 'ReceivablesTransactionId') || extractTag(xml, 'receivablesTransactionId');
-        const receiptNumber = extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
-        this.logger.log(`Misc receipt created: ${receiptNumber}`);
-        return { receivablesTransactionId, receiptNumber };
-      }),
+          );
+          const xml = resp.data as string;
+          this.assertNoFault(xml, 'createMiscellaneousReceipt');
+          const receivablesTransactionId =
+            extractTag(xml, 'ReceivablesTransactionId') ||
+            extractTag(xml, 'receivablesTransactionId');
+          const receiptNumber =
+            extractTag(xml, 'ReceiptNumber') ||
+            extractTag(xml, 'receiptNumber');
+          this.logger.log(`Misc receipt created: ${receiptNumber}`);
+          return { receivablesTransactionId, receiptNumber };
+        }),
     );
   }
 
@@ -593,11 +609,15 @@ export class OracleSoapClient {
         const xml = resp.data as string;
         this.assertNoFault(xml, 'getActiveCustomerProfile');
         const customerAccountId = parseInt(
-          extractTag(xml, 'CustomerAccountId') || extractTag(xml, 'customerAccountId') || '0',
+          extractTag(xml, 'CustomerAccountId') ||
+            extractTag(xml, 'customerAccountId') ||
+            '0',
           10,
         );
         const paymentTermsName =
-          extractTag(xml, 'PaymentTerms') || extractTag(xml, 'paymentTerms') || 'IMMEDIATE';
+          extractTag(xml, 'PaymentTerms') ||
+          extractTag(xml, 'paymentTerms') ||
+          'IMMEDIATE';
         return { customerAccountId, paymentTermsName };
       }),
     );

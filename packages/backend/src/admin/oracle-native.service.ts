@@ -21,6 +21,7 @@ function col(row: Record<string, unknown>, name: string): unknown {
 
 function str(row: Record<string, unknown>, name: string): string {
   const v = col(row, name);
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return v != null ? String(v) : '';
 }
 
@@ -32,24 +33,32 @@ function num(row: Record<string, unknown>, name: string): number {
 function bool(row: Record<string, unknown>, name: string): boolean {
   const v = col(row, name);
   if (v == null) return false;
-  return String(v).toUpperCase() === 'Y' || String(v) === '1' || v === true;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  const s = String(v);
+  return s.toUpperCase() === 'Y' || s === '1' || v === true;
 }
 
 function optStr(row: Record<string, unknown>, name: string): string | null {
   const v = col(row, name);
-  return v != null && String(v).trim() !== '' ? String(v) : null;
+  if (v == null) return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  const s = String(v);
+  return s.trim() !== '' ? s : null;
 }
 
 function optNum(row: Record<string, unknown>, name: string): number | null {
   const v = col(row, name);
-  return v != null && String(v).trim() !== '' ? Number(v) : null;
+  if (v == null) return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  const s = String(v);
+  return s.trim() !== '' ? Number(v) : null;
 }
 
 const MAPPINGS: OracleTableMapping[] = [
   // OUTLET_INTEGRATION_CONFIG → OutletIntegrationConfig
   {
     oracleTable: 'OUTLET_INTEGRATION_CONFIG',
-    prismaDelegate: (p) => p.outletIntegrationConfig as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.outletIntegrationConfig,
     mapRow: (r) => ({
       outletName: str(r, 'OUTLET_NAME'),
       integMode: str(r, 'INTEG_MODE'),
@@ -60,7 +69,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // FUSION_BU_MAP → FusionBusinessUnitMap
   {
     oracleTable: 'FUSION_BU_MAP',
-    prismaDelegate: (p) => p.fusionBusinessUnitMap as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.fusionBusinessUnitMap,
     mapRow: (r) => ({
       businessUnitId: num(r, 'BUSINESS_UNIT_ID'),
       businessUnitName: str(r, 'BUSINESS_UNIT_NAME'),
@@ -76,7 +85,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // FUSION_RECEIPT_METHODS → FusionReceiptMethod
   {
     oracleTable: 'FUSION_RECEIPT_METHODS',
-    prismaDelegate: (p) => p.fusionReceiptMethod as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.fusionReceiptMethod,
     mapRow: (r) => ({
       receiptMethodId: num(r, 'RECEIPT_METHOD_ID'),
       receiptMethodName: str(r, 'RECEIPT_METHOD_NAME'),
@@ -90,7 +99,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // FUSION_SALES_METADATA → FusionSalesMetadata
   {
     oracleTable: 'FUSION_SALES_METADATA',
-    prismaDelegate: (p) => p.fusionSalesMetadata as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.fusionSalesMetadata,
     mapRow: (r) => ({
       billToName: str(r, 'BILL_TO_NAME'),
       billToAccount: num(r, 'BILL_TO_ACCOUNT'),
@@ -113,7 +122,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // SERVICE_PROVIDER_JOURNAL_META → ServiceProviderJournalMeta
   {
     oracleTable: 'SERVICE_PROVIDER_JOURNAL_META',
-    prismaDelegate: (p) => p.serviceProviderJournalMeta as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.serviceProviderJournalMeta,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       ledgerId: num(r, 'LEDGER_ID'),
@@ -140,7 +149,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // FUSION_CREDENTIALS → FusionCredential
   {
     oracleTable: 'FUSION_CREDENTIALS',
-    prismaDelegate: (p) => p.fusionCredential as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.fusionCredential,
     mapRow: (r) => ({
       hostName: str(r, 'HOST_NAME'),
       server: str(r, 'SERVER'),
@@ -153,7 +162,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_CREDENTIALS → VendHqCredential
   {
     oracleTable: 'VENDHQ_CREDENTIALS',
-    prismaDelegate: (p) => p.vendHqCredential as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqCredential,
     mapRow: (r) => ({
       domainName: str(r, 'DOMAIN_NAME'),
       personalToken: str(r, 'PERSONAL_TOKEN'),
@@ -168,7 +177,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_OUTLETS → VendHqOutlet
   {
     oracleTable: 'VENDHQ_OUTLETS',
-    prismaDelegate: (p) => p.vendHqOutlet as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqOutlet,
     mapRow: (r) => ({
       outletId: str(r, 'OUTLET_ID'),
       outletName: str(r, 'OUTLET_NAME'),
@@ -186,7 +195,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_REGISTERS → VendHqRegister
   {
     oracleTable: 'VENDHQ_REGISTERS',
-    prismaDelegate: (p) => p.vendHqRegister as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqRegister,
     mapRow: (r) => ({
       registerId: str(r, 'REGISTER_ID'),
       outletId: str(r, 'OUTLET_ID'),
@@ -210,7 +219,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_SERVICE_PROVIDERS → VendHqServiceProvider
   {
     oracleTable: 'VENDHQ_SERVICE_PROVIDERS',
-    prismaDelegate: (p) => p.vendHqServiceProvider as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqServiceProvider,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       serviceProvider: str(r, 'SERVICE_PROVIDER'),
@@ -222,7 +231,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_DISCOUNT_ITEMS → VendHqDiscountItem
   {
     oracleTable: 'VENDHQ_DISCOUNT_ITEMS',
-    prismaDelegate: (p) => p.vendHqDiscountItem as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqDiscountItem,
     mapRow: (r) => ({
       discountItemId: str(r, 'DISCOUNT_ITEM_ID'),
       region: str(r, 'REGION'),
@@ -237,7 +246,7 @@ const MAPPINGS: OracleTableMapping[] = [
   // VENDHQ_TAX_META → VendHqTaxMeta
   {
     oracleTable: 'VENDHQ_TAX_META',
-    prismaDelegate: (p) => p.vendHqTaxMeta as ReturnType<OracleTableMapping['prismaDelegate']>,
+    prismaDelegate: (p) => p.vendHqTaxMeta,
     mapRow: (r) => ({
       taxId: str(r, 'TAX_ID'),
       taxName: str(r, 'TAX_NAME'),
@@ -323,7 +332,8 @@ export class OracleNativeService {
 
     const connectString = `${cfg.host}:${cfg.port}/${cfg.serviceName}`;
     const role = this.config.get<string>('ORACLE_DB_ROLE');
-    const privilege = role?.toUpperCase() === 'SYSDBA' ? oracledb.SYSDBA : undefined;
+    const privilege =
+      role?.toUpperCase() === 'SYSDBA' ? oracledb.SYSDBA : undefined;
 
     let connection: import('oracledb').Connection | undefined;
     try {
@@ -338,10 +348,13 @@ export class OracleNativeService {
       throw new BadRequestException(`Failed to connect to Oracle DB: ${msg}`);
     }
 
-    const rawSchema = this.config.get<string>('ORACLE_DB_SCHEMA') ?? 'ODOO_INTEGRATION';
+    const rawSchema =
+      this.config.get<string>('ORACLE_DB_SCHEMA') ?? 'ODOO_INTEGRATION';
     // Validate schema name to prevent SQL injection through configuration
     if (!/^[A-Za-z0-9_]+$/.test(rawSchema)) {
-      throw new BadRequestException(`Invalid ORACLE_DB_SCHEMA name: "${rawSchema}"`);
+      throw new BadRequestException(
+        `Invalid ORACLE_DB_SCHEMA name: "${rawSchema}"`,
+      );
     }
     const schema = rawSchema.toUpperCase();
 
@@ -356,7 +369,9 @@ export class OracleNativeService {
       tablesFound = (result.rows ?? []).map((r) => r[0]);
     } catch {
       // Fallback: try to use SYS.ALL_TABLES with DBA_TABLES
-      this.logger.warn('Could not query ALL_TABLES, attempting DBA_TABLES fallback');
+      this.logger.warn(
+        'Could not query ALL_TABLES, attempting DBA_TABLES fallback',
+      );
     }
 
     const targetMappings = MAPPINGS.filter((m) => {
@@ -384,7 +399,7 @@ export class OracleNativeService {
           { outFormat: oracledb.OUT_FORMAT_OBJECT },
         );
 
-        const rows = (queryResult.rows ?? []) as Record<string, unknown>[];
+        const rows = queryResult.rows ?? [];
         const delegate = mapping.prismaDelegate(this.prisma);
 
         for (const row of rows) {
@@ -395,12 +410,17 @@ export class OracleNativeService {
             result.imported++;
           } catch (rowErr: unknown) {
             result.skipped++;
-            result.errors.push(rowErr instanceof Error ? rowErr.message : String(rowErr));
+            result.errors.push(
+              rowErr instanceof Error ? rowErr.message : String(rowErr),
+            );
           }
         }
       } catch (tableErr: unknown) {
-        const msg = tableErr instanceof Error ? tableErr.message : String(tableErr);
-        this.logger.warn(`Skipping Oracle table ${mapping.oracleTable}: ${msg}`);
+        const msg =
+          tableErr instanceof Error ? tableErr.message : String(tableErr);
+        this.logger.warn(
+          `Skipping Oracle table ${mapping.oracleTable}: ${msg}`,
+        );
         result.errors.push(`Table query failed: ${msg}`);
       }
 

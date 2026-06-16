@@ -72,7 +72,8 @@ export class OrderSyncProcessor {
           orderId: odooOrderId,
           status: SyncStatus.SKIPPED,
         });
-        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'skipped');
+        if (syncJobId)
+          await this.incrementSyncJobCounters(syncJobId, 'skipped');
         return;
       }
 
@@ -100,7 +101,10 @@ export class OrderSyncProcessor {
             errorMessage: validation.errors.join('; '),
           },
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.SKIPPED });
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.SKIPPED,
+        });
         if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'failed');
         return;
       }
@@ -115,7 +119,8 @@ export class OrderSyncProcessor {
           orderId: odooOrderId,
           status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         });
-        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'skipped');
+        if (syncJobId)
+          await this.incrementSyncJobCounters(syncJobId, 'skipped');
         this.logger.warn(
           `Order ${odooOrderId} held due to negative inventory — use retry-negative-inventory to re-process after stock correction`,
         );
@@ -148,7 +153,8 @@ export class OrderSyncProcessor {
               originalPayload: order,
               errorType: ErrorType.CONFIGURATION_ERROR,
               errorMessage: configMsg,
-              errorStack: configErr instanceof Error ? configErr.stack : undefined,
+              errorStack:
+                configErr instanceof Error ? configErr.stack : undefined,
             },
           })
           .catch((dbErr) => {
@@ -164,15 +170,23 @@ export class OrderSyncProcessor {
           relatedEntityId: branchCode,
           relatedEntityType: 'STORE_CONFIGURATION',
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.FAILED });
-        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'failed').catch(() => undefined);
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.FAILED,
+        });
+        if (syncJobId)
+          await this.incrementSyncJobCounters(syncJobId, 'failed').catch(
+            () => undefined,
+          );
         return;
       }
 
       // ── 3. Idempotency guard ──────────────────────────────────
       const idempotencyKey = this.idempotencyService.generateKey(
         odooOrderId,
-        order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+        order.isRefund
+          ? AuditOperation.CREATE_CREDIT_MEMO
+          : AuditOperation.CREATE_INVOICE,
         branchCode,
       );
 
@@ -186,13 +200,19 @@ export class OrderSyncProcessor {
           externalId: odooOrderId,
           externalSystem: 'ODOO',
           targetSystem: 'ORACLE',
-          operation: order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+          operation: order.isRefund
+            ? AuditOperation.CREATE_CREDIT_MEMO
+            : AuditOperation.CREATE_INVOICE,
           status: AuditStatus.DUPLICATE,
           requestPayload: order,
           processingDurationMs: Date.now() - startedAt,
         });
-        this.gateway.emitOrderStatus({ orderId: odooOrderId, status: 'DUPLICATE' });
-        if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'success');
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: 'DUPLICATE',
+        });
+        if (syncJobId)
+          await this.incrementSyncJobCounters(syncJobId, 'success');
         return;
       }
 
@@ -205,7 +225,10 @@ export class OrderSyncProcessor {
           lastSyncAt: new Date(),
         },
       });
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.PROCESSING });
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.PROCESSING,
+      });
 
       // ── 5. Resolve payment method (warn-only) ─────────────────
       const paymentMethodName = order.isRefund
@@ -213,13 +236,15 @@ export class OrderSyncProcessor {
         : order.branchName?.trim()
           ? `${order.branchName.trim()}-DEFAULT`
           : 'DEFAULT';
-      const resolvedMapping = await this.paymentMappingService.resolvePaymentMethod(
-        'ODOO',
-        paymentMethodName,
-      );
-      const fallbackAlert = resolvedMapping === null
-        ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
-        : null;
+      const resolvedMapping =
+        await this.paymentMappingService.resolvePaymentMethod(
+          'ODOO',
+          paymentMethodName,
+        );
+      const fallbackAlert =
+        resolvedMapping === null
+          ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
+          : null;
 
       // ── 6. Locate the BackupVendHqSale record ─────────────────
       //    The backup job stores the raw sale with its saleNumber / invoiceNumber
@@ -239,13 +264,24 @@ export class OrderSyncProcessor {
       if (backupSale) {
         // ── 7. Transform backup data → SOAP payloads ─────────────
         const region = branchCode;
-        const { invoiceHeader, standardReceipts, miscReceipts, applyReceipts, journalHeaders } =
-          await this.transformationService.buildSalePayloads(backupSale.id, region);
+        const {
+          invoiceHeader,
+          standardReceipts,
+          miscReceipts,
+          applyReceipts,
+          journalHeaders,
+        } = await this.transformationService.buildSalePayloads(
+          backupSale.id,
+          region,
+        );
 
         // ── 8. Push Invoice to Oracle Fusion ─────────────────────
-        const invoiceResult = await this.soapClient.createSimpleInvoice(invoiceHeader);
+        const invoiceResult =
+          await this.soapClient.createSimpleInvoice(invoiceHeader);
         const txnNumber = String(
-          invoiceResult.customerTrxId ?? invoiceResult.transactionNumber ?? odooOrderId,
+          invoiceResult.customerTrxId ??
+            invoiceResult.transactionNumber ??
+            odooOrderId,
         );
 
         // Persist audit record
@@ -390,11 +426,16 @@ export class OrderSyncProcessor {
         this.logger.warn(
           `No BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. Oracle SOAP calls skipped.`,
         );
-        oracleInvoiceNumber = order.isRefund ? null : `INV-${order.odooOrderNumber}`;
-        oracleCreditMemoNumber = order.isRefund ? `CM-${order.odooOrderNumber}` : null;
+        oracleInvoiceNumber = order.isRefund
+          ? null
+          : `INV-${order.odooOrderNumber}`;
+        oracleCreditMemoNumber = order.isRefund
+          ? `CM-${order.odooOrderNumber}`
+          : null;
       }
 
-      const oracleReference = oracleInvoiceNumber ?? oracleCreditMemoNumber ?? odooOrderId;
+      const oracleReference =
+        oracleInvoiceNumber ?? oracleCreditMemoNumber ?? odooOrderId;
 
       // ── 13. Record idempotency / audit log ────────────────────
       await this.idempotencyService.recordOperation({
@@ -402,7 +443,9 @@ export class OrderSyncProcessor {
         externalId: odooOrderId,
         externalSystem: 'ODOO',
         targetSystem: 'ORACLE',
-        operation: order.isRefund ? AuditOperation.CREATE_CREDIT_MEMO : AuditOperation.CREATE_INVOICE,
+        operation: order.isRefund
+          ? AuditOperation.CREATE_CREDIT_MEMO
+          : AuditOperation.CREATE_INVOICE,
         status: AuditStatus.SUCCESS,
         requestPayload: order,
         responsePayload: {
@@ -417,7 +460,9 @@ export class OrderSyncProcessor {
 
       const validationWarnings = [...validation.warnings];
       if (fallbackAlert) {
-        validationWarnings.push(`Payment mapping fallback applied: ${fallbackAlert}`);
+        validationWarnings.push(
+          `Payment mapping fallback applied: ${fallbackAlert}`,
+        );
       }
 
       if (order.negativeInventoryFlag) {
@@ -435,21 +480,31 @@ export class OrderSyncProcessor {
             ? { warnings: validationWarnings }
             : Prisma.JsonNull,
           oracleInvoiceNumber: order.isRefund ? null : oracleInvoiceNumber,
-          oracleCreditMemoNumber: order.isRefund ? oracleCreditMemoNumber : null,
+          oracleCreditMemoNumber: order.isRefund
+            ? oracleCreditMemoNumber
+            : null,
         },
       });
 
       if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'success');
 
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.SYNCED });
-      this.logger.log(`Order synced successfully: ${odooOrderId} → ${oracleReference}`);
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.SYNCED,
+      });
+      this.logger.log(
+        `Order synced successfully: ${odooOrderId} → ${oracleReference}`,
+      );
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       this.logger.error(`Order sync failed: ${odooOrderId} - ${errorMessage}`);
       await this.prisma.orderSyncQueue
         .update({
           where: { id: order.id },
-          data: { status: SyncStatus.FAILED, validationErrors: { error: errorMessage } },
+          data: {
+            status: SyncStatus.FAILED,
+            validationErrors: { error: errorMessage },
+          },
         })
         .catch(() => undefined);
       await this.prisma.failedTransaction
@@ -465,7 +520,9 @@ export class OrderSyncProcessor {
         .catch(() => undefined);
 
       if (syncJobId) {
-        await this.incrementSyncJobCounters(syncJobId, 'failed').catch(() => undefined);
+        await this.incrementSyncJobCounters(syncJobId, 'failed').catch(
+          () => undefined,
+        );
       }
 
       await this.queuesService
@@ -476,7 +533,10 @@ export class OrderSyncProcessor {
         })
         .catch(() => undefined);
 
-      this.gateway.emitOrderStatus({ orderId: odooOrderId, status: SyncStatus.FAILED });
+      this.gateway.emitOrderStatus({
+        orderId: odooOrderId,
+        status: SyncStatus.FAILED,
+      });
       throw err;
     }
   }
@@ -517,7 +577,11 @@ export class OrderSyncProcessor {
         data: { status: finalStatus, completedAt: new Date() },
       });
 
-      this.gateway.emitSyncJobUpdate({ jobId: syncJobId, status: finalStatus, progress: 100 });
+      this.gateway.emitSyncJobUpdate({
+        jobId: syncJobId,
+        status: finalStatus,
+        progress: 100,
+      });
     } else {
       const progress =
         job.totalRecords > 0

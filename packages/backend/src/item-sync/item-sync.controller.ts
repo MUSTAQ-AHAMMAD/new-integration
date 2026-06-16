@@ -21,10 +21,15 @@ export class ItemSyncController {
    */
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Trigger Oracle Fusion → VendHQ item sync for all regions' })
+  @ApiOperation({
+    summary: 'Trigger Oracle Fusion → VendHQ item sync for all regions',
+  })
   async triggerAll() {
     await this.itemSyncService.runItemSync();
-    return { ok: true, message: 'Item sync triggered for all active credentials' };
+    return {
+      ok: true,
+      message: 'Item sync triggered for all active credentials',
+    };
   }
 
   /**

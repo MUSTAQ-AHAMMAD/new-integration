@@ -17,7 +17,9 @@ import { AuthService } from './auth.service';
       useFactory: (config: ConfigService) => {
         const secret = config.get<string>('JWT_SECRET');
         if (!secret && config.get<string>('NODE_ENV') === 'production') {
-          throw new Error('JWT_SECRET environment variable is required in production');
+          throw new Error(
+            'JWT_SECRET environment variable is required in production',
+          );
         }
         return {
           secret: secret ?? 'changeme',

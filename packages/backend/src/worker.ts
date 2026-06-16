@@ -19,9 +19,7 @@ async function bootstrap() {
   });
 
   app.useLogger(app.get(Logger));
-  app
-    .get(Logger)
-    .log('🔧 BullMQ worker process started — processing queues…');
+  app.get(Logger).log('🔧 BullMQ worker process started — processing queues…');
 
   // Keep the process alive; BullMQ processors are event-driven.
   // The application context stays open as long as there are active listeners.
