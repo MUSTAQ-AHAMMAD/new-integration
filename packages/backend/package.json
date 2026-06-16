@@ -15,8 +15,10 @@
     "test": "jest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "db:push:dev": "prisma db push --accept-data-loss"
   },
   "dependencies": {
     "@as-integrations/express5": "^1.1.2",

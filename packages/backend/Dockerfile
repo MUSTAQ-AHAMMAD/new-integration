@@ -69,11 +69,11 @@ USER appuser
 EXPOSE 3001
 
 WORKDIR /app/packages/backend
-# Apply any pending schema changes before starting the API server.
-# If the push fails the container will exit, preventing a running API against
-# a stale schema.  For zero-downtime deployments run the push as a separate
+# Apply any pending migrations before starting the API server.
+# If the migration fails the container will exit, preventing a running API against
+# a stale schema.  For zero-downtime deployments run the migration as a separate
 # init step before routing traffic to this container.
-CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node dist/main"]
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/main"]
 
 # ─────────────────────────────────────────
 # Stage 4: Development (hot-reload)
@@ -118,4 +118,4 @@ RUN pnpm exec prisma generate
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate && pnpm dev"]
+CMD ["sh", "-c", "set -e && pnpm exec prisma migrate deploy && pnpm dev"]
