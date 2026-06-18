@@ -25,7 +25,9 @@ describe('CircuitBreakerService', () => {
     it('propagates errors from the wrapped function', async () => {
       const fn = jest.fn().mockRejectedValue(new Error('network error'));
 
-      await expect(service.execute('test', fn)).rejects.toThrow('network error');
+      await expect(service.execute('test', fn)).rejects.toThrow(
+        'network error',
+      );
     });
   });
 
@@ -37,7 +39,9 @@ describe('CircuitBreakerService', () => {
         await service.execute('broken', fn).catch(() => undefined);
       }
 
-      const status = (await service.getStatus('broken')) as { state: string } | null;
+      const status = (await service.getStatus('broken')) as {
+        state: string;
+      } | null;
       expect(status).not.toBeNull();
       expect(status?.state).toBe(CircuitState.OPEN);
     });

@@ -48,19 +48,21 @@ export class StalledOrdersService {
     }
 
     // Group by branch for targeted alerts
-    const byBranch = stalledOrders.reduce<
-      Record<string, typeof stalledOrders>
-    >((acc, order) => {
-      (acc[order.branchCode] ??= []).push(order);
-      return acc;
-    }, {});
+    const byBranch = stalledOrders.reduce<Record<string, typeof stalledOrders>>(
+      (acc, order) => {
+        (acc[order.branchCode] ??= []).push(order);
+        return acc;
+      },
+      {},
+    );
 
     for (const [branchCode, orders] of Object.entries(byBranch)) {
       const orderList = orders
         .slice(0, 10)
         .map((o) => o.odooOrderNumber ?? o.odooOrderId)
         .join(', ');
-      const overflow = orders.length > 10 ? ` ... and ${orders.length - 10} more` : '';
+      const overflow =
+        orders.length > 10 ? ` ... and ${orders.length - 10} more` : '';
 
       await this.alertsService.createAlert({
         alertType: AlertType.SYNC_STALLED,

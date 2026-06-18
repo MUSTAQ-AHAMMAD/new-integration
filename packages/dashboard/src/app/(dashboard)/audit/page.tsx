@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Eye, History, Play, TableProperties } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, authStorage } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,10 +38,21 @@ const ENTITY_OPTIONS = ['ALL', 'ORDER', 'PAYMENT', 'STORE', 'REFUND', 'SYSTEM'] 
 const STATUS_OPTIONS = ['ALL', 'SUCCESS', 'FAILED'] as const;
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = authStorage.getToken();
   const response = await fetch(`${apiBase}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
     ...options,
   });
+
+  if (response.status === 401) {
+    authStorage.clearToken();
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Session expired. Please log in again.');
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: response.statusText }));

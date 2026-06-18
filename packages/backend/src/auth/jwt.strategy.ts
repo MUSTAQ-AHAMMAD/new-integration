@@ -17,7 +17,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const secret = config.get<string>('JWT_SECRET');
     if (!secret) {
       if (config.get<string>('NODE_ENV') === 'production') {
-        throw new Error('JWT_SECRET environment variable is required in production');
+        throw new Error(
+          'JWT_SECRET environment variable is required in production',
+        );
       }
       new Logger(JwtStrategy.name).warn(
         'JWT_SECRET is not set — using insecure default. Set JWT_SECRET before deploying to production.',

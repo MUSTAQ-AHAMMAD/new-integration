@@ -1,5 +1,5 @@
 import { DashboardService } from './dashboard.service';
-import { JobStatus, SyncStatus } from '@prisma/client';
+import { SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const mockPrisma = {

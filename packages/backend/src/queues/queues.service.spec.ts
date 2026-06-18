@@ -89,7 +89,8 @@ describe('QueuesService', () => {
         branchCode: 'SHJ',
       });
 
-      const callOptions = (orderSyncQueue.add as jest.Mock).mock.calls[0][2] as {
+      const callOptions = (orderSyncQueue.add as jest.Mock).mock
+        .calls[0][2] as {
         delay: number;
       };
       expect(callOptions.delay).toBe(0);

@@ -53,7 +53,9 @@ export class OdooClient {
    * session cookie is required.  Otherwise a session cookie is obtained via
    * username/password authentication.
    */
-  private async authHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  private async authHeaders(
+    forceRefresh = false,
+  ): Promise<Record<string, string>> {
     if (this.apiKey) {
       return { 'x-api-key': this.apiKey };
     }
@@ -96,66 +98,62 @@ export class OdooClient {
     endDate?: string;
     limit?: number;
   }): Promise<OdooOrder[]> {
-    return this.circuitBreaker.execute(
-      'odoo:getOrders',
-      () =>
-        this.withRetries(async (attempt) => {
-          const headers = await this.authHeaders(attempt > 1);
+    return this.circuitBreaker.execute('odoo:getOrders', () =>
+      this.withRetries(async (attempt) => {
+        const headers = await this.authHeaders(attempt > 1);
 
-          if (this.apiKey) {
-            // POS REST API — uses query parameters directly
-            const response = await this.http.get('/api/pos/order', {
-              headers,
-              params: {
-                ...(params.branchId !== undefined && { branch_id: params.branchId }),
-                ...(params.startDate && { start_date: params.startDate }),
-                ...(params.endDate && { end_date: params.endDate }),
-              },
-            });
-            return this.extractList<OdooOrder>(response.data);
-          }
-
-          // Session-based fallback: use domain filter on sale.order
-          const domain = this.buildOrdersDomain(params);
-          const response = await this.http.get('/api/sale.order', {
+        if (this.apiKey) {
+          // POS REST API — uses query parameters directly
+          const response = await this.http.get('/api/pos/order', {
             headers,
             params: {
-              domain: JSON.stringify(domain),
-              limit: params.limit ?? 100,
+              ...(params.branchId !== undefined && {
+                branch_id: params.branchId,
+              }),
+              ...(params.startDate && { start_date: params.startDate }),
+              ...(params.endDate && { end_date: params.endDate }),
             },
           });
           return this.extractList<OdooOrder>(response.data);
-        }),
+        }
+
+        // Session-based fallback: use domain filter on sale.order
+        const domain = this.buildOrdersDomain(params);
+        const response = await this.http.get('/api/sale.order', {
+          headers,
+          params: {
+            domain: JSON.stringify(domain),
+            limit: params.limit ?? 100,
+          },
+        });
+        return this.extractList<OdooOrder>(response.data);
+      }),
     );
   }
 
   async getOrder(orderId: string): Promise<OdooOrder> {
-    return this.circuitBreaker.execute(
-      'odoo:getOrder',
-      () =>
-        this.withRetries(async (attempt) => {
-          const headers = await this.authHeaders(attempt > 1);
-          const endpoint = this.apiKey
-            ? `/api/pos/order/${orderId}`
-            : `/api/sale.order/${orderId}`;
-          const response = await this.http.get(endpoint, { headers });
-          return this.extractItem<OdooOrder>(response.data);
-        }),
+    return this.circuitBreaker.execute('odoo:getOrder', () =>
+      this.withRetries(async (attempt) => {
+        const headers = await this.authHeaders(attempt > 1);
+        const endpoint = this.apiKey
+          ? `/api/pos/order/${orderId}`
+          : `/api/sale.order/${orderId}`;
+        const response = await this.http.get(endpoint, { headers });
+        return this.extractItem<OdooOrder>(response.data);
+      }),
     );
   }
 
   async getPaymentMethods(): Promise<OdooPaymentMethod[]> {
-    return this.circuitBreaker.execute(
-      'odoo:getPaymentMethods',
-      () =>
-        this.withRetries(async (attempt) => {
-          const headers = await this.authHeaders(attempt > 1);
-          const response = await this.http.get('/api/account.payment.method', {
-            headers,
-          });
+    return this.circuitBreaker.execute('odoo:getPaymentMethods', () =>
+      this.withRetries(async (attempt) => {
+        const headers = await this.authHeaders(attempt > 1);
+        const response = await this.http.get('/api/account.payment.method', {
+          headers,
+        });
 
-          return this.extractList<OdooPaymentMethod>(response.data);
-        }),
+        return this.extractList<OdooPaymentMethod>(response.data);
+      }),
     );
   }
 

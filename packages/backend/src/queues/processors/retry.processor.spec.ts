@@ -106,8 +106,8 @@ describe('RetryProcessor', () => {
 
     await processor.handleRetry(job);
 
-    const callArg = (mockQueuesService.enqueueOrderSync as jest.Mock)
-      .mock.calls[0][0] as { isRetry: boolean };
+    const callArg = (mockQueuesService.enqueueOrderSync as jest.Mock).mock
+      .calls[0][0] as { isRetry: boolean };
     expect(callArg.isRetry).toBe(true);
   });
 });

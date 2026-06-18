@@ -61,15 +61,11 @@ export class AuditService {
     }
 
     if (params.startDate) {
-      conditions.push(
-        Prisma.sql`"createdAt" >= ${new Date(params.startDate)}`,
-      );
+      conditions.push(Prisma.sql`"createdAt" >= ${new Date(params.startDate)}`);
     }
 
     if (params.endDate) {
-      conditions.push(
-        Prisma.sql`"createdAt" <= ${new Date(params.endDate)}`,
-      );
+      conditions.push(Prisma.sql`"createdAt" <= ${new Date(params.endDate)}`);
     }
 
     if (params.status) {

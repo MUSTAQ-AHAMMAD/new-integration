@@ -54,7 +54,8 @@ export class OrderSyncService {
       processedData.orderDate,
       processedData.originalTimezone,
     );
-    const hasNegativeInventory = (processedData.negativeInventoryItems?.length ?? 0) > 0;
+    const hasNegativeInventory =
+      (processedData.negativeInventoryItems?.length ?? 0) > 0;
 
     const order = await this.prisma.orderSyncQueue.upsert({
       where: {

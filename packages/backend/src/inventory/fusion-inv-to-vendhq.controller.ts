@@ -13,9 +13,7 @@ import { FusionInvToVendHqService } from './fusion-inv-to-vendhq.service';
 @ApiTags('inventory-sync')
 @Controller('inventory-sync')
 export class FusionInvToVendHqController {
-  constructor(
-    private readonly fusionInvService: FusionInvToVendHqService,
-  ) {}
+  constructor(private readonly fusionInvService: FusionInvToVendHqService) {}
 
   /**
    * Manually trigger Oracle → VendHQ inventory sync for all regions.
@@ -24,7 +22,8 @@ export class FusionInvToVendHqController {
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Trigger Oracle Fusion on-hand → VendHQ inventory sync for all regions',
+    summary:
+      'Trigger Oracle Fusion on-hand → VendHQ inventory sync for all regions',
   })
   async triggerAll() {
     await this.fusionInvService.runInventorySync();
@@ -49,11 +48,16 @@ export class FusionInvToVendHqController {
    * Get recent inventory transaction records.
    */
   @Get('transactions')
-  @ApiOperation({ summary: 'List recent inventory push transactions (FusionInvTxn)' })
+  @ApiOperation({
+    summary: 'List recent inventory push transactions (FusionInvTxn)',
+  })
   async getTransactions(
     @Query('region') region?: string,
     @Query('limit') limit = '100',
   ) {
-    return this.fusionInvService.getInventoryTransactions(region, Number(limit));
+    return this.fusionInvService.getInventoryTransactions(
+      region,
+      Number(limit),
+    );
   }
 }

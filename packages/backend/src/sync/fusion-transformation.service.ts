@@ -92,13 +92,15 @@ export class FusionTransformationService {
       );
 
     // ── 3. Resolve register / bank account ──────────────────
-    const register = outlet?.registers.find(
-      (r) => r.registerName === registerName,
-    ) ?? outlet?.registers[0];
+    const register =
+      outlet?.registers.find((r) => r.registerName === registerName) ??
+      outlet?.registers[0];
 
     // ── 4. Build InvoiceHeader ───────────────────────────────
     const saleDate =
-      sale.saleDate instanceof Date ? sale.saleDate : new Date(String(sale.saleDate));
+      sale.saleDate instanceof Date
+        ? sale.saleDate
+        : new Date(String(sale.saleDate));
 
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: salesMeta.billToName,
@@ -189,7 +191,9 @@ export class FusionTransformationService {
       // Misc receipt for non-cash (bank charges) and cash rounding
       if (!isCash) {
         let miscAmount =
-          pmtAmount * receiptMethod.receiptBankCharge * (1 + receiptMethod.receiptMethodTax);
+          pmtAmount *
+          receiptMethod.receiptBankCharge *
+          (1 + receiptMethod.receiptMethodTax);
         // Regional cap for Debit Card in OM
         if (pmtMethod === 'Debit Card' && region === 'OM' && miscAmount > 10) {
           miscAmount = 10;
@@ -201,7 +205,8 @@ export class FusionTransformationService {
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.bankAccount ?? ''),
-          receivableActivityName: salesMeta.recActivityNameBank ?? 'Bank Charges',
+          receivableActivityName:
+            salesMeta.recActivityNameBank ?? 'Bank Charges',
           orgId: buMap?.businessUnitId ?? 0,
           receiptAmount: -miscAmount,
         });
@@ -213,7 +218,8 @@ export class FusionTransformationService {
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.cashAccount ?? ''),
-          receivableActivityName: salesMeta.recActivityNameCash ?? 'Cash Rounding',
+          receivableActivityName:
+            salesMeta.recActivityNameCash ?? 'Cash Rounding',
           orgId: buMap?.businessUnitId ?? 0,
           receiptAmount: -pmtAmount,
         });
@@ -282,8 +288,18 @@ export class FusionTransformationService {
 
   private getPeriodName(d: Date): string {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
   }

@@ -60,7 +60,9 @@ describe('ValidationService', () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
       makePaidOrder({ isPaid: false }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes('not paid'))).toBe(true);
@@ -70,7 +72,9 @@ describe('ValidationService', () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
       makePaidOrder({ isCancelled: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(result.errors).toContain('Order is cancelled');
@@ -88,7 +92,9 @@ describe('ValidationService', () => {
 
   it('returns valid for a paid, active, fully-configured order', async () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(makePaidOrder());
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(true);
     expect(result.errors).toHaveLength(0);
@@ -102,7 +108,9 @@ describe('ValidationService', () => {
         negativeInventoryItems: [{ sku: 'SKU-A', quantity: -3 }],
       }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
 
     await service.validateOrder('order-1', 'BR001');
 
@@ -118,11 +126,13 @@ describe('ValidationService', () => {
         negativeInventoryItems: [{ sku: 'SKU-B', quantity: -7 }],
       }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
 
     await service.validateOrder('order-1', 'BR001');
 
-    const alertCall = (mockAlerts.createAlert as jest.Mock).mock.calls[0][0] as {
+    const alertCall = mockAlerts.createAlert.mock.calls[0][0] as {
       message: string;
     };
     expect(alertCall.message).toContain('SKU-B');
@@ -132,7 +142,9 @@ describe('ValidationService', () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
       makePaidOrder({ negativeInventoryFlag: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
 
     const result = await service.validateOrder('order-1', 'BR001');
 
@@ -142,7 +154,9 @@ describe('ValidationService', () => {
 
   it('sets holdForNegativeInventory=false when negative inventory is absent', async () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(makePaidOrder());
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
 
     const result = await service.validateOrder('order-1', 'BR001');
 
@@ -154,7 +168,9 @@ describe('ValidationService', () => {
     mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
       makePaidOrder({ isPaid: false, negativeInventoryFlag: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(makeActiveStore());
+    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      makeActiveStore(),
+    );
 
     const result = await service.validateOrder('order-1', 'BR001');
 

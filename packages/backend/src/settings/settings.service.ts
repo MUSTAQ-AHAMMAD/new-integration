@@ -61,7 +61,9 @@ export class SettingsService {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Failed to parse alert thresholds from Redis: ${message}`);
+      this.logger.warn(
+        `Failed to parse alert thresholds from Redis: ${message}`,
+      );
     }
 
     return this.getDefaultAlertThresholds();
@@ -75,7 +77,10 @@ export class SettingsService {
 
   getSyncSchedule() {
     return {
-      orderSync: this.configService.get<string>('ORDER_SYNC_CRON', '*/5 * * * *'),
+      orderSync: this.configService.get<string>(
+        'ORDER_SYNC_CRON',
+        '*/5 * * * *',
+      ),
       inventorySync: this.configService.get<string>(
         'INVENTORY_SYNC_CRON',
         '*/10 * * * *',
@@ -95,10 +100,7 @@ export class SettingsService {
     return {
       maxAttempts: this.getNumberConfig('MAX_RETRY_ATTEMPTS', 3),
       initialBackoffMs: this.getNumberConfig('RETRY_BACKOFF_MS', 5000),
-      backoffMultiplier: this.getNumberConfig(
-        'RETRY_BACKOFF_MULTIPLIER',
-        2,
-      ),
+      backoffMultiplier: this.getNumberConfig('RETRY_BACKOFF_MULTIPLIER', 2),
       strategy: this.configService.get<string>('RETRY_STRATEGY', 'exponential'),
     };
   }
@@ -121,7 +123,9 @@ export class SettingsService {
             }
           : null;
       })
-      .filter((entry): entry is { name: string; value: string } => entry !== null);
+      .filter(
+        (entry): entry is { name: string; value: string } => entry !== null,
+      );
   }
 
   private getDefaultAlertThresholds(): AlertThresholds {

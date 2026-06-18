@@ -164,11 +164,14 @@ describe('SyncService', () => {
     it('passes the caller-supplied timezone to getDateRangeUtc', async () => {
       mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-tz' });
       mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
-      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-tz', status: 'PENDING' });
+      mockPrisma.syncJob.update.mockResolvedValueOnce({
+        id: 'job-tz',
+        status: 'PENDING',
+      });
 
       await service.createSyncJob({
-        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
-        scopeType: 'DATE_RANGE' as import('@prisma/client').ScopeType,
+        jobType: 'ORDER_SYNC',
+        scopeType: 'DATE_RANGE',
         startDate: '2024-04-01',
         endDate: '2024-04-30',
         timezone: 'Asia/Dubai',
@@ -184,11 +187,14 @@ describe('SyncService', () => {
     it('defaults to UTC when no timezone is supplied', async () => {
       mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-utc' });
       mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
-      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-utc', status: 'PENDING' });
+      mockPrisma.syncJob.update.mockResolvedValueOnce({
+        id: 'job-utc',
+        status: 'PENDING',
+      });
 
       await service.createSyncJob({
-        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
-        scopeType: 'DATE_RANGE' as import('@prisma/client').ScopeType,
+        jobType: 'ORDER_SYNC',
+        scopeType: 'DATE_RANGE',
         startDate: '2024-04-01',
         endDate: '2024-04-30',
       });
@@ -205,11 +211,14 @@ describe('SyncService', () => {
     it('filters by both branchCode and date range', async () => {
       mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-bdr' });
       mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
-      mockPrisma.syncJob.update.mockResolvedValueOnce({ id: 'job-bdr', status: 'PENDING' });
+      mockPrisma.syncJob.update.mockResolvedValueOnce({
+        id: 'job-bdr',
+        status: 'PENDING',
+      });
 
       await service.createSyncJob({
-        jobType: 'ORDER_SYNC' as import('@prisma/client').JobType,
-        scopeType: 'BRANCH_DATE_RANGE' as import('@prisma/client').ScopeType,
+        jobType: 'ORDER_SYNC',
+        scopeType: 'BRANCH_DATE_RANGE',
         branchCode: 'DXB',
         startDate: '2024-04-01',
         endDate: '2024-04-30',

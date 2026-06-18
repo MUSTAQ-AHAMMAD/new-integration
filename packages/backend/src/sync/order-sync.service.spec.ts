@@ -31,7 +31,9 @@ const mockQueues = {
 };
 
 const mockTimezone = {
-  normalizeToUtc: jest.fn().mockReturnValue(new Date('2024-01-15T06:00:00.000Z')),
+  normalizeToUtc: jest
+    .fn()
+    .mockReturnValue(new Date('2024-01-15T06:00:00.000Z')),
 };
 
 const mockAlerts = {
@@ -92,7 +94,10 @@ describe('OrderSyncService', () => {
       expect(mockPrisma.orderSyncQueue.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            odooOrderId_branchCode: { odooOrderId: 'ORD-001', branchCode: 'DXB' },
+            odooOrderId_branchCode: {
+              odooOrderId: 'ORD-001',
+              branchCode: 'DXB',
+            },
           },
           create: expect.objectContaining({
             odooOrderId: 'ORD-001',
@@ -106,10 +111,12 @@ describe('OrderSyncService', () => {
     it('sets status to PENDING for paid, non-cancelled orders', async () => {
       mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
 
-      await service.ingestOrder(makeOrderData({ isPaid: true, isCancelled: false }));
+      await service.ingestOrder(
+        makeOrderData({ isPaid: true, isCancelled: false }),
+      );
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { status: SyncStatus };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { status: SyncStatus };
       expect(createData.status).toBe(SyncStatus.PENDING);
     });
 
@@ -120,8 +127,8 @@ describe('OrderSyncService', () => {
 
       await service.ingestOrder(makeOrderData({ isPaid: false }));
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { status: SyncStatus };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { status: SyncStatus };
       expect(createData.status).toBe(SyncStatus.SKIPPED);
     });
 
@@ -130,10 +137,12 @@ describe('OrderSyncService', () => {
         makeUpsertedOrder({ status: SyncStatus.SKIPPED }),
       );
 
-      await service.ingestOrder(makeOrderData({ isPaid: true, isCancelled: true }));
+      await service.ingestOrder(
+        makeOrderData({ isPaid: true, isCancelled: true }),
+      );
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { status: SyncStatus };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { status: SyncStatus };
       expect(createData.status).toBe(SyncStatus.SKIPPED);
     });
 
@@ -146,8 +155,8 @@ describe('OrderSyncService', () => {
         expect.any(Date),
         'Asia/Dubai',
       );
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { orderDateUtc: Date };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { orderDateUtc: Date };
       expect(createData.orderDateUtc).toEqual(
         new Date('2024-01-15T06:00:00.000Z'),
       );
@@ -162,8 +171,8 @@ describe('OrderSyncService', () => {
         }),
       );
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { negativeInventoryFlag: boolean };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { negativeInventoryFlag: boolean };
       expect(createData.negativeInventoryFlag).toBe(true);
     });
 
@@ -172,15 +181,17 @@ describe('OrderSyncService', () => {
 
       await service.ingestOrder(makeOrderData({ negativeInventoryItems: [] }));
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { negativeInventoryFlag: boolean };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { negativeInventoryFlag: boolean };
       expect(createData.negativeInventoryFlag).toBe(false);
     });
 
     it('enqueues order sync for paid, non-cancelled orders', async () => {
       mockPrisma.orderSyncQueue.upsert.mockResolvedValue(makeUpsertedOrder());
 
-      await service.ingestOrder(makeOrderData({ isPaid: true, isCancelled: false }));
+      await service.ingestOrder(
+        makeOrderData({ isPaid: true, isCancelled: false }),
+      );
 
       expect(mockQueues.enqueueOrderSync).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -206,7 +217,9 @@ describe('OrderSyncService', () => {
         makeUpsertedOrder({ status: SyncStatus.SKIPPED }),
       );
 
-      await service.ingestOrder(makeOrderData({ isPaid: true, isCancelled: true }));
+      await service.ingestOrder(
+        makeOrderData({ isPaid: true, isCancelled: true }),
+      );
 
       expect(mockQueues.enqueueOrderSync).not.toHaveBeenCalled();
     });
@@ -248,8 +261,8 @@ describe('OrderSyncService', () => {
         }),
       );
 
-      const createData = (mockPrisma.refundTracking.upsert as jest.Mock)
-        .mock.calls[0][0].create as { refundAmount: Prisma.Decimal };
+      const createData = mockPrisma.refundTracking.upsert.mock.calls[0][0]
+        .create as { refundAmount: Prisma.Decimal };
       expect(createData.refundAmount.toNumber()).toBe(75);
     });
 
@@ -267,8 +280,8 @@ describe('OrderSyncService', () => {
 
       await service.ingestOrder(makeOrderData({ currency: undefined }));
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { currency: string };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { currency: string };
       expect(createData.currency).toBe('AED');
     });
 
@@ -279,11 +292,15 @@ describe('OrderSyncService', () => {
       mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
 
       await service.ingestOrder(
-        makeOrderData({ totalAmount: -50, isRefund: false, refundReferenceId: 'ORD-X' }),
+        makeOrderData({
+          totalAmount: -50,
+          isRefund: false,
+          refundReferenceId: 'ORD-X',
+        }),
       );
 
-      const createData = (mockPrisma.orderSyncQueue.upsert as jest.Mock)
-        .mock.calls[0][0].create as { isRefund: boolean };
+      const createData = mockPrisma.orderSyncQueue.upsert.mock.calls[0][0]
+        .create as { isRefund: boolean };
       expect(createData.isRefund).toBe(true);
     });
 
@@ -292,7 +309,11 @@ describe('OrderSyncService', () => {
       mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
 
       await service.ingestOrder(
-        makeOrderData({ totalAmount: -50, isRefund: false, refundReferenceId: 'ORD-X' }),
+        makeOrderData({
+          totalAmount: -50,
+          isRefund: false,
+          refundReferenceId: 'ORD-X',
+        }),
       );
 
       expect(mockAlerts.createAlert).toHaveBeenCalledWith(
@@ -305,7 +326,7 @@ describe('OrderSyncService', () => {
 
       await service.ingestOrder(makeOrderData({ totalAmount: 100 }));
 
-      const alertCalls = (mockAlerts.createAlert as jest.Mock).mock.calls;
+      const alertCalls = mockAlerts.createAlert.mock.calls;
       const refundAlert = alertCalls.find(
         (c: unknown[]) =>
           (c[0] as { alertType: string }).alertType === 'REFUND_DETECTED',
@@ -318,10 +339,14 @@ describe('OrderSyncService', () => {
       mockPrisma.refundTracking.upsert = jest.fn().mockResolvedValue({});
 
       await service.ingestOrder(
-        makeOrderData({ totalAmount: -50, isRefund: true, refundReferenceId: 'ORD-X' }),
+        makeOrderData({
+          totalAmount: -50,
+          isRefund: true,
+          refundReferenceId: 'ORD-X',
+        }),
       );
 
-      const alertCalls = (mockAlerts.createAlert as jest.Mock).mock.calls;
+      const alertCalls = mockAlerts.createAlert.mock.calls;
       const refundAlert = alertCalls.find(
         (c: unknown[]) =>
           (c[0] as { alertType: string }).alertType === 'REFUND_DETECTED',
@@ -375,8 +400,8 @@ describe('OrderSyncService', () => {
 
       await service.retryFailedOrders();
 
-      const whereClause = (mockPrisma.orderSyncQueue.findMany as jest.Mock)
-        .mock.calls[0][0].where as Record<string, unknown>;
+      const whereClause = mockPrisma.orderSyncQueue.findMany.mock.calls[0][0]
+        .where as Record<string, unknown>;
       expect(whereClause.branchCode).toBeUndefined();
     });
 

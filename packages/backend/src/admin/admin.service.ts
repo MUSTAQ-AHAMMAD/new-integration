@@ -6,6 +6,18 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+/** Minimal typed interface for the dynamic Prisma delegates used by AdminService. */
+interface PrismaDelegate {
+  findMany(args?: Record<string, unknown>): Promise<Record<string, unknown>[]>;
+  count(args?: Record<string, unknown>): Promise<number>;
+  findUnique(
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null>;
+  create(args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  update(args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  delete(args: Record<string, unknown>): Promise<Record<string, unknown>>;
+}
+
 // Map of route slug → Prisma delegate name
 const TABLE_MAP: Record<string, keyof PrismaService> = {
   'fusion-credentials': 'fusionCredential',
@@ -76,6 +88,7 @@ function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
  */
 function coerceCsvValue(value: unknown, prismaType: string): unknown {
   if (value === null || value === undefined || value === '') return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const s = String(value);
   switch (prismaType) {
     case 'Int':
@@ -107,10 +120,13 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
 
-  getDelegate(table: string): any {
+  getDelegate(table: string): PrismaDelegate {
     const delegateName = TABLE_MAP[table];
     if (!delegateName) throw new BadRequestException(`Unknown table: ${table}`);
-    return (this.prisma as any)[delegateName];
+
+    return (this.prisma as unknown as Record<string, unknown>)[
+      delegateName as string
+    ] as PrismaDelegate;
   }
 
   async list(
@@ -141,17 +157,17 @@ export class AdminService {
     return record;
   }
 
-  async create(table: string, body: Record<string, unknown>) {
+  create(table: string, body: Record<string, unknown>) {
     const delegate = this.getDelegate(table);
     // Strip id if provided so default cuid() is used
-    const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body as any;
+    const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
     return delegate.create({ data });
   }
 
   async update(table: string, id: string, body: Record<string, unknown>) {
     await this.getOne(table, id);
     const delegate = this.getDelegate(table);
-    const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body as any;
+    const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
     return delegate.update({ where: { id }, data });
   }
 
@@ -172,6 +188,7 @@ export class AdminService {
   // ── CSV helpers ────────────────────────────────────────────────
 
   private static escapeCsvCell(value: unknown): string {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const str = value == null ? '' : String(value);
     if (str.includes('"') || str.includes(',') || str.includes('\n')) {
       return `"${str.replaceAll('"', '""')}"`;
@@ -183,7 +200,7 @@ export class AdminService {
     if (rows.length === 0) return '';
     const headers = Object.keys(rows[0]);
     const lines = [
-      headers.map(AdminService.escapeCsvCell).join(','),
+      headers.map((h) => AdminService.escapeCsvCell(h)).join(','),
       ...rows.map((row) =>
         headers.map((h) => AdminService.escapeCsvCell(row[h])).join(','),
       ),
@@ -231,11 +248,11 @@ export class AdminService {
     const delegate = this.getDelegate(table);
     const where = region ? { region } : {};
     const orderBy = getOrderBy(table);
-    const rows = (await delegate.findMany({
+    const rows = await delegate.findMany({
       where,
       orderBy,
       take: 10000,
-    })) as Record<string, unknown>[];
+    });
     return AdminService.rowsToCsv(rows);
   }
 
@@ -254,7 +271,7 @@ export class AdminService {
     for (const row of rows) {
       try {
         // Strip system / read-only columns so the DB generates them
-        const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = row as Record<string, unknown>;
+        const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = row;
         // Coerce each field to its correct Prisma type (CSV values are all
         // strings; without coercion Prisma rejects Int, Float and Boolean fields).
         // Fields not found in the DMMF are passed through as-is; Prisma will

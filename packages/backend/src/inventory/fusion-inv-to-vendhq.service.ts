@@ -13,7 +13,10 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { OracleClient, OracleOnHandQuantity } from '../clients/oracle/oracle.client';
+import {
+  OracleClient,
+  OracleOnHandQuantity,
+} from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -46,9 +49,7 @@ export class FusionInvToVendHqService {
     });
 
     if (credentials.length === 0) {
-      this.logger.warn(
-        'No active VendHQ credentials — inventory sync skipped',
-      );
+      this.logger.warn('No active VendHQ credentials — inventory sync skipped');
       return;
     }
 
@@ -198,7 +199,6 @@ export class FusionInvToVendHqService {
           // best-effort
         }
       }
-
     }
 
     return result;
