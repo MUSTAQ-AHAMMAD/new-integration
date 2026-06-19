@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
+import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ErrorState } from '@/components/ui/error-state';
@@ -11,6 +12,7 @@ import { ErrorState } from '@/components/ui/error-state';
 export default function ActivityPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const debouncedSearch = useDebounce(search);
 
   const { data: logs, isLoading, isError } = useQuery({
     queryKey: ['recent-activity'],
@@ -22,14 +24,14 @@ export default function ActivityPage() {
     if (!logs) return [];
     return logs.filter((log) => {
       const matchesSearch =
-        !search ||
-        log.externalId.toLowerCase().includes(search.toLowerCase()) ||
-        log.operation.toLowerCase().includes(search.toLowerCase()) ||
-        log.externalSystem.toLowerCase().includes(search.toLowerCase());
+        !debouncedSearch ||
+        log.externalId.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        log.operation.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        log.externalSystem.toLowerCase().includes(debouncedSearch.toLowerCase());
       const matchesStatus = !statusFilter || log.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [logs, search, statusFilter]);
+  }, [logs, debouncedSearch, statusFilter]);
 
   const statuses = useMemo(
     () => [...new Set((logs ?? []).map((l) => l.status))].sort(),

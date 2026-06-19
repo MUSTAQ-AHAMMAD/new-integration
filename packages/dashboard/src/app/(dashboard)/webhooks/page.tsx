@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
+import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ErrorState } from '@/components/ui/error-state';
@@ -11,6 +12,7 @@ import { ErrorState } from '@/components/ui/error-state';
 export default function WebhookEventsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const debouncedSearch = useDebounce(search);
 
   const { data: events, isLoading, isError } = useQuery({
     queryKey: ['webhook-events'],
@@ -22,14 +24,14 @@ export default function WebhookEventsPage() {
     if (!events) return [];
     return events.filter((ev) => {
       const matchesSearch =
-        !search ||
-        ev.eventType.toLowerCase().includes(search.toLowerCase()) ||
-        ev.sourceSystem.toLowerCase().includes(search.toLowerCase()) ||
-        ev.id.toLowerCase().includes(search.toLowerCase());
+        !debouncedSearch ||
+        ev.eventType.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        ev.sourceSystem.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        ev.id.toLowerCase().includes(debouncedSearch.toLowerCase());
       const matchesStatus = !statusFilter || ev.processingStatus === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [events, search, statusFilter]);
+  }, [events, debouncedSearch, statusFilter]);
 
   const statuses = useMemo(
     () => [...new Set((events ?? []).map((e) => e.processingStatus))].sort(),
@@ -138,7 +140,7 @@ export default function WebhookEventsPage() {
                   {filtered.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-gray-400">
-                        {search || statusFilter ? 'No events match your filters' : 'No webhook events yet'}
+                        {debouncedSearch || statusFilter ? 'No events match your filters' : 'No webhook events yet'}
                       </td>
                     </tr>
                   )}

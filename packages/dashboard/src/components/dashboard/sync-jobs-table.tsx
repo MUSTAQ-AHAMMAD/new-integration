@@ -10,7 +10,7 @@ export function SyncJobsTable() {
   const { data: jobs } = useQuery({
     queryKey: ['sync-jobs-table'],
     queryFn: () => api.listSyncJobs(),
-    refetchInterval: 5000,
+    refetchInterval: 30000,
   });
 
   return (
