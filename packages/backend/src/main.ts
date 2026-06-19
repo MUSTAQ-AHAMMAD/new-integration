@@ -1,5 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, VersioningType } from '@nestjs/common';
+import {
+  Logger as NestLogger,
+  ValidationPipe,
+  VersioningType,
+} from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import * as compression from 'compression';
@@ -8,10 +12,13 @@ import { json } from 'express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
+// Bootstrap-time logger (used before the Pino logger is attached to the app).
+const bootstrapLogger = new NestLogger('Bootstrap');
+
 // Initialize Oracle Thick Mode BEFORE creating the NestJS application
 async function initializeOracleThickMode() {
   if (process.env.ORACLE_DB_THICK_MODE === 'true') {
-    console.log('[Oracle] Enabling Thick Mode...');
+    bootstrapLogger.log('Enabling Thick Mode…');
 
     try {
       // Dynamic import to avoid loading oracledb if not needed
@@ -20,21 +27,21 @@ async function initializeOracleThickMode() {
 
       if (instantClientDir) {
         oracledb.initOracleClient({ libDir: instantClientDir });
-        console.log(
-          `[Oracle] Instant Client initialized from: ${instantClientDir}`,
+        bootstrapLogger.log(
+          `Instant Client initialized from: ${instantClientDir}`,
         );
       } else {
         oracledb.initOracleClient();
-        console.log(
-          '[Oracle] Instant Client initialized from system library path',
+        bootstrapLogger.log(
+          'Instant Client initialized from system library path',
         );
       }
 
-      // Verify Oracle Client version
-      console.log(`[Oracle] Node-oracledb version: ${oracledb.versionString}`);
-      console.log('[Oracle] Thick Mode enabled successfully');
+      bootstrapLogger.log(
+        `Node-oracledb version: ${oracledb.versionString} — Thick Mode enabled`,
+      );
 
-      // Test connection (optional - remove in production if not needed)
+      // Test connection (non-production only)
       if (process.env.NODE_ENV !== 'production') {
         try {
           const connection = await oracledb.getConnection({
@@ -46,36 +53,30 @@ async function initializeOracleThickMode() {
                 ? oracledb.SYSDBA
                 : undefined,
           });
-          console.log('[Oracle] Test connection successful');
+          bootstrapLogger.log('Oracle test connection successful');
           await connection.close();
         } catch (err) {
-          console.warn(
-            '[Oracle] Test connection failed, but continuing:',
-            (err as Error).message,
+          bootstrapLogger.warn(
+            `Oracle test connection failed, continuing: ${(err as Error).message}`,
           );
         }
       }
     } catch (error) {
-      console.error(
-        '[Oracle] Failed to initialize Thick Mode:',
-        (error as Error).message,
+      bootstrapLogger.error(
+        `Failed to initialize Thick Mode: ${(error as Error).message}`,
       );
-      console.warn(
-        '[Oracle] Falling back to Thin Mode. Some features may not work.',
-      );
-      console.warn(
-        '[Oracle] Make sure Oracle Instant Client is installed at:',
-        process.env.ORACLE_DB_INSTANT_CLIENT_DIR,
+      bootstrapLogger.warn(
+        `Falling back to Thin Mode. Ensure Oracle Instant Client is installed at: ${process.env.ORACLE_DB_INSTANT_CLIENT_DIR ?? '<not set>'}`,
       );
     }
   } else {
-    console.log('[Oracle] Thick Mode disabled, using Thin Mode');
+    bootstrapLogger.log('Oracle Thick Mode disabled — using Thin Mode');
   }
 }
 
 async function bootstrap() {
   try {
-    console.log('[main.ts] Starting bootstrap...');
+    bootstrapLogger.log('Starting bootstrap…');
 
     // Initialize Oracle Thick Mode before anything else
     await initializeOracleThickMode();
@@ -85,14 +86,16 @@ async function bootstrap() {
       rawBody: true,
     });
 
-    console.log('[main.ts] NestFactory created');
-
+    // Replace the buffered logger with Pino now that the app is created.
     app.useLogger(app.get(Logger));
     app.useGlobalFilters(new GlobalExceptionFilter());
 
+    // Enable graceful shutdown so NestJS flushes connections on SIGTERM/SIGINT.
+    // This is essential for zero-downtime rolling deployments in Kubernetes.
+    app.enableShutdownHooks();
+
     // Limit request body size to 10 MB to protect against oversized payloads
     app.use(json({ limit: '10mb' }));
-    console.log('[main.ts] JSON middleware added');
 
     // Enable helmet with CSP that allows Swagger UI.
     app.use(
@@ -109,7 +112,6 @@ async function bootstrap() {
         },
       }),
     );
-    console.log('[main.ts] Helmet added');
 
     app.use(compression());
     app.enableCors({
@@ -120,7 +122,6 @@ async function bootstrap() {
           : 'http://localhost:3000'),
       credentials: true,
     });
-    console.log('[main.ts] CORS enabled');
 
     app.setGlobalPrefix(process.env.API_PREFIX || 'api/v1');
     app.enableVersioning({ type: VersioningType.URI });
@@ -131,10 +132,6 @@ async function bootstrap() {
         forbidNonWhitelisted: true,
       }),
     );
-    console.log('[main.ts] Global prefix and versioning configured');
-
-    // Skip Bull Board setup - it might be causing the hang
-    console.log('[main.ts] Skipping Bull Board setup');
 
     const config = new DocumentBuilder()
       .setTitle('Integration Middleware API')
@@ -146,14 +143,12 @@ async function bootstrap() {
       .build();
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('docs', app, document);
-    console.log('[main.ts] Swagger configured');
 
     const port = process.env.PORT || 3001;
-    console.log(`[main.ts] Starting server on port ${port}...`);
     await app.listen(port);
-    console.log(`[main.ts] Server listening on port ${port}!`);
+    bootstrapLogger.log(`Server listening on port ${port}`);
   } catch (error) {
-    console.error('[main.ts] Bootstrap failed:', error);
+    bootstrapLogger.error(`Bootstrap failed: ${(error as Error).message}`);
     process.exit(1);
   }
 }

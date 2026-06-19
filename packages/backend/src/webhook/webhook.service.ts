@@ -33,6 +33,32 @@ export class WebhookService {
 
     const eventType = (payload.event_type as string) || 'unknown';
 
+    // Idempotency: skip reprocessing if an event with the same external ID has
+    // already been successfully handled. Odoo may retry deliveries on timeout.
+    const externalEventId =
+      typeof payload.event_id === 'string' ||
+      typeof payload.event_id === 'number'
+        ? String(payload.event_id)
+        : undefined;
+
+    if (externalEventId) {
+      const duplicate = await this.prisma.webhookEvent.findFirst({
+        where: {
+          sourceSystem: 'ODOO',
+          processingStatus: SyncStatus.SYNCED,
+          payload: { path: ['event_id'], equals: externalEventId },
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        this.logger.debug(
+          `Duplicate Odoo webhook event skipped (event_id=${externalEventId})`,
+        );
+        return { received: true, eventId: duplicate.id, duplicate: true };
+      }
+    }
+
     const event = await this.prisma.webhookEvent.create({
       data: {
         eventType,
