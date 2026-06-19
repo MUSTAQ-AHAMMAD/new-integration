@@ -28,6 +28,7 @@ const mockPrisma = {
 
 const mockQueues = {
   enqueueOrderSync: jest.fn().mockResolvedValue({ id: 'job-1' }),
+  enqueueOrderSyncBulk: jest.fn().mockResolvedValue([]),
 };
 
 const mockTimezone = {
@@ -81,6 +82,7 @@ describe('OrderSyncService', () => {
     );
     jest.clearAllMocks();
     mockQueues.enqueueOrderSync.mockResolvedValue({ id: 'job-1' });
+    mockQueues.enqueueOrderSyncBulk.mockResolvedValue([]);
   });
 
   // ── ingestOrder ─────────────────────────────────────────────
@@ -367,7 +369,13 @@ describe('OrderSyncService', () => {
 
       const result = await service.retryFailedOrders();
 
-      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledTimes(2);
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledTimes(1);
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ odooOrderId: 'ORD-F1' }),
+          expect.objectContaining({ odooOrderId: 'ORD-F2' }),
+        ]),
+      );
       expect(result.enqueued).toBe(2);
     });
 
@@ -378,8 +386,10 @@ describe('OrderSyncService', () => {
 
       await service.retryFailedOrders();
 
-      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledWith(
-        expect.objectContaining({ isRetry: true }),
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ isRetry: true }),
+        ]),
       );
     });
 
@@ -411,7 +421,7 @@ describe('OrderSyncService', () => {
       const result = await service.retryFailedOrders();
 
       expect(result.enqueued).toBe(0);
-      expect(mockQueues.enqueueOrderSync).not.toHaveBeenCalled();
+      expect(mockQueues.enqueueOrderSyncBulk).not.toHaveBeenCalled();
     });
 
     it('only retries paid, non-cancelled, failed orders', async () => {
@@ -443,7 +453,13 @@ describe('OrderSyncService', () => {
 
       const result = await service.retryNegativeInventoryOrders();
 
-      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledTimes(2);
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledTimes(1);
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ odooOrderId: 'ORD-H1' }),
+          expect.objectContaining({ odooOrderId: 'ORD-H2' }),
+        ]),
+      );
       expect(result.enqueued).toBe(2);
     });
 
@@ -480,8 +496,10 @@ describe('OrderSyncService', () => {
 
       await service.retryNegativeInventoryOrders();
 
-      expect(mockQueues.enqueueOrderSync).toHaveBeenCalledWith(
-        expect.objectContaining({ isRetry: true }),
+      expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ isRetry: true }),
+        ]),
       );
     });
 
@@ -491,7 +509,7 @@ describe('OrderSyncService', () => {
       const result = await service.retryNegativeInventoryOrders();
 
       expect(result.enqueued).toBe(0);
-      expect(mockQueues.enqueueOrderSync).not.toHaveBeenCalled();
+      expect(mockQueues.enqueueOrderSyncBulk).not.toHaveBeenCalled();
     });
   });
 });

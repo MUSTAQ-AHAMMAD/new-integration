@@ -1,6 +1,7 @@
 import { DashboardService } from './dashboard.service';
 import { SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 
 const mockPrisma = {
   orderSyncQueue: {
@@ -34,12 +35,23 @@ const mockPrisma = {
   },
 };
 
+// Cache miss by default so every test exercises the real Prisma path
+const mockRedis = {
+  get: jest.fn().mockResolvedValue(null),
+  setex: jest.fn().mockResolvedValue('OK'),
+};
+
 describe('DashboardService', () => {
   let service: DashboardService;
 
   beforeEach(() => {
-    service = new DashboardService(mockPrisma as unknown as PrismaService);
+    service = new DashboardService(
+      mockPrisma as unknown as PrismaService,
+      mockRedis as unknown as RedisService,
+    );
     jest.clearAllMocks();
+    mockRedis.get.mockResolvedValue(null);
+    mockRedis.setex.mockResolvedValue('OK');
   });
 
   describe('getOverview', () => {

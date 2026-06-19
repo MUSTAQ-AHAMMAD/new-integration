@@ -88,9 +88,44 @@ export class VendHqBackupController {
   async listRegions() {
     const creds = await this.prisma.vendHqCredential.findMany({
       where: { active: true },
-      select: { id: true, region: true, domainName: true },
+      select: { id: true, region: true, domainName: true, lastSyncAt: true, lastSyncVersion: true },
       orderBy: { region: 'asc' },
     });
     return creds;
+  }
+
+  // ── Region-level integration control ─────────────────────────────────────
+
+  /**
+   * Get the current integration status and last-sync metadata for a region.
+   */
+  @Get('region/:region/status')
+  @ApiOperation({
+    summary: 'Get integration status and last sync info for a region',
+  })
+  async getRegionStatus(@Param('region') region: string) {
+    return this.backupService.getRegionStatus(region);
+  }
+
+  /**
+   * Start (enable) the integration for a specific region.
+   * The next scheduled cron run will include this region again.
+   */
+  @Post('region/:region/start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Enable VendHQ backup integration for a region' })
+  async startRegion(@Param('region') region: string) {
+    return this.backupService.enableRegion(region);
+  }
+
+  /**
+   * Stop (disable) the integration for a specific region.
+   * The scheduled cron will skip this region until it is re-enabled.
+   */
+  @Post('region/:region/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Disable VendHQ backup integration for a region' })
+  async stopRegion(@Param('region') region: string) {
+    return this.backupService.disableRegion(region);
   }
 }
