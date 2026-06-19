@@ -304,8 +304,7 @@ export class OrderSyncProcessor {
           },
         });
 
-        if (invoiceHeader.invoiceLines.length > 0) {
-          await this.prisma.fusionInvoiceLine.createMany({
+        await this.prisma.fusionInvoiceLine.createMany({
             data: invoiceHeader.invoiceLines.map((il) => ({
               status: invoiceResult.serviceStatus ?? 'SUCCESS',
               requestDate: new Date(),
@@ -321,7 +320,6 @@ export class OrderSyncProcessor {
               headerId: auditHeader.id,
             })),
           });
-        }
 
         if (order.isRefund) {
           oracleCreditMemoNumber = txnNumber;
@@ -406,8 +404,7 @@ export class OrderSyncProcessor {
             },
           });
 
-          if (jh.journalLines.length > 0) {
-            await this.prisma.fusionJournalLine.createMany({
+          await this.prisma.fusionJournalLine.createMany({
               data: jh.journalLines.map((jl) => ({
                 status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
                 requestDate: new Date(),
@@ -419,7 +416,6 @@ export class OrderSyncProcessor {
                 headerId: jhAudit.id,
               })),
             });
-          }
         }
       } else {
         // No backup sale found — generate a reference but log a warning

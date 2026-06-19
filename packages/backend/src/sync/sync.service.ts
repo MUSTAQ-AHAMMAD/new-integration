@@ -214,6 +214,10 @@ export class SyncService {
     take?: number,
     cursorId?: string,
   ) {
+    // Orders are sorted by `id` (CUID, lexicographically time-ordered) to
+    // support stable cursor-based pagination across batches. This replaces
+    // the previous `createdAt` / `orderDateUtc` ordering, which was not
+    // suitable for keyset pagination because those columns are non-unique.
     const pagination =
       take !== undefined
         ? {
