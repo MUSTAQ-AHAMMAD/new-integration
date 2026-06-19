@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { JobStatus, Prisma, ScopeType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
@@ -91,7 +91,7 @@ export class SyncService {
       job.status !== JobStatus.PENDING &&
       job.status !== JobStatus.PROCESSING
     ) {
-      throw new Error(`Cannot cancel job in status: ${job.status}`);
+      throw new BadRequestException(`Cannot cancel job in status: ${job.status}`);
     }
 
     return this.prisma.syncJob.update({
