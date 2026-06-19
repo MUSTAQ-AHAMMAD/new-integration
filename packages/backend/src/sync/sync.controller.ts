@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { parseLimit } from '../common/parse-limit';
+import { OdooClient } from '../clients/odoo/odoo.client';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
@@ -11,6 +12,7 @@ export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly orderSyncService: OrderSyncService,
+    private readonly odooClient: OdooClient,
   ) {}
 
   @Post('jobs')
@@ -81,5 +83,65 @@ export class SyncController {
   })
   retryNegativeInventoryOrders(@Query('branchCode') branchCode?: string) {
     return this.orderSyncService.retryNegativeInventoryOrders(branchCode);
+  }
+
+  @Post('fetch-odoo')
+  @ApiOperation({
+    summary: 'Manually pull orders from Odoo and ingest them into the sync queue',
+  })
+  async fetchOdooOrders(
+    @Body()
+    body: {
+      branchId?: number;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+    },
+  ) {
+    const orders = await this.odooClient.getOrders({
+      branchId: body.branchId,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      limit: body.limit ?? 100,
+    });
+
+    let ingested = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const order of orders) {
+      try {
+        const branchRaw = order.branch_id;
+        const branchCode =
+          Array.isArray(branchRaw)
+            ? String(branchRaw[0])
+            : branchRaw !== undefined
+              ? String(branchRaw)
+              : 'UNKNOWN';
+
+        const amountTotal = Number(order.amount_total ?? 0);
+        const state = typeof order.state === 'string' ? order.state : 'draft';
+
+        await this.orderSyncService.ingestOrder({
+          odooOrderId: String(order.id),
+          odooOrderNumber: String(order.name ?? order.id),
+          branchCode,
+          orderDate: order.date_order
+            ? new Date(order.date_order)
+            : new Date(),
+          originalTimezone: 'Asia/Dubai',
+          totalAmount: amountTotal,
+          isPaid: ['paid', 'done', 'posted'].includes(state),
+          isCancelled: state === 'cancel',
+          isRefund: amountTotal < 0,
+        });
+        ingested++;
+      } catch (err) {
+        skipped++;
+        errors.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    return { ok: true, fetched: orders.length, ingested, skipped, errors };
   }
 }

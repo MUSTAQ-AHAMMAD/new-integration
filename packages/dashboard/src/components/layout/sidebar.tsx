@@ -14,6 +14,7 @@ import {
   ChevronRight,
   CreditCard,
   Database,
+  Download,
   FileText,
   Globe,
   Heart,
@@ -49,6 +50,7 @@ const topItems: NavItem[] = [
   { href: '/region-integration', label: 'Region Integration', icon: Globe },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
   { href: '/orders', label: 'Order Manager', icon: ShoppingCart },
+  { href: '/fetch-odoo', label: 'Fetch from Odoo', icon: Download },
   { href: '/push-order', label: 'Push Single Order', icon: Send },
   { href: '/push-store', label: 'Push Single Store', icon: Store },
 ];

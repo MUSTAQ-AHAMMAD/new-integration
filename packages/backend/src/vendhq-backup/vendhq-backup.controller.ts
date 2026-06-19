@@ -73,9 +73,18 @@ export class VendHqBackupController {
       };
     }
     const results = await Promise.all(
-      creds.map((cred) => this.backupService.backupRegion(cred)),
+      creds.map(async (cred) => {
+        try {
+          const result = await this.backupService.backupRegion(cred);
+          return { credentialId: cred.id, ok: true, ...result };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { credentialId: cred.id, ok: false, error: message };
+        }
+      }),
     );
-    return { ok: true, region, triggered: results.length, results };
+    const allFailed = results.every((r) => !r.ok);
+    return { ok: !allFailed, region, triggered: results.length, results };
   }
 
   /**

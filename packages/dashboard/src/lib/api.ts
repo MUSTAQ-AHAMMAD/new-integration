@@ -178,6 +178,13 @@ export const api = {
       body: JSON.stringify({ tables }),
     }),
 
+  /** Manually pull orders from Odoo and ingest them into the sync queue */
+  fetchOdooOrders: (params?: { branchId?: number; startDate?: string; endDate?: string; limit?: number }) =>
+    apiRequest<{ ok: boolean; fetched: number; ingested: number; skipped: number; errors: string[] }>('/sync/fetch-odoo', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    }),
+
   /** Export payment mappings as CSV */
   exportPaymentMappingsCsvUrl: () => `${API_BASE}/payment-mappings/export`,
 
