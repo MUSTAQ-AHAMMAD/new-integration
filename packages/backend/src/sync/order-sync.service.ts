@@ -157,22 +157,25 @@ export class OrderSyncService {
         isPaid: true,
         isCancelled: false,
       },
-      take: 100,
+      take: 1000,
     });
 
-    let enqueued = 0;
-    for (const order of failedOrders) {
-      await this.queues.enqueueOrderSync({
+    if (failedOrders.length === 0) {
+      this.logger.log('Re-queued 0 failed orders');
+      return { enqueued: 0 };
+    }
+
+    await this.queues.enqueueOrderSyncBulk(
+      failedOrders.map((order) => ({
         orderSyncQueueId: order.id,
         odooOrderId: order.odooOrderId,
         branchCode: order.branchCode,
         isRetry: true,
-      });
-      enqueued += 1;
-    }
+      })),
+    );
 
-    this.logger.log(`Re-queued ${enqueued} failed orders`);
-    return { enqueued };
+    this.logger.log(`Re-queued ${failedOrders.length} failed orders`);
+    return { enqueued: failedOrders.length };
   }
 
   /**
@@ -187,24 +190,27 @@ export class OrderSyncService {
         isPaid: true,
         isCancelled: false,
       },
-      take: 100,
+      take: 1000,
     });
 
-    let enqueued = 0;
-    for (const order of heldOrders) {
-      await this.queues.enqueueOrderSync({
+    if (heldOrders.length === 0) {
+      this.logger.log('Re-queued 0 negative-inventory-hold orders');
+      return { enqueued: 0 };
+    }
+
+    await this.queues.enqueueOrderSyncBulk(
+      heldOrders.map((order) => ({
         orderSyncQueueId: order.id,
         odooOrderId: order.odooOrderId,
         branchCode: order.branchCode,
         isRetry: true,
-      });
-      enqueued += 1;
-    }
+      })),
+    );
 
     this.logger.log(
-      `Re-queued ${enqueued} negative-inventory-hold orders` +
+      `Re-queued ${heldOrders.length} negative-inventory-hold orders` +
         (branchCode ? ` for branch ${branchCode}` : ''),
     );
-    return { enqueued };
+    return { enqueued: heldOrders.length };
   }
 }

@@ -30,6 +30,17 @@ export class QueuesService {
     });
   }
 
+  async enqueueOrderSyncBulk(items: OrderSyncJobData[]) {
+    if (items.length === 0) return [];
+    return this.orderSyncQueue.addBulk(
+      items.map((data) => ({
+        name: 'sync',
+        data,
+        opts: { jobId: `order-${data.odooOrderId}-${data.branchCode}` },
+      })),
+    );
+  }
+
   async enqueueRetry(data: OrderSyncJobData, delayMs: number) {
     return this.retryQueue.add('retry', data, { delay: delayMs });
   }

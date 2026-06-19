@@ -30,29 +30,56 @@ export class SyncService {
       },
     });
 
-    const orders = await this.findOrdersByScope(dto);
     let successCount = 0;
     let skippedCount = 0;
+    const BATCH_SIZE = 5000;
+    let cursorId: string | undefined;
 
-    for (const order of orders) {
-      if (!order.isPaid || order.isCancelled) {
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: { status: SyncStatus.SKIPPED },
-        });
-        skippedCount += 1;
-        continue;
+    while (true) {
+      const batch = await this.findOrdersByScope(dto, BATCH_SIZE, cursorId);
+      if (batch.length === 0) break;
+
+      cursorId = batch[batch.length - 1].id;
+
+      const toSkipIds: string[] = [];
+      const toEnqueue: {
+        orderSyncQueueId: string;
+        odooOrderId: string;
+        branchCode: string;
+        syncJobId: string;
+      }[] = [];
+
+      for (const order of batch) {
+        if (!order.isPaid || order.isCancelled) {
+          toSkipIds.push(order.id);
+          skippedCount += 1;
+        } else {
+          toEnqueue.push({
+            orderSyncQueueId: order.id,
+            odooOrderId: order.odooOrderId,
+            branchCode: order.branchCode,
+            syncJobId: job.id,
+          });
+          successCount += 1;
+        }
       }
 
-      await this.queues.enqueueOrderSync({
-        orderSyncQueueId: order.id,
-        odooOrderId: order.odooOrderId,
-        branchCode: order.branchCode,
-        syncJobId: job.id,
-      });
-      successCount += 1;
+      await Promise.all([
+        toSkipIds.length > 0
+          ? this.prisma.orderSyncQueue.updateMany({
+              where: { id: { in: toSkipIds } },
+              data: { status: SyncStatus.SKIPPED },
+            })
+          : Promise.resolve(),
+        toEnqueue.length > 0
+          ? this.queues.enqueueOrderSyncBulk(toEnqueue)
+          : Promise.resolve(),
+      ]);
+
+      if (batch.length < BATCH_SIZE) break;
     }
 
+    const totalRecords = successCount + skippedCount;
     const finalStatus =
       successCount === 0 && skippedCount > 0
         ? JobStatus.PARTIAL
@@ -61,12 +88,12 @@ export class SyncService {
     return this.prisma.syncJob.update({
       where: { id: job.id },
       data: {
-        totalRecords: orders.length,
-        processedRecords: successCount + skippedCount,
+        totalRecords,
+        processedRecords: totalRecords,
         successCount,
         skippedCount,
         status: finalStatus,
-        startedAt: orders.length ? new Date() : undefined,
+        startedAt: totalRecords > 0 ? new Date() : undefined,
       },
     });
   }
@@ -182,18 +209,34 @@ export class SyncService {
     });
   }
 
-  private async findOrdersByScope(dto: CreateSyncJobDto) {
+  private async findOrdersByScope(
+    dto: CreateSyncJobDto,
+    take?: number,
+    cursorId?: string,
+  ) {
+    const pagination =
+      take !== undefined
+        ? {
+            take,
+            ...(cursorId
+              ? { cursor: { id: cursorId }, skip: 1 }
+              : {}),
+          }
+        : {};
+
     if (dto.scopeType === ScopeType.SINGLE_ORDER && dto.orderIds?.length) {
       return this.prisma.orderSyncQueue.findMany({
         where: { odooOrderId: { in: dto.orderIds } },
-        orderBy: { createdAt: 'asc' },
+        orderBy: { id: 'asc' },
+        ...pagination,
       });
     }
 
     if (dto.scopeType === ScopeType.BRANCH && dto.branchCode) {
       return this.prisma.orderSyncQueue.findMany({
         where: { branchCode: dto.branchCode },
-        orderBy: { createdAt: 'asc' },
+        orderBy: { id: 'asc' },
+        ...pagination,
       });
     }
 
@@ -210,7 +253,8 @@ export class SyncService {
       );
       return this.prisma.orderSyncQueue.findMany({
         where: { orderDateUtc: { gte: range.start, lte: range.end } },
-        orderBy: { orderDateUtc: 'asc' },
+        orderBy: { id: 'asc' },
+        ...pagination,
       });
     }
 
@@ -231,19 +275,22 @@ export class SyncService {
           branchCode: dto.branchCode,
           orderDateUtc: { gte: range.start, lte: range.end },
         },
-        orderBy: { orderDateUtc: 'asc' },
+        orderBy: { id: 'asc' },
+        ...pagination,
       });
     }
 
     if (dto.scopeType === ScopeType.FAILED_ONLY) {
       return this.prisma.orderSyncQueue.findMany({
         where: { status: SyncStatus.FAILED },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { id: 'asc' },
+        ...pagination,
       });
     }
 
     return this.prisma.orderSyncQueue.findMany({
-      orderBy: { createdAt: 'asc' },
+      orderBy: { id: 'asc' },
+      ...pagination,
     });
   }
 }
