@@ -66,9 +66,9 @@ const MAPPINGS: OracleTableMapping[] = [
     }),
     upsertWhere: (r) => ({ outletName: str(r, 'OUTLET_NAME') }),
   },
-  // FUSION_BU_MAP → FusionBusinessUnitMap
+  // FUSION_BUSINESS_UNIT_ID_MAP → FusionBusinessUnitMap
   {
-    oracleTable: 'FUSION_BU_MAP',
+    oracleTable: 'FUSION_BUSINESS_UNIT_ID_MAP',
     prismaDelegate: (p) => p.fusionBusinessUnitMap,
     mapRow: (r) => ({
       businessUnitId: num(r, 'BUSINESS_UNIT_ID'),
@@ -82,9 +82,9 @@ const MAPPINGS: OracleTableMapping[] = [
       },
     }),
   },
-  // FUSION_RECEIPT_METHODS → FusionReceiptMethod
+  // FUSION_RECEIPT_METHOD → FusionReceiptMethod
   {
-    oracleTable: 'FUSION_RECEIPT_METHODS',
+    oracleTable: 'FUSION_RECEIPT_METHOD',
     prismaDelegate: (p) => p.fusionReceiptMethod,
     mapRow: (r) => ({
       receiptMethodId: num(r, 'RECEIPT_METHOD_ID'),
