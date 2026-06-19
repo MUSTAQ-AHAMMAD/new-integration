@@ -41,7 +41,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'outlet-config': {
     title: 'Outlet Integration Config',
-    oracleTable: 'OUTLET_INTEGRATION_CONFIG',
+    oracleTable: 'OUTLETS_INTEGRATION_CONFIG',
     fields: [
       ...SYS_FIELDS,
       { key: 'outletName', label: 'Outlet Name', required: true },

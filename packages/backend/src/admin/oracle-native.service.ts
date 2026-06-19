@@ -55,9 +55,9 @@ function optNum(row: Record<string, unknown>, name: string): number | null {
 }
 
 const MAPPINGS: OracleTableMapping[] = [
-  // OUTLET_INTEGRATION_CONFIG → OutletIntegrationConfig
+  // OUTLETS_INTEGRATION_CONFIG → OutletIntegrationConfig
   {
-    oracleTable: 'OUTLET_INTEGRATION_CONFIG',
+    oracleTable: 'OUTLETS_INTEGRATION_CONFIG',
     prismaDelegate: (p) => p.outletIntegrationConfig,
     mapRow: (r) => ({
       outletName: str(r, 'OUTLET_NAME'),
