@@ -462,18 +462,22 @@ model FusionCredential {
 }
 
 model VendHqCredential {
-  id                String   @id @default(cuid())
-  domainName        String   @unique
+  id                String    @id @default(cuid())
+  domainName        String    @unique
   personalToken     String
-  active            Boolean  @default(true)
+  active            Boolean   @default(true)
   region            String
   fusionOrgCode     String?
-  timezoneOffset    Float    @default(0)
-  currency          String   @default("AED")
+  timezoneOffset    Float     @default(0)
+  currency          String    @default("AED")
   fusionTaxCode     String?
   businessStartDate DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  /// VendHQ `version` watermark — used as `after` param for incremental fetch
+  lastSyncVersion   Int       @default(0)
+  /// Timestamp of the last successful backup run for this credential
+  lastSyncAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([region])
   @@index([active])
@@ -962,6 +966,7 @@ model BackupVendHqSale {
   backupLineItems BackupVendHqLineItem[]
   backupPayments  BackupVendHqPayment[]
 
+  @@unique([invoiceNumber, region])
   @@index([region])
   @@index([invoiceNumber])
   @@index([saleNumber])

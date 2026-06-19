@@ -4,11 +4,16 @@
  *
  * Scheduled every 10 minutes (matching the Java Quartz schedule).
  * For each active VendHqCredential it:
- *  1. Fetches new / updated sales from the VendHQ REST API.
- *  2. Persists each sale into BackupVendHqSale / BackupVendHqLineItem /
+ *  1. Checks that the region is not disabled (SalesIntegrationStatus).
+ *  2. Fetches new / updated sales from the VendHQ REST API using an
+ *     incremental `after` version watermark (lastSyncVersion) so only
+ *     new/updated records are fetched each run.
+ *  3. Persists each sale into BackupVendHqSale / BackupVendHqLineItem /
  *     BackupVendHqPayment / BackupVendHqPromotion.
- *  3. Upserts a SaleSyncStatus record so the downstream
+ *  4. Upserts a SaleSyncStatus record so the downstream
  *     FusionTransformationService can pick it up.
+ *  5. Updates lastSyncVersion and lastSyncAt on the credential so the
+ *     next run only fetches newer records (no duplicates).
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
@@ -60,6 +65,13 @@ interface VendHqSaleRaw {
   [key: string]: unknown;
 }
 
+/** integMode value used in SalesIntegrationStatus for backup jobs */
+const BACKUP_INTEG_MODE = 'BACKUP';
+/** Status value meaning the integration is running / allowed */
+const STATUS_ENABLED = 'ENABLED';
+/** Status value meaning the integration has been paused by an operator */
+const STATUS_DISABLED = 'DISABLED';
+
 @Injectable()
 export class VendHqSalesBackupService {
   private readonly logger = new Logger(VendHqSalesBackupService.name);
@@ -83,6 +95,15 @@ export class VendHqSalesBackupService {
 
     for (const cred of credentials) {
       try {
+        // --- Region-level on/off check ---
+        const regionEnabled = await this.isRegionEnabled(cred.region);
+        if (!regionEnabled) {
+          this.logger.log(
+            `Backup skipped for region=${cred.region} — integration is DISABLED`,
+          );
+          continue;
+        }
+
         const result = await this.backupRegion(cred);
         this.logger.log(
           `Backup done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped}`,
@@ -98,6 +119,8 @@ export class VendHqSalesBackupService {
 
   /**
    * Fetches and persists all new sales for one VendHQ credential (region).
+   * Uses lastSyncVersion as the `after` watermark so only new/updated
+   * sales are fetched on each run — preventing redundant duplicate writes.
    * Exposed publicly so the controller can trigger a manual run.
    */
   async backupRegion(cred: {
@@ -107,8 +130,11 @@ export class VendHqSalesBackupService {
     region: string;
     timezoneOffset: number;
     currency: string;
+    lastSyncVersion?: number;
   }): Promise<{ saved: number; skipped: number }> {
     const baseUrl = `https://${cred.domainName}.vendhq.com`;
+    const afterVersion = cred.lastSyncVersion ?? 0;
+
     const resp = await axios.get<{ data?: VendHqSaleRaw[] }>(
       `${baseUrl}/api/2.0/sales`,
       {
@@ -116,7 +142,8 @@ export class VendHqSalesBackupService {
           Authorization: 'Bearer ' + cred.personalToken,
           'Content-Type': 'application/json',
         },
-        params: { page_size: 200 },
+        // `after` tells VendHQ to return only sales with version > afterVersion
+        params: { page_size: 200, ...(afterVersion > 0 ? { after: afterVersion } : {}) },
         timeout: 30_000,
       },
     );
@@ -124,6 +151,7 @@ export class VendHqSalesBackupService {
     const sales: VendHqSaleRaw[] = resp.data?.data ?? [];
     let saved = 0;
     let skipped = 0;
+    let maxVersion = afterVersion;
 
     for (const sale of sales) {
       try {
@@ -133,6 +161,9 @@ export class VendHqSalesBackupService {
         } else {
           skipped++;
         }
+        // Track the highest version seen so we can advance the watermark
+        const v = typeof sale.version === 'number' ? sale.version : 0;
+        if (v > maxVersion) maxVersion = v;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.warn(
@@ -143,7 +174,106 @@ export class VendHqSalesBackupService {
       }
     }
 
+    // Advance the watermark so the next run only fetches newer sales
+    if (maxVersion > afterVersion) {
+      await this.prisma.vendHqCredential.update({
+        where: { id: cred.id },
+        data: { lastSyncVersion: maxVersion, lastSyncAt: new Date() },
+      });
+    } else if (sales.length > 0) {
+      // Sales were processed but had no version — at least record the timestamp
+      await this.prisma.vendHqCredential.update({
+        where: { id: cred.id },
+        data: { lastSyncAt: new Date() },
+      });
+    }
+
     return { saved, skipped };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Region control helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns true when a region is allowed to run (no DISABLED record exists).
+   * A missing record is treated as ENABLED (opt-out model).
+   */
+  async isRegionEnabled(region: string): Promise<boolean> {
+    const record = await this.prisma.salesIntegrationStatus.findUnique({
+      where: { region_integMode: { region, integMode: BACKUP_INTEG_MODE } },
+    });
+    return !record || record.status !== STATUS_DISABLED;
+  }
+
+  /**
+   * Enable the backup integration for a region.
+   * Creates or updates the SalesIntegrationStatus record to ENABLED.
+   */
+  async enableRegion(
+    region: string,
+  ): Promise<{ region: string; status: string }> {
+    const record = await this.prisma.salesIntegrationStatus.upsert({
+      where: { region_integMode: { region, integMode: BACKUP_INTEG_MODE } },
+      create: { region, integMode: BACKUP_INTEG_MODE, status: STATUS_ENABLED },
+      update: { status: STATUS_ENABLED },
+    });
+    this.logger.log(`Integration ENABLED for region=${region}`);
+    return { region: record.region, status: record.status };
+  }
+
+  /**
+   * Disable the backup integration for a region.
+   * Creates or updates the SalesIntegrationStatus record to DISABLED.
+   * Running backup jobs will skip this region on the next scheduled tick.
+   */
+  async disableRegion(
+    region: string,
+  ): Promise<{ region: string; status: string }> {
+    const record = await this.prisma.salesIntegrationStatus.upsert({
+      where: { region_integMode: { region, integMode: BACKUP_INTEG_MODE } },
+      create: { region, integMode: BACKUP_INTEG_MODE, status: STATUS_DISABLED },
+      update: { status: STATUS_DISABLED },
+    });
+    this.logger.log(`Integration DISABLED for region=${region}`);
+    return { region: record.region, status: record.status };
+  }
+
+  /**
+   * Returns the current status and last-sync metadata for a region.
+   */
+  async getRegionStatus(region: string): Promise<{
+    region: string;
+    integrationStatus: string;
+    credentials: Array<{
+      id: string;
+      domainName: string;
+      active: boolean;
+      lastSyncVersion: number;
+      lastSyncAt: Date | null;
+    }>;
+  }> {
+    const [statusRecord, credentials] = await Promise.all([
+      this.prisma.salesIntegrationStatus.findUnique({
+        where: { region_integMode: { region, integMode: BACKUP_INTEG_MODE } },
+      }),
+      this.prisma.vendHqCredential.findMany({
+        where: { region },
+        select: {
+          id: true,
+          domainName: true,
+          active: true,
+          lastSyncVersion: true,
+          lastSyncAt: true,
+        },
+      }),
+    ]);
+
+    return {
+      region,
+      integrationStatus: statusRecord?.status ?? STATUS_ENABLED,
+      credentials,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -153,6 +283,7 @@ export class VendHqSalesBackupService {
   /**
    * Upserts one VendHQ sale and its line items + payments.
    * Returns true if the record was new or updated, false if skipped (same version).
+   * Uses the @@unique([invoiceNumber, region]) DB constraint to prevent duplicates.
    */
   private async upsertSale(
     sale: VendHqSaleRaw,
@@ -161,6 +292,8 @@ export class VendHqSalesBackupService {
   ): Promise<boolean> {
     const invoiceNumber = sale.invoice_number ?? sale.id;
     const saleDate = sale.sale_date ? new Date(sale.sale_date) : new Date();
+    const incomingVersion =
+      typeof sale.version === 'number' ? sale.version : null;
 
     // ── BackupVendHqSale (upsert on invoiceNumber+region) ─────────────────
     const existing = await this.prisma.backupVendHqSale.findFirst({
@@ -168,10 +301,7 @@ export class VendHqSalesBackupService {
       select: { id: true, version: true },
     });
 
-    const incomingVersion =
-      typeof sale.version === 'number' ? sale.version : null;
-
-    // Skip if we already have this version
+    // Skip if we already have this version — no downstream work needed
     if (
       existing &&
       incomingVersion !== null &&

@@ -1,0 +1,354 @@
+import { SaleStatus } from '@prisma/client';
+import { VendHqSalesBackupService } from './vendhq-backup.service';
+
+// ---------------------------------------------------------------------------
+// Minimal mock factories
+// ---------------------------------------------------------------------------
+
+function makeSale(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'sale-001',
+    invoice_number: 'INV-001',
+    sale_date: '2024-01-15T10:00:00Z',
+    outlet_id: 'outlet-1',
+    outlet_name: 'Main Outlet',
+    register_name: 'Register 1',
+    status: 'CLOSED',
+    total_price: 100,
+    total_tax: 10,
+    total_price_incl_tax: 110,
+    version: 5,
+    line_items: [],
+    payments: [],
+    ...overrides,
+  };
+}
+
+function makePrisma() {
+  return {
+    vendHqCredential: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    salesIntegrationStatus: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
+    backupVendHqSale: {
+      findFirst: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'sale-db-001' }),
+      update: jest.fn().mockResolvedValue({ id: 'sale-db-001' }),
+    },
+    backupVendHqLineItem: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    backupVendHqPayment: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    saleSyncStatus: {
+      upsert: jest.fn().mockResolvedValue({}),
+    },
+  };
+}
+
+function makeCred(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'cred-001',
+    domainName: 'mystore',
+    personalToken: 'tok-secret',
+    active: true,
+    region: 'SA',
+    timezoneOffset: 3,
+    currency: 'SAR',
+    lastSyncVersion: 0,
+    lastSyncAt: null,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build a service with mocked Prisma and optionally mocked axios
+// ---------------------------------------------------------------------------
+
+function makeService(prisma = makePrisma()) {
+  const service = new VendHqSalesBackupService(prisma as never);
+  return { service, prisma };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('VendHqSalesBackupService', () => {
+  describe('isRegionEnabled', () => {
+    it('returns true when no SalesIntegrationStatus record exists', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      await expect(service.isRegionEnabled('SA')).resolves.toBe(true);
+    });
+
+    it('returns true when status is ENABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'BACKUP',
+        status: 'ENABLED',
+      });
+      await expect(service.isRegionEnabled('SA')).resolves.toBe(true);
+    });
+
+    it('returns false when status is DISABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'BACKUP',
+        status: 'DISABLED',
+      });
+      await expect(service.isRegionEnabled('SA')).resolves.toBe(false);
+    });
+  });
+
+  describe('enableRegion', () => {
+    it('upserts SalesIntegrationStatus with status ENABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+        id: 'sis-1',
+        region: 'KW',
+        integMode: 'BACKUP',
+        status: 'ENABLED',
+        updatedAt: new Date(),
+      });
+
+      const result = await service.enableRegion('KW');
+
+      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { region_integMode: { region: 'KW', integMode: 'BACKUP' } },
+          update: { status: 'ENABLED' },
+        }),
+      );
+      expect(result.status).toBe('ENABLED');
+    });
+  });
+
+  describe('disableRegion', () => {
+    it('upserts SalesIntegrationStatus with status DISABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+        id: 'sis-1',
+        region: 'SA',
+        integMode: 'BACKUP',
+        status: 'DISABLED',
+        updatedAt: new Date(),
+      });
+
+      const result = await service.disableRegion('SA');
+
+      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { region_integMode: { region: 'SA', integMode: 'BACKUP' } },
+          update: { status: 'DISABLED' },
+        }),
+      );
+      expect(result.status).toBe('DISABLED');
+    });
+  });
+
+  describe('getRegionStatus', () => {
+    it('returns ENABLED when no status record exists', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      prisma.vendHqCredential.findMany.mockResolvedValue([]);
+
+      const result = await service.getRegionStatus('OM');
+      expect(result.integrationStatus).toBe('ENABLED');
+      expect(result.region).toBe('OM');
+    });
+
+    it('returns credential list with lastSyncVersion and lastSyncAt', async () => {
+      const { service, prisma } = makeService();
+      const now = new Date();
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'BACKUP',
+        status: 'ENABLED',
+      });
+      prisma.vendHqCredential.findMany.mockResolvedValue([
+        {
+          id: 'cred-001',
+          domainName: 'mystore',
+          active: true,
+          lastSyncVersion: 42,
+          lastSyncAt: now,
+        },
+      ]);
+
+      const result = await service.getRegionStatus('SA');
+      expect(result.credentials).toHaveLength(1);
+      expect(result.credentials[0].lastSyncVersion).toBe(42);
+      expect(result.credentials[0].lastSyncAt).toBe(now);
+    });
+  });
+
+  describe('backupRegion', () => {
+    const mockAxios = jest.spyOn(
+      require('axios'),
+      'get',
+    );
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('skips a sale when incoming version is not newer than stored version', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 3 })] } });
+
+      // DB already has version 5 — incoming 3 should be skipped
+      prisma.backupVendHqSale.findFirst.mockResolvedValue({ id: 'db-001', version: 5 });
+
+      const result = await service.backupRegion(makeCred());
+      expect(result.skipped).toBe(1);
+      expect(result.saved).toBe(0);
+      expect(prisma.backupVendHqSale.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a new sale record when it does not exist yet', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 10 })] } });
+
+      // No existing record
+      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+
+      const result = await service.backupRegion(makeCred());
+      expect(result.saved).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(prisma.backupVendHqSale.create).toHaveBeenCalled();
+    });
+
+    it('updates an existing sale when incoming version is higher', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 10 })] } });
+
+      // DB has older version
+      prisma.backupVendHqSale.findFirst.mockResolvedValue({ id: 'db-001', version: 3 });
+
+      const result = await service.backupRegion(makeCred());
+      expect(result.saved).toBe(1);
+      expect(prisma.backupVendHqSale.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'db-001' } }),
+      );
+    });
+
+    it('sends the after=lastSyncVersion parameter to the VendHQ API', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [] } });
+      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred({ lastSyncVersion: 99 }));
+
+      expect(mockAxios).toHaveBeenCalledWith(
+        expect.stringContaining('/api/2.0/sales'),
+        expect.objectContaining({
+          params: expect.objectContaining({ after: 99 }),
+        }),
+      );
+    });
+
+    it('does NOT send the after param when lastSyncVersion is 0', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [] } });
+
+      await service.backupRegion(makeCred({ lastSyncVersion: 0 }));
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params).not.toHaveProperty('after');
+    });
+
+    it('advances lastSyncVersion after a successful run', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 55 })] } });
+      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred({ lastSyncVersion: 10 }));
+
+      expect(prisma.vendHqCredential.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ lastSyncVersion: 55 }),
+        }),
+      );
+    });
+
+    it('does not push duplicate SaleSyncStatus for the same sale', async () => {
+      const { service, prisma } = makeService();
+      const sale = makeSale({ version: 5 });
+      mockAxios.mockResolvedValue({ data: { data: [sale] } });
+      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred());
+
+      // saleSyncStatus.upsert should be called exactly once per sale
+      expect(prisma.saleSyncStatus.upsert).toHaveBeenCalledTimes(1);
+      expect(prisma.saleSyncStatus.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ status: SaleStatus.PENDING }),
+          update: expect.objectContaining({ status: SaleStatus.PENDING }),
+        }),
+      );
+    });
+  });
+
+  describe('runBackupJob', () => {
+    const mockAxios = jest.spyOn(require('axios'), 'get');
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('skips a region when integration is DISABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'BACKUP',
+        status: 'DISABLED',
+      });
+
+      await service.runBackupJob();
+
+      // axios.get should never be called because the region is disabled
+      expect(mockAxios).not.toHaveBeenCalled();
+    });
+
+    it('processes a region when integration is ENABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'KW' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'KW',
+        integMode: 'BACKUP',
+        status: 'ENABLED',
+      });
+      mockAxios.mockResolvedValue({ data: { data: [] } });
+
+      await service.runBackupJob();
+
+      expect(mockAxios).toHaveBeenCalled();
+    });
+
+    it('processes a region when no status record exists (default ENABLED)', async () => {
+      const { service, prisma } = makeService();
+      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'AE' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      mockAxios.mockResolvedValue({ data: { data: [] } });
+
+      await service.runBackupJob();
+
+      expect(mockAxios).toHaveBeenCalled();
+    });
+  });
+});
