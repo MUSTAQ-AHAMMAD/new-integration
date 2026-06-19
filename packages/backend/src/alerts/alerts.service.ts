@@ -36,9 +36,7 @@ export class AlertsService {
       where: {
         alertType: dto.alertType,
         isResolved: false,
-        ...(dto.relatedEntityId
-          ? { relatedEntityId: dto.relatedEntityId }
-          : {}),
+        relatedEntityId: dto.relatedEntityId,
         createdAt: { gte: dedupSince },
       },
       select: { id: true },

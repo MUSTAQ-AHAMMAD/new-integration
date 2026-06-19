@@ -638,7 +638,9 @@ export class OracleSoapClient {
       const status = (err as { response?: { status?: number } })?.response
         ?.status;
       if (status === 401 || status === 403) return;
-      throw err;
+      const message =
+        err instanceof Error ? err.message : 'Unknown connectivity error';
+      throw new Error(`Oracle SOAP connectivity check failed: ${message}`);
     }
   }
 
