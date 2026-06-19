@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { parseLimit } from '../common/parse-limit';
 import { DashboardService } from './dashboard.service';
 
 @ApiTags('dashboard')
@@ -22,7 +23,7 @@ export class DashboardController {
   @Get('failed-transactions')
   @ApiOperation({ summary: 'Get unresolved failed transactions' })
   getFailedTransactions(@Query('limit') limit?: string) {
-    return this.service.getFailedTransactions(limit ? Number(limit) : 20);
+    return this.service.getFailedTransactions(parseLimit(limit, 20));
   }
 
   @Get('orders-by-branch')
@@ -34,7 +35,7 @@ export class DashboardController {
   @Get('recent-activity')
   @ApiOperation({ summary: 'Get recent audit log activity' })
   getRecentActivity(@Query('limit') limit?: string) {
-    return this.service.getRecentActivity(limit ? Number(limit) : 50);
+    return this.service.getRecentActivity(parseLimit(limit, 50));
   }
 
   @Get('health')
@@ -46,12 +47,12 @@ export class DashboardController {
   @Get('negative-inventory')
   @ApiOperation({ summary: 'Get negative inventory items' })
   getNegativeInventory(@Query('limit') limit?: string) {
-    return this.service.getNegativeInventory(limit ? Number(limit) : 20);
+    return this.service.getNegativeInventory(parseLimit(limit, 20));
   }
 
   @Get('webhook-events')
   @ApiOperation({ summary: 'Get recent webhook events' })
   getWebhookEvents(@Query('limit') limit?: string) {
-    return this.service.getWebhookEvents(limit ? Number(limit) : 100);
+    return this.service.getWebhookEvents(parseLimit(limit, 100));
   }
 }

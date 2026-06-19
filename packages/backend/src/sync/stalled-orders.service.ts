@@ -24,6 +24,17 @@ export class StalledOrdersService {
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async detectStalledOrders(): Promise<void> {
+    try {
+      await this._detectStalledOrders();
+    } catch (err) {
+      this.logger.error(
+        'detectStalledOrders cron failed',
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
+  private async _detectStalledOrders(): Promise<void> {
     const cutoff = new Date(
       Date.now() - STALE_THRESHOLD_HOURS * 60 * 60 * 1000,
     );

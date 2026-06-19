@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { AlertSeverity } from '@prisma/client';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { parseLimit } from '../common/parse-limit';
 import { AlertsService } from './alerts.service';
 
 @ApiTags('alerts')
@@ -18,7 +19,7 @@ export class AlertsController {
     return this.service.listAlerts({
       severity,
       isResolved: resolved !== undefined ? resolved === 'true' : undefined,
-      limit: limit ? Number(limit) : undefined,
+      limit: parseLimit(limit, 50),
     });
   }
 

@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { parseLimit } from '../common/parse-limit';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
@@ -20,8 +21,8 @@ export class SyncController {
 
   @Get('jobs')
   @ApiOperation({ summary: 'List all sync jobs' })
-  listJobs(@Query('status') status?: string, @Query('limit') limit = '50') {
-    return this.syncService.listSyncJobs(status, Number(limit));
+  listJobs(@Query('status') status?: string, @Query('limit') limit?: string) {
+    return this.syncService.listSyncJobs(status, parseLimit(limit, 50));
   }
 
   @Get('jobs/:id')
@@ -63,8 +64,8 @@ export class SyncController {
 
   @Get('failed-transactions')
   @ApiOperation({ summary: 'List unresolved failed transactions' })
-  listFailedTransactions(@Query('limit') limit = '50') {
-    return this.syncService.listFailedTransactions(Number(limit));
+  listFailedTransactions(@Query('limit') limit?: string) {
+    return this.syncService.listFailedTransactions(parseLimit(limit, 50));
   }
 
   @Get('orders/:odooOrderId')
