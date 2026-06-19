@@ -1,25 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AlertSeverity, AlertType, SyncStatus } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Orders that have been in PENDING status for longer than this threshold are
- *  considered stalled and will trigger a SYNC_STALLED alert. */
-const STALE_THRESHOLD_HOURS = 6;
+/** Default stale-order threshold in hours (overridden by STALE_THRESHOLD_HOURS env var). */
+const DEFAULT_STALE_THRESHOLD_HOURS = 6;
 
 @Injectable()
 export class StalledOrdersService {
   private readonly logger = new Logger(StalledOrdersService.name);
+  private readonly staleThresholdHours: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly alertsService: AlertsService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    const configured = configService.get<number>('STALE_THRESHOLD_HOURS');
+    this.staleThresholdHours =
+      configured && configured > 0 ? configured : DEFAULT_STALE_THRESHOLD_HOURS;
+  }
 
   /**
    * Runs every night at 01:00.
-   * Finds orders stuck in PENDING for more than STALE_THRESHOLD_HOURS,
+   * Finds orders stuck in PENDING for more than staleThresholdHours,
    * groups them by branch, and fires one SYNC_STALLED alert per branch.
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
@@ -36,7 +42,7 @@ export class StalledOrdersService {
 
   private async _detectStalledOrders(): Promise<void> {
     const cutoff = new Date(
-      Date.now() - STALE_THRESHOLD_HOURS * 60 * 60 * 1000,
+      Date.now() - this.staleThresholdHours * 60 * 60 * 1000,
     );
 
     const stalledOrders = await this.prisma.orderSyncQueue.findMany({
@@ -81,7 +87,7 @@ export class StalledOrdersService {
         title: `Stalled orders detected — branch ${branchCode}`,
         message:
           `${orders.length} order(s) in branch ${branchCode} have been in PENDING status ` +
-          `for more than ${STALE_THRESHOLD_HOURS} hours and may have been missed. ` +
+          `for more than ${this.staleThresholdHours} hours and may have been missed. ` +
           `Orders: ${orderList}${overflow}. ` +
           `Use POST /sync/jobs with scopeType=BRANCH_DATE_RANGE to re-sync the affected period.`,
         relatedEntityId: branchCode,
@@ -97,7 +103,7 @@ export class StalledOrdersService {
   /** Returns the count of orders currently stalled (for dashboard/metrics). */
   async getStalledCount(): Promise<number> {
     const cutoff = new Date(
-      Date.now() - STALE_THRESHOLD_HOURS * 60 * 60 * 1000,
+      Date.now() - this.staleThresholdHours * 60 * 60 * 1000,
     );
     return this.prisma.orderSyncQueue.count({
       where: {

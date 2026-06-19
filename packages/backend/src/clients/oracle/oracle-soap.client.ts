@@ -625,6 +625,25 @@ export class OracleSoapClient {
 
   // ── Helpers ───────────────────────────────────────────────
 
+  /**
+   * Lightweight connectivity probe used by the health-check service.
+   * Sends a HEAD request to the SOAP base URL; 401/403 from Oracle still
+   * indicates the host is reachable, so those are treated as healthy.
+   */
+  async ping(): Promise<void> {
+    try {
+      await this.http.head('/');
+    } catch (err: unknown) {
+      // 401 / 403 means Oracle is up but auth is required — that's fine for a ping.
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 401 || status === 403) return;
+      const message =
+        err instanceof Error ? err.message : 'Unknown connectivity error';
+      throw new Error(`Oracle SOAP connectivity check failed: ${message}`);
+    }
+  }
+
   private assertNoFault(xml: string, operation: string): void {
     if (xml.includes('<faultcode>') || xml.includes(':Fault>')) {
       const faultString =
