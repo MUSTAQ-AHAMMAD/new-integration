@@ -12,6 +12,6 @@ export function parseLimit(
 ): number {
   if (value === undefined || value === '') return defaultValue;
   const n = parseInt(value, 10);
-  if (!Number.isFinite(n)) return defaultValue;
+  if (Number.isNaN(n)) return defaultValue;
   return Math.min(Math.max(1, n), MAX_LIMIT);
 }

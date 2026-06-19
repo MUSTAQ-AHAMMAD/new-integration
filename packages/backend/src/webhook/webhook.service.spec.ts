@@ -247,9 +247,7 @@ describe('WebhookService — order event routing', () => {
   for (const eventType of orderEventTypes) {
     it(`calls ingestOrder for "${eventType}" events`, async () => {
       const { service, mockOrderSync } = makeService(null);
-      const payload = makePaidOrderPayload({ event_type: eventType } as Record<string, unknown>);
-      // Re-inject correct event_type at top level
-      const p = { ...payload, event_type: eventType };
+      const p = { event_type: eventType, order: { ...makePaidOrderPayload().order } };
       const raw = Buffer.from(JSON.stringify(p));
 
       await service.processOdooEvent(p, raw);
@@ -313,8 +311,7 @@ describe('WebhookService — order event routing', () => {
 
   it('sets isPaid=true for state "paid"', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const payload = makePaidOrderPayload({ state: 'paid' } as Record<string, unknown>);
-    const p = { ...payload, order: { ...payload.order, state: 'paid' } };
+    const p = makePaidOrderPayload({ state: 'paid' });
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);
