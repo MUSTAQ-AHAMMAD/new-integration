@@ -266,6 +266,22 @@ const MAPPINGS: OracleTableMapping[] = [
       },
     }),
   },
+  // SALES_INTEGRATION_STATUS → SalesIntegrationStatus
+  {
+    oracleTable: 'SALES_INTEGRATION_STATUS',
+    prismaDelegate: (p) => p.salesIntegrationStatus,
+    mapRow: (r) => ({
+      region: str(r, 'REGION'),
+      integMode: str(r, 'INTEG_MODE'),
+      status: str(r, 'STATUS'),
+    }),
+    upsertWhere: (r) => ({
+      region_integMode: {
+        region: str(r, 'REGION'),
+        integMode: str(r, 'INTEG_MODE'),
+      },
+    }),
+  },
 ];
 
 export interface OracleImportResult {

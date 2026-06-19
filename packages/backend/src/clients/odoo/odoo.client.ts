@@ -112,6 +112,7 @@ export class OdooClient {
               }),
               ...(params.startDate && { start_date: params.startDate }),
               ...(params.endDate && { end_date: params.endDate }),
+              limit: params.limit ?? 100,
             },
           });
           return this.extractList<OdooOrder>(response.data);
@@ -206,6 +207,12 @@ export class OdooClient {
     }
 
     if (this.isRecord(payload)) {
+      // Odoo 16+ REST API wraps list results in a `records` key
+      const records = payload.records;
+      if (Array.isArray(records)) {
+        return records as T[];
+      }
+
       const result = payload.result;
       if (Array.isArray(result)) {
         return result as T[];
