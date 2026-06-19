@@ -117,10 +117,25 @@ export class SyncController {
             ? String(branchRaw[0])
             : branchRaw !== undefined
               ? String(branchRaw)
-              : 'UNKNOWN';
+              : null;
+
+        // Skip orders that carry no branch information — they cannot be
+        // mapped to a store configuration or routed to Oracle correctly.
+        if (!branchCode) {
+          skipped++;
+          errors.push(`Order ${String(order.name ?? order.id)} skipped: missing branch_id`);
+          continue;
+        }
 
         const amountTotal = Number(order.amount_total ?? 0);
         const state = typeof order.state === 'string' ? order.state : 'draft';
+
+        // Use the timezone carried on the order when available; fall back to
+        // the Odoo default which is typically the Dubai (Gulf Standard) zone.
+        const orderTimezone =
+          typeof order.timezone === 'string' && order.timezone
+            ? order.timezone
+            : 'Asia/Dubai';
 
         await this.orderSyncService.ingestOrder({
           odooOrderId: String(order.id),
@@ -129,7 +144,7 @@ export class SyncController {
           orderDate: order.date_order
             ? new Date(order.date_order)
             : new Date(),
-          originalTimezone: 'Asia/Dubai',
+          originalTimezone: orderTimezone,
           totalAmount: amountTotal,
           isPaid: ['paid', 'done', 'posted'].includes(state),
           isCancelled: state === 'cancel',
