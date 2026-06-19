@@ -41,7 +41,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'outlet-config': {
     title: 'Outlet Integration Config',
-    oracleTable: 'OUTLET_INTEGRATION_CONFIG',
+    oracleTable: 'OUTLETS_INTEGRATION_CONFIG',
     fields: [
       ...SYS_FIELDS,
       { key: 'outletName', label: 'Outlet Name', required: true },
@@ -51,7 +51,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'fusion-bu-map': {
     title: 'Fusion Business Unit Map',
-    oracleTable: 'FUSION_BU_MAP',
+    oracleTable: 'FUSION_BUSINESS_UNIT_ID_MAP',
     fields: [
       ...SYS_FIELDS,
       { key: 'businessUnitId', label: 'Business Unit ID', type: 'number', required: true },
@@ -61,7 +61,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'fusion-receipt-methods': {
     title: 'Fusion Receipt Methods',
-    oracleTable: 'FUSION_RECEIPT_METHODS',
+    oracleTable: 'FUSION_RECEIPT_METHOD',
     fields: [
       ...SYS_FIELDS,
       { key: 'receiptMethodId', label: 'Method ID', type: 'number', required: true },
