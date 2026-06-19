@@ -31,6 +31,7 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'domainName', label: 'Domain Name', required: true },
       { key: 'personalToken', label: 'Personal Token', required: true },
       { key: 'region', label: 'Region', required: true },
+      { key: 'currency', label: 'Currency' },
       { key: 'fusionOrgCode', label: 'Fusion Org Code' },
       { key: 'timezoneOffset', label: 'Timezone Offset', type: 'number' },
       { key: 'fusionTaxCode', label: 'Fusion Tax Code' },
@@ -117,6 +118,10 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'summaryFlag', label: 'Summary Flag', type: 'boolean' },
       { key: 'fixedFreightCharge', label: 'Fixed Freight Charge', type: 'number' },
       { key: 'bankChargeRate', label: 'Bank Charge Rate', type: 'number' },
+      { key: 'futUsed', label: 'Fut Used', tableHidden: true },
+      { key: 'extraSegment1', label: 'Extra Segment 1', tableHidden: true },
+      { key: 'extraSegment2', label: 'Extra Segment 2', tableHidden: true },
+      { key: 'extraSegment3', label: 'Extra Segment 3', tableHidden: true },
     ],
   },
   'sales-integration-status': {
