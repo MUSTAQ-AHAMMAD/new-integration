@@ -1,0 +1,697 @@
+{
+	"info": {
+		"_postman_id": "b88a5873-fc71-4ab5-9ea4-cc0914e5cd75",
+		"name": "IBQ_v18_2",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "10155036"
+	},
+	"item": [
+		{
+			"name": "v18",
+			"item": [
+				{
+					"name": "POS Order Detail",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/pos/order?company_id=3&limit=20",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"pos",
+								"order"
+							],
+							"query": [
+								{
+									"key": "order_ids",
+									"value": "[('company_id', '=', 3),(\"id\", \"in\", [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20])]",
+									"disabled": true
+								},
+								{
+									"key": "order",
+									"value": "id asc",
+									"disabled": true
+								},
+								{
+									"key": "company_id",
+									"value": "3"
+								},
+								{
+									"key": "start_date",
+									"value": "02/01/2026 19:58:09",
+									"disabled": true
+								},
+								{
+									"key": "end_date",
+									"value": null,
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "20"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "poslist",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/pos_list",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"pos_list"
+							],
+							"query": [
+								{
+									"key": "pos_id",
+									"value": "3570",
+									"disabled": true
+								},
+								{
+									"key": "pos_name",
+									"value": null,
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "branch",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/branch_list",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"branch_list"
+							],
+							"query": [
+								{
+									"key": "branch_id",
+									"value": "197",
+									"disabled": true
+								},
+								{
+									"key": "branch_name",
+									"value": "EXBSA",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Taxes",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/taxes",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"taxes"
+							],
+							"query": [
+								{
+									"key": "tax_id",
+									"value": "3",
+									"disabled": true
+								},
+								{
+									"key": "tax_name",
+									"value": "5% DB",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "UOM",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/uom",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"uom"
+							],
+							"query": [
+								{
+									"key": "uom_id",
+									"value": "6",
+									"disabled": true
+								},
+								{
+									"key": "uom_name",
+									"value": "mm",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Companies",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/companies?company_name=شركة عبدالعزيز إبراهيم القرشي للتجارة",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"companies"
+							],
+							"query": [
+								{
+									"key": "company_id",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "company_name",
+									"value": "شركة عبدالعزيز إبراهيم القرشي للتجارة"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Product Read",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{url}}/api/product/get",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"product",
+								"get"
+							],
+							"query": [
+								{
+									"key": "barcode",
+									"value": "500",
+									"disabled": true
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Product Create/Update",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"params\": {\n    \"product\": {\n      \"name\": \"Test Product 2\",\n      \"name_arabic\": \"منتج  2تجريبي\",\n      \"list_price\": 100,\n      \"available_in_pos\": true,\n      \"uom_id\": 1,\n      \"uom_po_id\": 1,\n      \"barcode\": \"1234567\",\n      \"fusion_item_code\": \"ITEM001 2\",\n      \"taxes_id\": 1,\n      \"company_id\": 1\n    }\n  }\n}"
+						},
+						"url": {
+							"raw": "{{url}}/api/product/create",
+							"host": [
+								"{{url}}"
+							],
+							"path": [
+								"api",
+								"product",
+								"create"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Product Create/Update old",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "name",
+									"value": "Test Product 114",
+									"type": "text"
+								},
+								{
+									"key": "list_price",
+									"value": "100",
+									"type": "text"
+								},
+								{
+									"key": "available_in_pos",
+									"value": "true",
+									"type": "text"
+								},
+								{
+									"key": "uom_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "name_arabic",
+									"value": "منتج  3تجريبي",
+									"type": "text"
+								},
+								{
+									"key": "taxes_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "uom_po_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "company_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "default_code",
+									"value": "",
+									"type": "text",
+									"disabled": true
+								},
+								{
+									"key": "barcode",
+									"value": "1234566699",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "https://ibraqperfumes-30-3-26-30281366.dev.odoo.com/api/vitem_create/CreateItems",
+							"protocol": "https",
+							"host": [
+								"ibraqperfumes-30-3-26-30281366",
+								"dev",
+								"odoo",
+								"com"
+							],
+							"path": [
+								"api",
+								"vitem_create",
+								"CreateItems"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "V15 Product Create/Update old Copy",
+					"request": {
+						"auth": {
+							"type": "apikey",
+							"apikey": [
+								{
+									"key": "value",
+									"value": "{{x-api-key}}",
+									"type": "string"
+								},
+								{
+									"key": "key",
+									"value": "x-api-key",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "name",
+									"value": "Test Product 114",
+									"type": "text"
+								},
+								{
+									"key": "list_price",
+									"value": "100",
+									"type": "text"
+								},
+								{
+									"key": "available_in_pos",
+									"value": "true",
+									"type": "text"
+								},
+								{
+									"key": "uom_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "name_arabic",
+									"value": "منتج  3تجريبي",
+									"type": "text"
+								},
+								{
+									"key": "taxes_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "uom_po_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "company_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "default_code",
+									"value": "",
+									"type": "text",
+									"disabled": true
+								},
+								{
+									"key": "barcode",
+									"value": "1234566699",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "https://ibraqperfumes-30-3-26-30281366.dev.odoo.com/api/vitem_create/CreateItems",
+							"protocol": "https",
+							"host": [
+								"ibraqperfumes-30-3-26-30281366",
+								"dev",
+								"odoo",
+								"com"
+							],
+							"path": [
+								"api",
+								"vitem_create",
+								"CreateItems"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "noauth"
+			},
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "x-api-key",
+			"value": "dc689dc993d9ffc919d9f10fbe45b37716879de7",
+			"type": "string"
+		},
+		{
+			"key": "x-api-key",
+			"value": "2e1a7c6942d1f580680e470026577dc050dc214a",
+			"type": "string",
+			"disabled": true
+		},
+		{
+			"key": "url",
+			"value": "https://ibraqperfumes.odoo.com/",
+			"type": "string"
+		},
+		{
+			"key": "url_2",
+			"value": "https://ibraqperfumes-20apr2026-31982742.dev.odoo.com/",
+			"type": "string",
+			"disabled": true
+		}
+	]
+}

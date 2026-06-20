@@ -1,0 +1,360 @@
+{
+	"info": {
+		"_postman_id": "2a6f08e5-ac38-4110-b38f-c3dd326a4c8a",
+		"name": "IBQ_API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "10155036"
+	},
+	"item": [
+		{
+			"name": "POS Read Order",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"url": {
+					"raw": "{{url}}/api/pos/order?limit=500",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"pos",
+						"order"
+					],
+					"query": [
+						{
+							"key": "read",
+							"value": "all",
+							"disabled": true
+						},
+						{
+							"key": "limit",
+							"value": "500"
+						},
+						{
+							"key": "order_id",
+							"value": "1393731",
+							"disabled": true
+						},
+						{
+							"key": "company_id",
+							"value": null,
+							"disabled": true
+						},
+						{
+							"key": "branch_id",
+							"value": null,
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Taxes Read",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"url": {
+					"raw": "{{url}}/api/taxes",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"taxes"
+					],
+					"query": [
+						{
+							"key": "tax_id",
+							"value": null,
+							"disabled": true
+						},
+						{
+							"key": "tax_name",
+							"value": null,
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UOM Read",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"url": {
+					"raw": "{{url}}/api/uom?uom_id&uom_name",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"uom"
+					],
+					"query": [
+						{
+							"key": "uom_id",
+							"value": null
+						},
+						{
+							"key": "uom_name",
+							"value": null
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Companies Read",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"url": {
+					"raw": "{{url}}/api/companies",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"companies"
+					],
+					"query": [
+						{
+							"key": "company_id",
+							"value": "",
+							"disabled": true
+						},
+						{
+							"key": "company_name",
+							"value": "",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Product Read",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"url": {
+					"raw": "{{url}}/api/product/get?barcode=101352308",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"product",
+						"get"
+					],
+					"query": [
+						{
+							"key": "barcode",
+							"value": "101352308"
+						},
+						{
+							"key": "fusion_item_code",
+							"value": "",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "product create and update",
+			"request": {
+				"auth": {
+					"type": "apikey",
+					"apikey": [
+						{
+							"key": "value",
+							"value": "{{ibq_api_key}}",
+							"type": "string"
+						},
+						{
+							"key": "key",
+							"value": "x-api-key",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"params\": {\n        \"product\": {\n            \"name\": \"xmatchx1123123\",\n            \"list_price\": \"12\",\n            \"fusion_item_code\": \"11223344\",\n            \"available_in_pos\": \"true\",\n            \"uom_id\": \"1\",\n            \"uom_po_id\": \"1\",\n            \"barcode\": \"12341234657865732312321\",\n            \"name_arabic\": \"ييسث121234\",\n            \"company_id\": \"1\",\n            \"taxes_id\": \"1\"\n        }\n    }\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{url}}/api/product/create",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"product",
+						"create"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "ibq_api_key",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
