@@ -7,6 +7,18 @@ import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
 
+/**
+ * Extract the branch code string from an Odoo/IBQ Many2one branch_id field.
+ * Returns null when no branch information is available.
+ */
+function extractBranchCode(
+  branchRaw: number | [number, string] | null | undefined,
+): string | null {
+  if (branchRaw == null) return null;
+  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
+  return String(branchRaw);
+}
+
 @ApiTags('sync')
 @Controller('sync')
 export class SyncController {
@@ -117,13 +129,7 @@ export class SyncController {
 
     for (const order of orders) {
       try {
-        const branchRaw = order.branch_id;
-        const branchCode =
-          Array.isArray(branchRaw)
-            ? String(branchRaw[0])
-            : branchRaw !== undefined
-              ? String(branchRaw)
-              : null;
+        const branchCode = extractBranchCode(order.branch_id);
 
         // Skip orders that carry no branch information — they cannot be
         // mapped to a store configuration or routed to Oracle correctly.
@@ -206,13 +212,7 @@ export class SyncController {
 
     for (const order of orders) {
       try {
-        const branchRaw = order.branch_id;
-        const branchCode =
-          Array.isArray(branchRaw)
-            ? String(branchRaw[0])
-            : branchRaw !== undefined && branchRaw !== null
-              ? String(branchRaw)
-              : null;
+        const branchCode = extractBranchCode(order.branch_id);
 
         if (!branchCode) {
           skipped++;

@@ -181,7 +181,7 @@ export default function FetchIbqPage() {
               </div>
               <div className="rounded-lg bg-yellow-50 p-4">
                 <p className="text-2xl font-bold text-yellow-700">{result.skipped}</p>
-                <p className="text-xs text-slate-500">Skipped / Errors</p>
+                <p className="text-xs text-slate-500">Failed</p>
               </div>
             </div>
 
