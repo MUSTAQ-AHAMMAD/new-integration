@@ -292,6 +292,6 @@ export class IbqBackupController {
 
   private maskKey(key: string): string {
     if (key.length <= 6) return '*'.repeat(key.length);
-    return `${key.slice(0, 3)}${'*'.repeat(Math.max(4, key.length - 5))}${key.slice(-2)}`;
+    return `${key.slice(0, 3)}${'*'.repeat(Math.max(4, key.length - 3))}`;
   }
 }
