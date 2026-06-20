@@ -47,6 +47,7 @@ const TABLE_MAP: Record<string, keyof PrismaService> = {
   'backup-payments': 'backupVendHqPayment',
   'backup-promotions': 'backupVendHqPromotion',
   'sale-sync-status': 'saleSyncStatus',
+  'api-endpoint-configs': 'apiEndpointConfig',
 };
 
 // ── Prisma DMMF helpers ─────────────────────────────────────────────────────

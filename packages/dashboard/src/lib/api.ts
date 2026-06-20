@@ -66,7 +66,10 @@ export const api = {
     return apiRequest<unknown[]>(`/item-sync/status${qs}`);
   },
 
-  getOverview: () => apiRequest<DashboardOverview>('/dashboard/overview'),
+  getOverview: (region?: string) => {
+    const qs = region ? `?region=${encodeURIComponent(region)}` : '';
+    return apiRequest<DashboardOverview>(`/dashboard/overview${qs}`);
+  },
   getSyncTrend: (days = 7) => apiRequest<SyncTrendItem[]>(`/dashboard/sync-trend?days=${days}`),
   getFailedTransactions: (limit = 20) => apiRequest<FailedTransaction[]>(`/dashboard/failed-transactions?limit=${limit}`),
   getOrdersByBranch: () => apiRequest<BranchOrderStats[]>('/dashboard/orders-by-branch'),
@@ -206,6 +209,10 @@ export interface DashboardOverview {
   unresolvedAlerts: number;
   activeJobs: number;
   storeCount: number;
+  /** Set when region filter is active — indicates the data source used */
+  dataSource?: string;
+  /** Echo of the region filter applied, if any */
+  region?: string;
 }
 
 export interface SyncTrendItem {
@@ -608,4 +615,19 @@ export interface VendHqRegionCredential {
   id: string;
   region: string;
   domainName: string;
+}
+
+// ─── API Endpoint Configuration ────────────────────────────────────
+export interface ApiEndpointConfig {
+  id: string;
+  service: string;
+  name: string;
+  path: string;
+  method: string;
+  description: string | null;
+  apiVersion: string | null;
+  region: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }

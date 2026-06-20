@@ -73,6 +73,13 @@ const operationalItems: NavItem[] = [
 
 const adminGroups: NavGroup[] = [
   {
+    label: 'API Config',
+    icon: Globe,
+    items: [
+      { href: '/admin/api-endpoint-configs', label: 'API Endpoint Configs', icon: Globe },
+    ],
+  },
+  {
     label: 'Credentials',
     icon: Key,
     items: [

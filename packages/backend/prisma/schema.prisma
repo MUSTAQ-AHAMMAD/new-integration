@@ -1348,3 +1348,36 @@ model BatchJobItem {
   @@index([externalId])
 }
 
+// ─────────────────────────────────────────────────────────────────
+// API ENDPOINT CONFIGURATION
+// Stores all Oracle Fusion and VendHQ API endpoint paths extracted
+// from the Java middleware (integration-Oracle) so they can be
+// inspected and updated from the dashboard without redeploying.
+// ─────────────────────────────────────────────────────────────────
+
+model ApiEndpointConfig {
+  id          String   @id @default(cuid())
+  /// Which external system this endpoint belongs to: FUSION or VENDHQ
+  service     String
+  /// Human-readable name, e.g. "Inventory Items"
+  name        String   @unique
+  /// The URL path, e.g. "/fscmRestApi/resources/11.13.17.11/items"
+  path        String
+  /// HTTP method: GET, POST, PUT, PATCH, DELETE
+  method      String   @default("GET")
+  /// Short description of what the endpoint does
+  description String?
+  /// API version string, e.g. "11.13.17.11" for Fusion, "2.0" for VendHQ
+  apiVersion  String?
+  /// Optional region override; null means endpoint applies to all regions
+  region      String?
+  /// Whether this endpoint configuration is active
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([service])
+  @@index([isActive])
+  @@index([region])
+}
+
