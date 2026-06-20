@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AlertsModule } from '../alerts/alerts.module';
 import { ClientsModule } from '../clients/clients.module';
+import { IbqBackupModule } from '../ibq-backup/ibq-backup.module';
 import { OdooBackupModule } from '../odoo-backup/odoo-backup.module';
 import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module';
 import { QueuesModule } from '../queues/queues.module';
@@ -23,6 +24,7 @@ import { ValidationService } from './validation.service';
     PaymentMappingModule,
     ClientsModule,
     OdooBackupModule,
+    IbqBackupModule,
   ],
   controllers: [SyncController],
   providers: [

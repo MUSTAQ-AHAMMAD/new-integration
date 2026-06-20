@@ -192,6 +192,17 @@ export const api = {
       body: JSON.stringify(params ?? {}),
     }),
 
+  /** List all IBQ credentials (API keys are masked) */
+  listIbqCredentials: () =>
+    apiRequest<IbqCredential[]>('/ibq-backup/credentials'),
+
+  /** Manually pull orders from IBQ, persist backup, and ingest them into the sync queue */
+  fetchIbqOrders: (params: { credentialId: string; startDate?: string; endDate?: string; branchId?: number; companyId?: number; limit?: number }) =>
+    apiRequest<{ ok: boolean; fetched: number; backedUp: number; backupSkipped: number; ingested: number; skipped: number; errors: string[] }>('/sync/fetch-ibq', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
+
   /** Export payment mappings as CSV */
   exportPaymentMappingsCsvUrl: () => `${API_BASE}/payment-mappings/export`,
 
@@ -430,6 +441,18 @@ export interface VendHqCredential {
   timezoneOffset: number;
   fusionTaxCode: string | null;
   businessStartDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IbqCredential {
+  id: string;
+  baseUrl: string;
+  apiKey: string;
+  companyId: number | null;
+  region: string;
+  active: boolean;
+  lastSyncAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

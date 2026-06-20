@@ -50,6 +50,7 @@ interface IbqOrderRaw {
   amount_paid?: number;
   state?: string;
   company_id?: number | [number, string];
+  branch_id?: number | [number, string] | null;
   config_id?: number | [number, string];
   partner_id?: number | [number, string] | null;
   lines?: IbqOrderLineRaw[];
@@ -154,22 +155,45 @@ export class IbqBackupService {
    * Uses lastSyncAt as the start_date watermark so only new/updated orders
    * are fetched on each run.
    * Exposed publicly so the controller can trigger a manual run.
+   *
+   * Optional overrides are used by the manual fetch endpoint; the cron
+   * path passes no overrides so the watermark logic is unaffected.
    */
-  async backupRegion(cred: {
-    id: string;
-    baseUrl: string;
-    apiKey: string;
-    companyId: number | null;
-    region: string;
-    lastSyncAt: Date | null;
-  }): Promise<{ saved: number; skipped: number }> {
-    const params: Record<string, string | number> = { limit: 500 };
+  async backupRegion(
+    cred: {
+      id: string;
+      baseUrl: string;
+      apiKey: string;
+      companyId: number | null;
+      region: string;
+      lastSyncAt: Date | null;
+    },
+    overrides?: {
+      startDate?: string;
+      endDate?: string;
+      branchId?: number;
+      companyId?: number;
+      limit?: number;
+    },
+  ): Promise<{ saved: number; skipped: number; orders: IbqOrderRaw[] }> {
+    const params: Record<string, string | number> = {
+      limit: overrides?.limit ?? 500,
+    };
 
-    if (cred.companyId != null) {
-      params['company_id'] = cred.companyId;
+    const effectiveCompanyId = overrides?.companyId ?? cred.companyId;
+    if (effectiveCompanyId != null) {
+      params['company_id'] = effectiveCompanyId;
     }
-    if (cred.lastSyncAt) {
+    if (overrides?.branchId != null) {
+      params['branch_id'] = overrides.branchId;
+    }
+    if (overrides?.startDate) {
+      params['start_date'] = overrides.startDate;
+    } else if (cred.lastSyncAt) {
       params['start_date'] = toIbqDate(cred.lastSyncAt);
+    }
+    if (overrides?.endDate) {
+      params['end_date'] = overrides.endDate;
     }
 
     const baseUrl = cred.baseUrl.replace(/\/$/, '');
@@ -201,13 +225,40 @@ export class IbqBackupService {
       }
     }
 
-    // Advance watermark even if no orders arrived so we don't re-scan history
-    await this.prisma.ibqCredential.update({
-      where: { id: cred.id },
-      data: { lastSyncAt: runAt },
-    });
+    // Advance watermark only on scheduled cron runs (no overrides)
+    if (!overrides) {
+      await this.prisma.ibqCredential.update({
+        where: { id: cred.id },
+        data: { lastSyncAt: runAt },
+      });
+    }
 
-    return { saved, skipped };
+    return { saved, skipped, orders };
+  }
+
+  /**
+   * Loads a credential by id, calls backupRegion() with optional filter
+   * overrides, and returns the result so callers (e.g. fetch-ibq endpoint)
+   * can continue processing the orders.
+   * Does NOT advance the lastSyncAt watermark — that is the cron's responsibility.
+   */
+  async backupOrders(
+    credentialId: string,
+    overrides?: {
+      startDate?: string;
+      endDate?: string;
+      branchId?: number;
+      companyId?: number;
+      limit?: number;
+    },
+  ): Promise<{ saved: number; skipped: number; orders: IbqOrderRaw[] }> {
+    const cred = await this.prisma.ibqCredential.findUnique({
+      where: { id: credentialId },
+    });
+    if (!cred) {
+      throw new Error(`IBQ credential not found: ${credentialId}`);
+    }
+    return this.backupRegion(cred, overrides);
   }
 
   // ---------------------------------------------------------------------------
@@ -289,6 +340,8 @@ export class IbqBackupService {
 
     const companyId = resolveId(order.company_id);
     const companyName = resolveName(order.company_id);
+    const branchId = resolveId(order.branch_id);
+    const branchName = resolveName(order.branch_id);
     const configId = resolveId(order.config_id);
     const configName = resolveName(order.config_id);
     const partnerId = resolveId(order.partner_id);
@@ -300,8 +353,8 @@ export class IbqBackupService {
       posReference: order.pos_reference ?? null,
       companyId,
       companyName,
-      branchId: null,
-      branchName: null,
+      branchId,
+      branchName,
       posConfigId: configId,
       posConfigName: configName,
       dateOrder,
