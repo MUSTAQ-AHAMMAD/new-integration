@@ -80,7 +80,7 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
             <DropdownMenuItem
               onClick={() => {
                 setSelectedRegion(null);
-                void qc.invalidateQueries({ queryKey: ['dashboard-overview'] });
+                void qc.invalidateQueries({ queryKey: ['dashboard-overview', selectedRegion] });
               }}
               className={!selectedRegion ? 'bg-indigo-50 text-indigo-700 font-semibold' : ''}
             >
@@ -91,7 +91,7 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
                 key={r.id}
                 onClick={() => {
                   setSelectedRegion(r.region);
-                  void qc.invalidateQueries({ queryKey: ['dashboard-overview'] });
+                  void qc.invalidateQueries({ queryKey: ['dashboard-overview', r.region] });
                 }}
                 className={
                   selectedRegion === r.region
