@@ -53,6 +53,10 @@ export const api = {
     apiRequest<{ ok: boolean; message: string }>('/vendhq-backup/trigger', { method: 'POST' }),
   triggerVendHqBackupByRegion: (region: string) =>
     apiRequest<{ ok: boolean; region: string; triggered: number }>(`/vendhq-backup/trigger-region/${encodeURIComponent(region)}`, { method: 'POST' }),
+  triggerVendHqToOracleSyncAll: () =>
+    apiRequest<{ ok: boolean; processed: number; succeeded: number; failed: number }>('/vendhq-backup/sync-to-oracle', { method: 'POST' }),
+  triggerVendHqToOracleSyncByRegion: (region: string) =>
+    apiRequest<{ ok: boolean; region: string; processed: number; succeeded: number; failed: number }>(`/vendhq-backup/sync-to-oracle/${encodeURIComponent(region)}`, { method: 'POST' }),
   triggerItemSyncAll: () =>
     apiRequest<{ ok: boolean; message: string }>('/item-sync/trigger', { method: 'POST' }),
   triggerItemSyncByRegion: (region: string) =>

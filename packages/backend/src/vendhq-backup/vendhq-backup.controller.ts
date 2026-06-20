@@ -9,12 +9,14 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { VendHqSalesBackupService } from './vendhq-backup.service';
+import { VendHqToOracleSyncService } from './vendhq-to-oracle-sync.service';
 
 @ApiTags('vendhq-backup')
 @Controller('vendhq-backup')
 export class VendHqBackupController {
   constructor(
     private readonly backupService: VendHqSalesBackupService,
+    private readonly oracleSyncService: VendHqToOracleSyncService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -136,5 +138,34 @@ export class VendHqBackupController {
   @ApiOperation({ summary: 'Disable VendHQ backup integration for a region' })
   async stopRegion(@Param('region') region: string) {
     return this.backupService.disableRegion(region);
+  }
+
+  // ── VendHQ → Oracle Fusion sync ───────────────────────────────────────────
+
+  /**
+   * Manually trigger the VendHQ→Oracle Fusion sync for all pending sales
+   * across all regions.
+   */
+  @Post('sync-to-oracle')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Push all pending VendHQ backup sales to Oracle Fusion',
+  })
+  async syncToOracleAll() {
+    const result = await this.oracleSyncService.runSyncJob();
+    return { ok: true, ...result };
+  }
+
+  /**
+   * Manually trigger the VendHQ→Oracle Fusion sync for a specific region.
+   */
+  @Post('sync-to-oracle/:region')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Push pending VendHQ backup sales for a specific region to Oracle Fusion',
+  })
+  async syncToOracleByRegion(@Param('region') region: string) {
+    const result = await this.oracleSyncService.runSyncJob(region);
+    return { ok: true, region, ...result };
   }
 }

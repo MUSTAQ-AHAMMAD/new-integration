@@ -51,11 +51,11 @@ export class FusionTransformationService {
     transactionNumberOverride?: string,
   ): Promise<TransformResult> {
     // ── 1. Load raw backup data ──────────────────────────────
-    const sale = await this.prisma.backupVendhqSales.findUnique({
+    const sale = await this.prisma.backupVendHqSale.findUnique({
       where: { id: saleDbId },
-      include: { lineItems: true, payments: true },
+      include: { backupLineItems: true, backupPayments: true },
     });
-    if (!sale) throw new Error(`BackupVendhqSales not found: ${saleDbId}`);
+    if (!sale) throw new Error(`BackupVendHqSale not found: ${saleDbId}`);
 
     const rawJson = (sale.rawJson ?? {}) as Record<string, unknown>;
     const customerType =
@@ -117,8 +117,8 @@ export class FusionTransformationService {
     };
 
     // ── 5. Build InvoiceLines ────────────────────────────────
-    const saleNumber = sale.saleNumber;
-    for (const li of sale.lineItems) {
+    const saleNumber = sale.saleNumber ?? '';
+    for (const li of sale.backupLineItems) {
       const qty = Number(li.quantity ?? 1);
       if (qty === 0) continue;
       const total = Number(li.totalPrice ?? 0);
@@ -146,7 +146,7 @@ export class FusionTransformationService {
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
-    for (const payment of sale.payments) {
+    for (const payment of sale.backupPayments) {
       const pmtMethod = payment.paymentMethod ?? '';
       if (pmtMethod.toLowerCase() === 'credit on cust') continue;
 

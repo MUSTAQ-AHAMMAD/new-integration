@@ -410,4 +410,19 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'saleDate', label: 'Sale Date', type: 'date' },
     ],
   },
+  'sale-sync-status': {
+    title: 'Sale Sync Status',
+    readOnly: true,
+    fields: [
+      { key: 'saleId', label: 'Sale ID' },
+      { key: 'outletId', label: 'Outlet ID' },
+      { key: 'saleDate', label: 'Sale Date', type: 'date' },
+      { key: 'status', label: 'Status' },
+      { key: 'syncAttempts', label: 'Attempts', type: 'number' },
+      { key: 'lastSyncAt', label: 'Last Sync', type: 'date' },
+      { key: 'oracleInvoiceId', label: 'Oracle Invoice ID' },
+      { key: 'errorMessage', label: 'Error', tableHidden: true },
+      { key: 'updatedAt', label: 'Updated', type: 'date' },
+    ],
+  },
 };

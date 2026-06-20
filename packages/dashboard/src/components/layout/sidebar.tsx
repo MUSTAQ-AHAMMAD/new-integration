@@ -126,6 +126,7 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/backup-line-items', label: 'Line Items Backup', icon: Archive },
       { href: '/admin/backup-payments', label: 'Payments Backup', icon: Archive },
       { href: '/admin/backup-promotions', label: 'Promotions Backup', icon: Archive },
+      { href: '/admin/sale-sync-status', label: 'Sale Sync Status', icon: Activity },
     ],
   },
 ];

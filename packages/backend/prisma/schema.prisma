@@ -943,7 +943,7 @@ model FusionInvTxn {
 // ─── Backup / Archive Tables (read-only view) ─────────────────────
 
 model BackupVendHqSale {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   invoiceNumber     String
   /// VendHQ sale identifier / invoice number used as the Oracle sales-order reference
   saleNumber        String?
@@ -961,7 +961,14 @@ model BackupVendHqSale {
   customerType      String?
   /// Raw JSON payload received from VendHQ (preserved for debugging / re-processing)
   rawJson           Json?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
+
+  /// Whether this sale has been successfully pushed to Oracle Fusion
+  fusionSynced      Boolean   @default(false)
+  /// Timestamp of the last successful Oracle Fusion push
+  fusionSyncAt      DateTime?
+  /// Error message from the last failed Oracle Fusion push attempt
+  fusionSyncError   String?
 
   backupLineItems BackupVendHqLineItem[]
   backupPayments  BackupVendHqPayment[]
@@ -971,6 +978,7 @@ model BackupVendHqSale {
   @@index([invoiceNumber])
   @@index([saleNumber])
   @@index([saleDate])
+  @@index([fusionSynced])
 }
 
 model BackupVendHqLineItem {
