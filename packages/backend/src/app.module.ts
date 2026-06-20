@@ -31,6 +31,7 @@ import { RolesGuard } from './auth/roles.guard';
 import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 import { ItemSyncModule } from './item-sync/item-sync.module';
 import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
+import { OdooBackupModule } from './odoo-backup/odoo-backup.module';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
     VendHqBackupModule,
     ItemSyncModule,
     IbqBackupModule,
+    OdooBackupModule,
   ],
   providers: [
     // Rate limiting (applied after auth to avoid wasting tokens on invalid requests)

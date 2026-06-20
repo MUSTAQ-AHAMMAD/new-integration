@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { parseLimit } from '../common/parse-limit';
-import { OdooClient } from '../clients/odoo/odoo.client';
+import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
@@ -12,7 +12,7 @@ export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly orderSyncService: OrderSyncService,
-    private readonly odooClient: OdooClient,
+    private readonly odooBackupService: OdooBackupService,
   ) {}
 
   @Post('jobs')
@@ -87,7 +87,7 @@ export class SyncController {
 
   @Post('fetch-odoo')
   @ApiOperation({
-    summary: 'Manually pull orders from Odoo and ingest them into the sync queue',
+    summary: 'Manually pull orders from Odoo, persist raw backup, and ingest them into the sync queue',
   })
   async fetchOdooOrders(
     @Body()
@@ -98,13 +98,17 @@ export class SyncController {
       limit?: number;
     },
   ) {
-    const orders = await this.odooClient.getOrders({
-      branchId: body.branchId,
-      startDate: body.startDate,
-      endDate: body.endDate,
-      limit: body.limit ?? 100,
-    });
+    // Step 1: fetch from Odoo and persist raw data to backup tables so the
+    // data is never lost even if the ingestion step fails.
+    const { orders, saved: backedUp, skipped: backupSkipped } =
+      await this.odooBackupService.backupOrders({
+        branchId: body.branchId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        limit: body.limit ?? 100,
+      });
 
+    // Step 2: ingest each backed-up order into the sync queue.
     let ingested = 0;
     let skipped = 0;
     const errors: string[] = [];
@@ -157,6 +161,14 @@ export class SyncController {
       }
     }
 
-    return { ok: true, fetched: orders.length, ingested, skipped, errors };
+    return {
+      ok: true,
+      fetched: orders.length,
+      backedUp,
+      backupSkipped,
+      ingested,
+      skipped,
+      errors,
+    };
   }
 }

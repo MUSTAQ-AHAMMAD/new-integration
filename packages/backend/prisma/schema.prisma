@@ -1491,3 +1491,91 @@ model BackupIbqOrderPayment {
   @@index([parentOrderId])
 }
 
+// ─── Odoo (Main) Backup Tables ────────────────────────────────────────────────
+
+/// Tracks the last successful sync watermark for the main Odoo backup job.
+model OdooBackupState {
+  id         String    @id @default(cuid())
+  /// Identifies the Odoo source instance — defaults to "default" for the
+  /// single primary Odoo instance configured via env vars.
+  source     String    @unique @default("default")
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+/// Header-level record for each order fetched from the main Odoo instance during backup.
+model BackupOdooOrder {
+  id           String    @id @default(cuid())
+  /// Odoo integer order id
+  orderId      Int       @unique
+  /// Human-readable order name / reference, e.g. "S00001" or "Order 00001"
+  orderName    String?
+  branchId     Int?
+  branchName   String?
+  dateOrder    DateTime?
+  amountTotal  Float?
+  amountTax    Float?
+  /// Odoo order state: draft | sale | done | cancel | paid | posted etc.
+  state        String?
+  partnerId    Int?
+  partnerName  String?
+  /// Timezone string carried on the order, e.g. "Asia/Dubai"
+  timezone     String?
+  /// Full raw JSON payload preserved for debugging / re-processing
+  rawJson      Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  orderLines    BackupOdooOrderLine[]
+  orderPayments BackupOdooOrderPayment[]
+
+  @@index([orderId])
+  @@index([dateOrder])
+  @@index([state])
+}
+
+/// Line items belonging to a BackupOdooOrder.
+model BackupOdooOrderLine {
+  id                String   @id @default(cuid())
+  /// Parent Odoo order id (denormalised for fast queries)
+  orderId           Int
+  /// Odoo integer id of this line record
+  lineId            Int?
+  productId         Int?
+  productName       String?
+  qty               Float?
+  priceUnit         Float?
+  priceSubtotal     Float?
+  priceSubtotalIncl Float?
+  discount          Float?
+  createdAt         DateTime @default(now())
+
+  /// FK to parent BackupOdooOrder
+  parentOrderId String?
+  order         BackupOdooOrder? @relation(fields: [parentOrderId], references: [id])
+
+  @@index([orderId])
+  @@index([parentOrderId])
+}
+
+/// Payment entries belonging to a BackupOdooOrder.
+model BackupOdooOrderPayment {
+  id            String   @id @default(cuid())
+  /// Parent Odoo order id (denormalised for fast queries)
+  orderId       Int
+  /// Odoo integer id of this payment / statement line
+  paymentId     Int?
+  /// Payment method name, e.g. "Cash", "Card"
+  paymentName   String?
+  amount        Float?
+  createdAt     DateTime @default(now())
+
+  /// FK to parent BackupOdooOrder
+  parentOrderId String?
+  order         BackupOdooOrder? @relation(fields: [parentOrderId], references: [id])
+
+  @@index([orderId])
+  @@index([parentOrderId])
+}
+
