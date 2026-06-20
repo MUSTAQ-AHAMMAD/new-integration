@@ -30,6 +30,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 import { ItemSyncModule } from './item-sync/item-sync.module';
+import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
 
 @Module({
   imports: [
@@ -104,6 +105,7 @@ import { ItemSyncModule } from './item-sync/item-sync.module';
     AuthModule,
     VendHqBackupModule,
     ItemSyncModule,
+    IbqBackupModule,
   ],
   providers: [
     // Rate limiting (applied after auth to avoid wasting tokens on invalid requests)
