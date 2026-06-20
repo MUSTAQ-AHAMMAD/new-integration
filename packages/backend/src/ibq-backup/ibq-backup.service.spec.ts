@@ -1,0 +1,376 @@
+import { IbqBackupService } from './ibq-backup.service';
+
+// ---------------------------------------------------------------------------
+// Minimal mock factories
+// ---------------------------------------------------------------------------
+
+function makeOrder(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 101,
+    name: 'Order 00001-001-0001',
+    pos_reference: 'Order 00001-001-0001',
+    date_order: '2024-01-15 10:00:00',
+    amount_total: 105.0,
+    amount_tax: 5.0,
+    amount_paid: 105.0,
+    state: 'done',
+    company_id: [1, 'Test Company'],
+    config_id: [5, 'Main POS'],
+    partner_id: null,
+    lines: [],
+    statement_ids: [],
+    ...overrides,
+  };
+}
+
+function makePrisma() {
+  return {
+    ibqCredential: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    salesIntegrationStatus: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
+    backupIbqOrder: {
+      findUnique: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
+      update: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
+    },
+    backupIbqOrderLine: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    backupIbqOrderPayment: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+    },
+  };
+}
+
+function makeCred(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'cred-001',
+    baseUrl: 'https://ibq.example.com',
+    apiKey: 'secret-key',
+    companyId: 1,
+    active: true,
+    region: 'SA',
+    lastSyncAt: null,
+    ...overrides,
+  };
+}
+
+function makeService(prisma = makePrisma()) {
+  const service = new IbqBackupService(prisma as never);
+  return { service, prisma };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('IbqBackupService', () => {
+  describe('backupRegion', () => {
+    const mockAxios = jest.spyOn(require('axios'), 'get');
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('calls the IBQ /api/pos/order endpoint with x-api-key header', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred());
+
+      expect(mockAxios).toHaveBeenCalledWith(
+        'https://ibq.example.com/api/pos/order',
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-api-key': 'secret-key' }),
+        }),
+      );
+    });
+
+    it('sends company_id param when set on credential', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred({ companyId: 3 }));
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params).toHaveProperty('company_id', 3);
+    });
+
+    it('does NOT send company_id param when companyId is null', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred({ companyId: null }));
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params).not.toHaveProperty('company_id');
+    });
+
+    it('sends start_date param when lastSyncAt is set', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred({ lastSyncAt: new Date('2024-01-15T10:00:00Z') }));
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params).toHaveProperty('start_date');
+      expect(typeof callParams.params['start_date']).toBe('string');
+    });
+
+    it('does NOT send start_date param on first run (lastSyncAt null)', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred({ lastSyncAt: null }));
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params).not.toHaveProperty('start_date');
+    });
+
+    it('persists a new order as BackupIbqOrder', async () => {
+      const { service, prisma } = makeService();
+      const order = makeOrder();
+      mockAxios.mockResolvedValue({ data: { result: [order] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+
+      const result = await service.backupRegion(makeCred());
+
+      expect(prisma.backupIbqOrder.create).toHaveBeenCalledTimes(1);
+      expect(result.saved).toBe(1);
+      expect(result.skipped).toBe(0);
+    });
+
+    it('updates an existing order rather than creating a duplicate', async () => {
+      const { service, prisma } = makeService();
+      const order = makeOrder();
+      mockAxios.mockResolvedValue({ data: { result: [order] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue({ id: 'existing-id' });
+
+      const result = await service.backupRegion(makeCred());
+
+      expect(prisma.backupIbqOrder.update).toHaveBeenCalledTimes(1);
+      expect(prisma.backupIbqOrder.create).not.toHaveBeenCalled();
+      expect(result.skipped).toBe(1);
+    });
+
+    it('persists order lines when present', async () => {
+      const { service, prisma } = makeService();
+      const order = makeOrder({
+        lines: [
+          { id: 1, product_id: [789, 'Test Product'], qty: 2, price_unit: 50, price_subtotal: 100, price_subtotal_incl: 105, discount: 0 },
+          { id: 2, product_id: [790, 'Another Product'], qty: 1, price_unit: 5, price_subtotal: 5, price_subtotal_incl: 5, discount: 0 },
+        ],
+      });
+      mockAxios.mockResolvedValue({ data: { result: [order] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      prisma.backupIbqOrderLine.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.backupIbqOrderLine.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('persists payments from statement_ids when present', async () => {
+      const { service, prisma } = makeService();
+      const order = makeOrder({
+        statement_ids: [
+          { id: 10, name: 'Cash', amount: 105.0 },
+        ],
+      });
+      mockAxios.mockResolvedValue({ data: { result: [order] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      prisma.backupIbqOrderPayment.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ paymentName: 'Cash', amount: 105.0 }),
+        }),
+      );
+    });
+
+    it('falls back to payment_ids when statement_ids is absent', async () => {
+      const { service, prisma } = makeService();
+      const order = makeOrder({
+        statement_ids: undefined,
+        payment_ids: [{ id: 20, name: 'Card', amount: 50.0 }],
+      });
+      mockAxios.mockResolvedValue({ data: { result: [order] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      prisma.backupIbqOrderPayment.findFirst.mockResolvedValue(null);
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ paymentName: 'Card', amount: 50.0 }),
+        }),
+      );
+    });
+
+    it('advances lastSyncAt watermark after a successful run', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.ibqCredential.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
+        }),
+      );
+    });
+
+    it('handles result wrapped in {data: [...]} envelope', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { data: [makeOrder()] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+
+      const result = await service.backupRegion(makeCred());
+
+      expect(result.saved).toBe(1);
+    });
+
+    it('handles unwrapped array response', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: [makeOrder()] });
+      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+
+      const result = await service.backupRegion(makeCred());
+
+      expect(result.saved).toBe(1);
+    });
+
+    it('strips trailing slash from baseUrl before calling the API', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred({ baseUrl: 'https://ibq.example.com/' }));
+
+      expect(mockAxios).toHaveBeenCalledWith(
+        'https://ibq.example.com/api/pos/order',
+        expect.anything(),
+      );
+    });
+
+    it('increments skipped count when individual order persistence fails', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [makeOrder(), makeOrder({ id: 102 })] } });
+      prisma.backupIbqOrder.findUnique.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('DB error'));
+
+      const result = await service.backupRegion(makeCred());
+
+      expect(result.skipped).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('runBackupJob', () => {
+    const mockAxios = jest.spyOn(require('axios'), 'get');
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('skips a region when integration is DISABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'IBQ_BACKUP',
+        status: 'DISABLED',
+      });
+
+      await service.runBackupJob();
+
+      expect(mockAxios).not.toHaveBeenCalled();
+    });
+
+    it('processes a region when integration is ENABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+        region: 'SA',
+        integMode: 'IBQ_BACKUP',
+        status: 'ENABLED',
+      });
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.runBackupJob();
+
+      expect(mockAxios).toHaveBeenCalled();
+    });
+
+    it('processes a region when no status record exists (default ENABLED)', async () => {
+      const { service, prisma } = makeService();
+      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'AE' })]);
+      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.runBackupJob();
+
+      expect(mockAxios).toHaveBeenCalled();
+    });
+
+    it('logs a warning and returns early when there are no active credentials', async () => {
+      const { service, prisma } = makeService();
+      prisma.ibqCredential.findMany.mockResolvedValue([]);
+      const logSpy = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn').mockImplementation(() => {});
+
+      await service.runBackupJob();
+
+      expect(mockAxios).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('enableRegion / disableRegion', () => {
+    it('upserts SalesIntegrationStatus to ENABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+        region: 'SA',
+        integMode: 'IBQ_BACKUP',
+        status: 'ENABLED',
+      });
+
+      const result = await service.enableRegion('SA');
+
+      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { status: 'ENABLED' },
+        }),
+      );
+      expect(result.status).toBe('ENABLED');
+    });
+
+    it('upserts SalesIntegrationStatus to DISABLED', async () => {
+      const { service, prisma } = makeService();
+      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+        region: 'SA',
+        integMode: 'IBQ_BACKUP',
+        status: 'DISABLED',
+      });
+
+      const result = await service.disableRegion('SA');
+
+      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: { status: 'DISABLED' },
+        }),
+      );
+      expect(result.status).toBe('DISABLED');
+    });
+  });
+});

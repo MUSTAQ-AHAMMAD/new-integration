@@ -1381,3 +1381,113 @@ model ApiEndpointConfig {
   @@index([region])
 }
 
+// ─── IBQ (Odoo POS) Backup Tables ────────────────────────────────
+
+/// Stores API credentials for each IBQ (Odoo POS) instance.
+/// One credential per IBQ environment / region.
+model IbqCredential {
+  id         String    @id @default(cuid())
+  /// Base URL of the IBQ Odoo instance, e.g. "https://ibraqperfumes.odoo.com"
+  baseUrl    String
+  /// API key sent as the `x-api-key` header on every request
+  apiKey     String
+  /// Odoo company_id filter — used in GET /api/pos/order?company_id=…
+  companyId  Int?
+  active     Boolean   @default(true)
+  region     String
+  /// Timestamp watermark: next run will fetch orders with date_order >= lastSyncAt
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([region])
+  @@index([active])
+}
+
+/// Header-level record for each IBQ POS order fetched during backup.
+model BackupIbqOrder {
+  id             String    @id @default(cuid())
+  /// IBQ / Odoo integer order id
+  orderId        Int
+  /// Human-readable order name, e.g. "Order 00001-001-0001"
+  orderName      String?
+  /// POS reference string from Odoo
+  posReference   String?
+  companyId      Int?
+  companyName    String?
+  branchId       Int?
+  branchName     String?
+  /// POS configuration id (maps to a terminal / branch)
+  posConfigId    Int?
+  posConfigName  String?
+  dateOrder      DateTime?
+  amountTotal    Float?
+  amountTax      Float?
+  amountPaid     Float?
+  /// Odoo order state: draft | paid | done | invoiced | cancel
+  state          String?
+  partnerId      Int?
+  partnerName    String?
+  region         String
+  /// Full raw JSON payload preserved for debugging / re-processing
+  rawJson        Json?
+  createdAt      DateTime  @default(now())
+
+  orderLines    BackupIbqOrderLine[]
+  orderPayments BackupIbqOrderPayment[]
+
+  @@unique([orderId, region])
+  @@index([region])
+  @@index([orderId])
+  @@index([dateOrder])
+  @@index([state])
+}
+
+/// Line items belonging to a BackupIbqOrder.
+model BackupIbqOrderLine {
+  id                String   @id @default(cuid())
+  /// Parent IBQ order id (denormalised for fast queries)
+  orderId           Int
+  /// Odoo integer id of this line record
+  lineId            Int?
+  productId         Int?
+  productName       String?
+  qty               Float?
+  priceUnit         Float?
+  priceSubtotal     Float?
+  priceSubtotalIncl Float?
+  discount          Float?
+  region            String
+  createdAt         DateTime @default(now())
+
+  /// FK to parent BackupIbqOrder
+  parentOrderId String?
+  order         BackupIbqOrder? @relation(fields: [parentOrderId], references: [id])
+
+  @@index([region])
+  @@index([orderId])
+  @@index([parentOrderId])
+}
+
+/// Payment entries belonging to a BackupIbqOrder.
+model BackupIbqOrderPayment {
+  id            String   @id @default(cuid())
+  /// Parent IBQ order id (denormalised for fast queries)
+  orderId       Int
+  /// Odoo integer id of this payment / statement line
+  paymentId     Int?
+  /// Payment method name, e.g. "Cash", "Card"
+  paymentName   String?
+  amount        Float?
+  region        String
+  createdAt     DateTime @default(now())
+
+  /// FK to parent BackupIbqOrder
+  parentOrderId String?
+  order         BackupIbqOrder? @relation(fields: [parentOrderId], references: [id])
+
+  @@index([region])
+  @@index([orderId])
+  @@index([parentOrderId])
+}
+
