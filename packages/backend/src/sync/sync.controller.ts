@@ -1,10 +1,23 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { parseLimit } from '../common/parse-limit';
-import { OdooClient } from '../clients/odoo/odoo.client';
+import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
+import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
+
+/**
+ * Extract the branch code string from an Odoo/IBQ Many2one branch_id field.
+ * Returns null when no branch information is available.
+ */
+function extractBranchCode(
+  branchRaw: number | [number, string] | null | undefined,
+): string | null {
+  if (branchRaw == null) return null;
+  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
+  return String(branchRaw);
+}
 
 @ApiTags('sync')
 @Controller('sync')
@@ -12,7 +25,8 @@ export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly orderSyncService: OrderSyncService,
-    private readonly odooClient: OdooClient,
+    private readonly odooBackupService: OdooBackupService,
+    private readonly ibqBackupService: IbqBackupService,
   ) {}
 
   @Post('jobs')
@@ -87,7 +101,7 @@ export class SyncController {
 
   @Post('fetch-odoo')
   @ApiOperation({
-    summary: 'Manually pull orders from Odoo and ingest them into the sync queue',
+    summary: 'Manually pull orders from Odoo, persist raw backup, and ingest them into the sync queue',
   })
   async fetchOdooOrders(
     @Body()
@@ -98,26 +112,24 @@ export class SyncController {
       limit?: number;
     },
   ) {
-    const orders = await this.odooClient.getOrders({
-      branchId: body.branchId,
-      startDate: body.startDate,
-      endDate: body.endDate,
-      limit: body.limit ?? 100,
-    });
+    // Step 1: fetch from Odoo and persist raw data to backup tables so the
+    // data is never lost even if the ingestion step fails.
+    const { orders, saved: backedUp, skipped: backupSkipped } =
+      await this.odooBackupService.backupOrders({
+        branchId: body.branchId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        limit: body.limit ?? 100,
+      });
 
+    // Step 2: ingest each backed-up order into the sync queue.
     let ingested = 0;
     let skipped = 0;
     const errors: string[] = [];
 
     for (const order of orders) {
       try {
-        const branchRaw = order.branch_id;
-        const branchCode =
-          Array.isArray(branchRaw)
-            ? String(branchRaw[0])
-            : branchRaw !== undefined
-              ? String(branchRaw)
-              : null;
+        const branchCode = extractBranchCode(order.branch_id);
 
         // Skip orders that carry no branch information — they cannot be
         // mapped to a store configuration or routed to Oracle correctly.
@@ -157,6 +169,86 @@ export class SyncController {
       }
     }
 
-    return { ok: true, fetched: orders.length, ingested, skipped, errors };
+    return {
+      ok: true,
+      fetched: orders.length,
+      backedUp,
+      backupSkipped,
+      ingested,
+      skipped,
+      errors,
+    };
+  }
+
+  @Post('fetch-ibq')
+  @ApiOperation({
+    summary: 'Manually pull orders from IBQ, persist raw backup, and ingest them into the sync queue',
+  })
+  async fetchIbqOrders(
+    @Body()
+    body: {
+      credentialId: string;
+      startDate?: string;
+      endDate?: string;
+      branchId?: number;
+      companyId?: number;
+      limit?: number;
+    },
+  ) {
+    // Step 1: fetch from IBQ and persist raw data to backup tables.
+    const { orders, saved: backedUp, skipped: backupSkipped } =
+      await this.ibqBackupService.backupOrders(body.credentialId, {
+        startDate: body.startDate,
+        endDate: body.endDate,
+        branchId: body.branchId,
+        companyId: body.companyId,
+        limit: body.limit ?? 100,
+      });
+
+    // Step 2: ingest each backed-up order into the sync queue.
+    let ingested = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const order of orders) {
+      try {
+        const branchCode = extractBranchCode(order.branch_id);
+
+        if (!branchCode) {
+          skipped++;
+          errors.push(`Order ${String(order.name ?? order.id)} skipped: missing branch_id`);
+          continue;
+        }
+
+        const amountTotal = Number(order.amount_total ?? 0);
+        const state = typeof order.state === 'string' ? order.state : 'draft';
+
+        await this.orderSyncService.ingestOrder({
+          odooOrderId: String(order.id),
+          odooOrderNumber: String(order.name ?? order.id),
+          branchCode,
+          orderDate: order.date_order ? new Date(order.date_order) : new Date(),
+          originalTimezone: 'Asia/Dubai',
+          totalAmount: amountTotal,
+          isPaid: ['paid', 'done', 'posted'].includes(state),
+          isCancelled: state === 'cancel',
+          isRefund: amountTotal < 0,
+        });
+        ingested++;
+      } catch (err) {
+        skipped++;
+        errors.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    return {
+      ok: true,
+      fetched: orders.length,
+      backedUp,
+      backupSkipped,
+      ingested,
+      skipped,
+      errors,
+    };
   }
 }

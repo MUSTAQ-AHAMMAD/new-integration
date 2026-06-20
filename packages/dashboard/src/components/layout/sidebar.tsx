@@ -53,6 +53,7 @@ const topItems: NavItem[] = [
   { href: '/orders', label: 'Order Manager', icon: ShoppingCart },
   { href: '/odoo-to-oracle', label: 'Odoo → Oracle Pipeline', icon: Play },
   { href: '/fetch-odoo', label: 'Fetch from Odoo', icon: Download },
+  { href: '/fetch-ibq', label: 'Fetch IBQ Orders', icon: Download },
   { href: '/push-order', label: 'Push Single Order', icon: Send },
   { href: '/push-store', label: 'Push Single Store', icon: Store },
 ];

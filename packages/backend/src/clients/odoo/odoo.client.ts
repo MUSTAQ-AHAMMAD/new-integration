@@ -8,13 +8,43 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
 
+export interface OdooOrderLine {
+  id?: number;
+  product_id?: number | [number, string];
+  /** POS orders use "qty", sale orders use "product_uom_qty" */
+  qty?: number;
+  product_uom_qty?: number;
+  price_unit?: number;
+  price_subtotal?: number;
+  price_subtotal_incl?: number;
+  discount?: number;
+  [key: string]: unknown;
+}
+
+export interface OdooOrderPayment {
+  id?: number;
+  name?: string;
+  amount?: number;
+  [key: string]: unknown;
+}
+
 export interface OdooOrder {
   id: number;
   name: string;
   amount_total?: number;
+  amount_tax?: number;
   branch_id?: number | [number, string];
   date_order?: string;
   state?: string;
+  partner_id?: number | [number, string] | null;
+  timezone?: string;
+  /** POS orders expose lines here */
+  lines?: OdooOrderLine[];
+  /** Sale orders expose lines here */
+  order_line?: OdooOrderLine[];
+  /** Odoo v15 uses statement_ids, v18 may use payment_ids */
+  statement_ids?: OdooOrderPayment[];
+  payment_ids?: OdooOrderPayment[];
   [key: string]: unknown;
 }
 
