@@ -30,8 +30,66 @@ export class DashboardService {
     return result;
   }
 
-  async getOverview() {
-    return this.getCached('dashboard:overview', CACHE_TTL.overview, async () => {
+  async getOverview(region?: string) {
+    const cacheKey = region
+      ? `dashboard:overview:${region}`
+      : 'dashboard:overview';
+    return this.getCached(cacheKey, CACHE_TTL.overview, async () => {
+      // When a specific region is provided, return VendHQ backup-based stats
+      // (BackupVendHqSale has a `region` field) alongside global counts.
+      if (region) {
+        const regionWhere = { region };
+        const [
+          totalOrders,
+          syncedOrders,
+          failedOrders,
+          pendingOrders,
+        ] = await Promise.all([
+          this.prisma.backupVendHqSale.count({ where: regionWhere }),
+          this.prisma.backupVendHqSale.count({
+            where: { ...regionWhere, fusionSynced: true },
+          }),
+          this.prisma.backupVendHqSale.count({
+            where: { ...regionWhere, fusionSyncError: { not: null } },
+          }),
+          this.prisma.backupVendHqSale.count({
+            where: {
+              ...regionWhere,
+              fusionSynced: false,
+              fusionSyncError: null,
+            },
+          }),
+        ]);
+
+        const [unresolvedAlerts, activeJobs, storeCount] = await Promise.all([
+          this.prisma.alertLog.count({ where: { isResolved: false } }),
+          this.prisma.syncJob.count({
+            where: {
+              status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] },
+            },
+          }),
+          this.prisma.storeConfiguration.count({ where: { isActive: true } }),
+        ]);
+
+        const syncRate =
+          totalOrders > 0 ? Math.round((syncedOrders / totalOrders) * 100) : 0;
+
+        return {
+          totalOrders,
+          syncedOrders,
+          failedOrders,
+          pendingOrders,
+          processingOrders: 0,
+          syncRate,
+          unresolvedAlerts,
+          activeJobs,
+          storeCount,
+          region,
+          dataSource: 'vendhq-backup',
+        };
+      }
+
+      // No region selected: return global Odoo → Oracle OrderSyncQueue stats
       const [
         totalOrders,
         syncedOrders,

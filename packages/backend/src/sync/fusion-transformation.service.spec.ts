@@ -13,7 +13,7 @@ function makeSale(overrides: Record<string, unknown> = {}) {
     outletName: 'Dubai Store',
     saleDate: new Date('2024-01-15T10:00:00Z'),
     rawJson: {},
-    lineItems: [
+    backupLineItems: [
       {
         id: 'li-1',
         productId: 'ITEM-001',
@@ -22,7 +22,7 @@ function makeSale(overrides: Record<string, unknown> = {}) {
         totalPrice: 100,
       },
     ],
-    payments: [
+    backupPayments: [
       {
         id: 'pmt-1',
         paymentMethod: 'Cash',
@@ -96,7 +96,7 @@ function makeReceiptMethod(
 
 function buildMockPrisma(overrides: Record<string, unknown> = {}) {
   return {
-    backupVendhqSales: {
+    backupVendHqSale: {
       findUnique: jest.fn(),
     },
     vendHqOutlet: {
@@ -126,7 +126,7 @@ function setupDefaultMocks(
   mockPrisma: ReturnType<typeof buildMockPrisma>,
   salePatch: Record<string, unknown> = {},
 ) {
-  mockPrisma.backupVendhqSales.findUnique.mockResolvedValue(
+  mockPrisma.backupVendHqSale.findUnique.mockResolvedValue(
     makeSale(salePatch),
   );
   mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(makeOutlet());
@@ -160,15 +160,15 @@ describe('FusionTransformationService', () => {
   // ── Sale not found ──────────────────────────────────────────
 
   it('throws when sale is not found', async () => {
-    mockPrisma.backupVendhqSales.findUnique.mockResolvedValue(null);
+    mockPrisma.backupVendHqSale.findUnique.mockResolvedValue(null);
 
     await expect(service.buildSalePayloads('missing-id', 'AE')).rejects.toThrow(
-      'BackupVendhqSales not found: missing-id',
+      'BackupVendHqSale not found: missing-id',
     );
   });
 
   it('throws when FusionSalesMetadata is not found', async () => {
-    mockPrisma.backupVendhqSales.findUnique.mockResolvedValue(makeSale());
+    mockPrisma.backupVendHqSale.findUnique.mockResolvedValue(makeSale());
     mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(makeOutlet());
     mockPrisma.fusionSalesMetadata.findFirst.mockResolvedValue(null);
     mockPrisma.fusionBusinessUnitMap.findFirst.mockResolvedValue(makeBuMap());
@@ -282,7 +282,7 @@ describe('FusionTransformationService', () => {
 
     it('skips line items with zero quantity', async () => {
       setupDefaultMocks(mockPrisma, {
-        lineItems: [
+        backupLineItems: [
           {
             id: 'li-zero',
             productId: 'P001',
@@ -308,7 +308,7 @@ describe('FusionTransformationService', () => {
 
     it('maps Discount Item as memo line without itemNumber', async () => {
       setupDefaultMocks(mockPrisma, {
-        lineItems: [
+        backupLineItems: [
           {
             id: 'li-disc',
             productId: 'DISC-001',
@@ -327,7 +327,7 @@ describe('FusionTransformationService', () => {
 
     it('forces Discount Item quantity to 1 when totalPrice is positive', async () => {
       setupDefaultMocks(mockPrisma, {
-        lineItems: [
+        backupLineItems: [
           {
             id: 'li-disc',
             productId: 'DISC-001',
@@ -345,7 +345,7 @@ describe('FusionTransformationService', () => {
 
     it('assigns sequential line numbers starting at 1', async () => {
       setupDefaultMocks(mockPrisma, {
-        lineItems: [
+        backupLineItems: [
           {
             id: 'li-1',
             productId: 'ITEM-001',
@@ -361,7 +361,7 @@ describe('FusionTransformationService', () => {
             totalPrice: 60,
           },
         ],
-        payments: [],
+        backupPayments: [],
       });
 
       const result = await service.buildSalePayloads('sale-1', 'AE');
@@ -385,7 +385,7 @@ describe('FusionTransformationService', () => {
 
     it('skips "Credit on Cust" payment method', async () => {
       setupDefaultMocks(mockPrisma, {
-        payments: [
+        backupPayments: [
           { id: 'pmt-1', paymentMethod: 'credit on cust', amount: 100 },
         ],
       });
@@ -414,7 +414,7 @@ describe('FusionTransformationService', () => {
 
     it('throws when bank account is not configured for non-cash payment', async () => {
       setupDefaultMocks(mockPrisma, {
-        payments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 50 }],
+        backupPayments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 50 }],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false),
@@ -444,7 +444,7 @@ describe('FusionTransformationService', () => {
   describe('MiscReceipts', () => {
     it('creates a misc receipt for non-cash payment (bank charges)', async () => {
       setupDefaultMocks(mockPrisma, {
-        payments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 100 }],
+        backupPayments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 100 }],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false, { bankAccountId: 202 }),
@@ -474,7 +474,7 @@ describe('FusionTransformationService', () => {
 
     it('caps misc receipt at 10 for Debit Card in OM region', async () => {
       setupDefaultMocks(mockPrisma, {
-        payments: [{ id: 'pmt-3', paymentMethod: 'Debit Card', amount: 1000 }],
+        backupPayments: [{ id: 'pmt-3', paymentMethod: 'Debit Card', amount: 1000 }],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Debit Card', false, {
@@ -506,7 +506,7 @@ describe('FusionTransformationService', () => {
 
     it('creates misc receipt for cash rounding', async () => {
       setupDefaultMocks(mockPrisma, {
-        payments: [
+        backupPayments: [
           { id: 'pmt-cr', paymentMethod: 'Cash Rounding', amount: 0.05 },
         ],
       });
@@ -597,7 +597,7 @@ describe('FusionTransformationService', () => {
     it('creates one journal line per invoice line', async () => {
       setupDefaultMocks(mockPrisma, {
         rawJson: { customer_code: 'SERVICE' },
-        lineItems: [
+        backupLineItems: [
           {
             id: 'li-1',
             productId: 'ITEM-001',

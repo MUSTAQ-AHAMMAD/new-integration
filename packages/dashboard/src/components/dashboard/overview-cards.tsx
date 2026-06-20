@@ -4,6 +4,7 @@ import type { ComponentType } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useRegion } from '@/providers/region-provider';
 import { AlertTriangle, CheckCircle, Clock, Loader2, Store, TrendingUp, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -56,9 +57,11 @@ function StatCard({ title, value, icon: Icon, gradientFrom, gradientTo, iconBg, 
 }
 
 export function OverviewCards() {
+  const { selectedRegion } = useRegion();
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['dashboard-overview'],
-    queryFn: api.getOverview,
+    queryKey: ['dashboard-overview', selectedRegion],
+    queryFn: () => api.getOverview(selectedRegion ?? undefined),
     refetchInterval: 15000,
   });
 
@@ -80,86 +83,96 @@ export function OverviewCards() {
     );
   }
 
+  // Labels differ when viewing region-specific VendHQ backup stats
+  const isRegionView = selectedRegion && 'dataSource' in data && data.dataSource === 'vendhq-backup';
+
   return (
-    <div className="grid grid-cols-2 gap-5 md:grid-cols-4">
-      <StatCard
-        title="Total Orders"
-        value={data.totalOrders}
-        icon={Store}
-        gradientFrom="from-blue-500"
-        gradientTo="to-blue-600"
-        iconBg="bg-gradient-to-br from-blue-500 to-blue-600"
-        iconClass="text-white"
-      />
-      <StatCard
-        title="Synced"
-        value={data.syncedOrders}
-        icon={CheckCircle}
-        gradientFrom="from-emerald-500"
-        gradientTo="to-teal-500"
-        iconBg="bg-gradient-to-br from-emerald-500 to-teal-500"
-        iconClass="text-white"
-        subtitle="Sent to Oracle"
-      />
-      <StatCard
-        title="Failed"
-        value={data.failedOrders}
-        icon={XCircle}
-        gradientFrom={data.failedOrders > 0 ? 'from-red-500' : 'from-slate-400'}
-        gradientTo={data.failedOrders > 0 ? 'to-rose-600' : 'to-slate-500'}
-        iconBg={data.failedOrders > 0 ? 'bg-gradient-to-br from-red-500 to-rose-600' : 'bg-gradient-to-br from-slate-400 to-slate-500'}
-        iconClass="text-white"
-        href="/failed-transactions"
-      />
-      <StatCard
-        title="Pending"
-        value={data.pendingOrders}
-        icon={Clock}
-        gradientFrom="from-amber-400"
-        gradientTo="to-orange-500"
-        iconBg="bg-gradient-to-br from-amber-400 to-orange-500"
-        iconClass="text-white"
-      />
-      <StatCard
-        title="Processing"
-        value={data.processingOrders}
-        icon={Loader2}
-        gradientFrom="from-sky-500"
-        gradientTo="to-blue-500"
-        iconBg="bg-gradient-to-br from-sky-500 to-blue-500"
-        iconClass="text-white"
-        pulse={data.processingOrders > 0}
-      />
-      <StatCard
-        title="Sync Rate"
-        value={`${data.syncRate}%`}
-        icon={TrendingUp}
-        gradientFrom="from-violet-500"
-        gradientTo="to-purple-600"
-        iconBg="bg-gradient-to-br from-violet-500 to-purple-600"
-        iconClass="text-white"
-      />
-      <StatCard
-        title="Alerts"
-        value={data.unresolvedAlerts}
-        icon={AlertTriangle}
-        gradientFrom={data.unresolvedAlerts > 0 ? 'from-red-500' : 'from-slate-400'}
-        gradientTo={data.unresolvedAlerts > 0 ? 'to-rose-600' : 'to-slate-500'}
-        iconBg={data.unresolvedAlerts > 0 ? 'bg-gradient-to-br from-red-500 to-rose-600' : 'bg-gradient-to-br from-slate-400 to-slate-500'}
-        iconClass="text-white"
-        href="/alerts"
-      />
-      <StatCard
-        title="Active Stores"
-        value={data.storeCount}
-        icon={Store}
-        gradientFrom="from-indigo-500"
-        gradientTo="to-purple-500"
-        iconBg="bg-gradient-to-br from-indigo-500 to-purple-500"
-        iconClass="text-white"
-        href="/stores"
-      />
-    </div>
+    <>
+      {isRegionView && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs text-indigo-700">
+          Showing VendHQ → Oracle Fusion stats for region <strong>{selectedRegion}</strong>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-5 md:grid-cols-4">
+        <StatCard
+          title={isRegionView ? 'Total Sales' : 'Total Orders'}
+          value={data.totalOrders}
+          icon={Store}
+          gradientFrom="from-blue-500"
+          gradientTo="to-blue-600"
+          iconBg="bg-gradient-to-br from-blue-500 to-blue-600"
+          iconClass="text-white"
+        />
+        <StatCard
+          title="Synced"
+          value={data.syncedOrders}
+          icon={CheckCircle}
+          gradientFrom="from-emerald-500"
+          gradientTo="to-teal-500"
+          iconBg="bg-gradient-to-br from-emerald-500 to-teal-500"
+          iconClass="text-white"
+          subtitle="Sent to Oracle"
+        />
+        <StatCard
+          title="Failed"
+          value={data.failedOrders}
+          icon={XCircle}
+          gradientFrom={data.failedOrders > 0 ? 'from-red-500' : 'from-slate-400'}
+          gradientTo={data.failedOrders > 0 ? 'to-rose-600' : 'to-slate-500'}
+          iconBg={data.failedOrders > 0 ? 'bg-gradient-to-br from-red-500 to-rose-600' : 'bg-gradient-to-br from-slate-400 to-slate-500'}
+          iconClass="text-white"
+          href="/failed-transactions"
+        />
+        <StatCard
+          title="Pending"
+          value={data.pendingOrders}
+          icon={Clock}
+          gradientFrom="from-amber-400"
+          gradientTo="to-orange-500"
+          iconBg="bg-gradient-to-br from-amber-400 to-orange-500"
+          iconClass="text-white"
+        />
+        <StatCard
+          title="Processing"
+          value={data.processingOrders}
+          icon={Loader2}
+          gradientFrom="from-sky-500"
+          gradientTo="to-blue-500"
+          iconBg="bg-gradient-to-br from-sky-500 to-blue-500"
+          iconClass="text-white"
+          pulse={data.processingOrders > 0}
+        />
+        <StatCard
+          title="Sync Rate"
+          value={`${data.syncRate}%`}
+          icon={TrendingUp}
+          gradientFrom="from-violet-500"
+          gradientTo="to-purple-600"
+          iconBg="bg-gradient-to-br from-violet-500 to-purple-600"
+          iconClass="text-white"
+        />
+        <StatCard
+          title="Alerts"
+          value={data.unresolvedAlerts}
+          icon={AlertTriangle}
+          gradientFrom={data.unresolvedAlerts > 0 ? 'from-red-500' : 'from-slate-400'}
+          gradientTo={data.unresolvedAlerts > 0 ? 'to-rose-600' : 'to-slate-500'}
+          iconBg={data.unresolvedAlerts > 0 ? 'bg-gradient-to-br from-red-500 to-rose-600' : 'bg-gradient-to-br from-slate-400 to-slate-500'}
+          iconClass="text-white"
+          href="/alerts"
+        />
+        <StatCard
+          title="Active Stores"
+          value={data.storeCount}
+          icon={Store}
+          gradientFrom="from-indigo-500"
+          gradientTo="to-purple-500"
+          iconBg="bg-gradient-to-br from-indigo-500 to-purple-500"
+          iconClass="text-white"
+          href="/stores"
+        />
+      </div>
+    </>
   );
 }
 

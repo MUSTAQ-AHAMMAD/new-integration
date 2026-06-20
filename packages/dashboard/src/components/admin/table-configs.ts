@@ -410,4 +410,33 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'saleDate', label: 'Sale Date', type: 'date' },
     ],
   },
+  'sale-sync-status': {
+    title: 'Sale Sync Status',
+    readOnly: true,
+    fields: [
+      { key: 'saleId', label: 'Sale ID' },
+      { key: 'outletId', label: 'Outlet ID' },
+      { key: 'saleDate', label: 'Sale Date', type: 'date' },
+      { key: 'status', label: 'Status' },
+      { key: 'syncAttempts', label: 'Attempts', type: 'number' },
+      { key: 'lastSyncAt', label: 'Last Sync', type: 'date' },
+      { key: 'oracleInvoiceId', label: 'Oracle Invoice ID' },
+      { key: 'errorMessage', label: 'Error', tableHidden: true },
+      { key: 'updatedAt', label: 'Updated', type: 'date' },
+    ],
+  },
+  'api-endpoint-configs': {
+    title: 'API Endpoint Configurations',
+    fields: [
+      ...SYS_FIELDS,
+      { key: 'service', label: 'Service', required: true },
+      { key: 'name', label: 'Name', required: true },
+      { key: 'path', label: 'Path / URL', required: true },
+      { key: 'method', label: 'HTTP Method' },
+      { key: 'apiVersion', label: 'API Version' },
+      { key: 'description', label: 'Description', type: 'textarea', tableHidden: true },
+      { key: 'region', label: 'Region' },
+      { key: 'isActive', label: 'Active', type: 'boolean' },
+    ],
+  },
 };

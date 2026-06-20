@@ -73,6 +73,13 @@ const operationalItems: NavItem[] = [
 
 const adminGroups: NavGroup[] = [
   {
+    label: 'API Config',
+    icon: Globe,
+    items: [
+      { href: '/admin/api-endpoint-configs', label: 'API Endpoint Configs', icon: Globe },
+    ],
+  },
+  {
     label: 'Credentials',
     icon: Key,
     items: [
@@ -126,6 +133,7 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/backup-line-items', label: 'Line Items Backup', icon: Archive },
       { href: '/admin/backup-payments', label: 'Payments Backup', icon: Archive },
       { href: '/admin/backup-promotions', label: 'Promotions Backup', icon: Archive },
+      { href: '/admin/sale-sync-status', label: 'Sale Sync Status', icon: Activity },
     ],
   },
 ];

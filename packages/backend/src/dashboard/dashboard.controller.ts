@@ -10,8 +10,8 @@ export class DashboardController {
 
   @Get('overview')
   @ApiOperation({ summary: 'Get dashboard overview statistics' })
-  getOverview() {
-    return this.service.getOverview();
+  getOverview(@Query('region') region?: string) {
+    return this.service.getOverview(region || undefined);
   }
 
   @Get('sync-trend')

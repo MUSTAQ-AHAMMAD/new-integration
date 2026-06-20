@@ -943,7 +943,7 @@ model FusionInvTxn {
 // ─── Backup / Archive Tables (read-only view) ─────────────────────
 
 model BackupVendHqSale {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   invoiceNumber     String
   /// VendHQ sale identifier / invoice number used as the Oracle sales-order reference
   saleNumber        String?
@@ -961,7 +961,14 @@ model BackupVendHqSale {
   customerType      String?
   /// Raw JSON payload received from VendHQ (preserved for debugging / re-processing)
   rawJson           Json?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
+
+  /// Whether this sale has been successfully pushed to Oracle Fusion
+  fusionSynced      Boolean   @default(false)
+  /// Timestamp of the last successful Oracle Fusion push
+  fusionSyncAt      DateTime?
+  /// Error message from the last failed Oracle Fusion push attempt
+  fusionSyncError   String?
 
   backupLineItems BackupVendHqLineItem[]
   backupPayments  BackupVendHqPayment[]
@@ -971,6 +978,7 @@ model BackupVendHqSale {
   @@index([invoiceNumber])
   @@index([saleNumber])
   @@index([saleDate])
+  @@index([fusionSynced])
 }
 
 model BackupVendHqLineItem {
@@ -1338,5 +1346,38 @@ model BatchJobItem {
   @@index([batchJobId])
   @@index([status])
   @@index([externalId])
+}
+
+// ─────────────────────────────────────────────────────────────────
+// API ENDPOINT CONFIGURATION
+// Stores all Oracle Fusion and VendHQ API endpoint paths extracted
+// from the Java middleware (integration-Oracle) so they can be
+// inspected and updated from the dashboard without redeploying.
+// ─────────────────────────────────────────────────────────────────
+
+model ApiEndpointConfig {
+  id          String   @id @default(cuid())
+  /// Which external system this endpoint belongs to: FUSION or VENDHQ
+  service     String
+  /// Human-readable name, e.g. "Inventory Items"
+  name        String   @unique
+  /// The URL path, e.g. "/fscmRestApi/resources/11.13.17.11/items"
+  path        String
+  /// HTTP method: GET, POST, PUT, PATCH, DELETE
+  method      String   @default("GET")
+  /// Short description of what the endpoint does
+  description String?
+  /// API version string, e.g. "11.13.17.11" for Fusion, "2.0" for VendHQ
+  apiVersion  String?
+  /// Optional region override; null means endpoint applies to all regions
+  region      String?
+  /// Whether this endpoint configuration is active
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([service])
+  @@index([isActive])
+  @@index([region])
 }
 

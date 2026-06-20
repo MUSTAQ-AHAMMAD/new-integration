@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, type VendHqRegionCredential } from '@/lib/api';
 import { toast } from 'sonner';
-import { Globe, Package, PlayCircle, RefreshCw } from 'lucide-react';
+import { Globe, Package, PlayCircle, RefreshCw, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -13,6 +13,12 @@ function RegionCard({ cred }: { cred: VendHqRegionCredential }) {
     mutationFn: () => api.triggerVendHqBackupByRegion(cred.region),
     onSuccess: (res) => toast.success(`VendHQ backup triggered for ${res.region} (${res.triggered} credential(s))`),
     onError: (e: Error) => toast.error(`Backup failed: ${e.message}`),
+  });
+
+  const oracleSyncMutation = useMutation({
+    mutationFn: () => api.triggerVendHqToOracleSyncByRegion(cred.region),
+    onSuccess: (res) => toast.success(`Oracle sync complete for ${res.region}: ${res.succeeded} succeeded, ${res.failed} failed`),
+    onError: (e: Error) => toast.error(`Oracle sync failed: ${e.message}`),
   });
 
   const itemSyncMutation = useMutation({
@@ -49,6 +55,16 @@ function RegionCard({ cred }: { cred: VendHqRegionCredential }) {
           <Button
             size="sm"
             variant="outline"
+            onClick={() => oracleSyncMutation.mutate()}
+            disabled={oracleSyncMutation.isPending}
+            className="gap-1.5"
+          >
+            <Send className={`h-3.5 w-3.5 ${oracleSyncMutation.isPending ? 'animate-spin' : ''}`} />
+            {oracleSyncMutation.isPending ? 'Pushing to Oracle…' : 'Push to Oracle'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => itemSyncMutation.mutate()}
             disabled={itemSyncMutation.isPending}
             className="gap-1.5"
@@ -64,6 +80,7 @@ function RegionCard({ cred }: { cred: VendHqRegionCredential }) {
 
 export default function RegionIntegrationPage() {
   const [allBackupPending, setAllBackupPending] = useState(false);
+  const [allOracleSyncPending, setAllOracleSyncPending] = useState(false);
   const [allItemSyncPending, setAllItemSyncPending] = useState(false);
 
   const { data: regions, isLoading } = useQuery({
@@ -80,6 +97,18 @@ export default function RegionIntegrationPage() {
       toast.error(e instanceof Error ? e.message : 'Failed to trigger backup');
     } finally {
       setAllBackupPending(false);
+    }
+  };
+
+  const handleTriggerAllOracleSync = async () => {
+    setAllOracleSyncPending(true);
+    try {
+      const result = await api.triggerVendHqToOracleSyncAll();
+      toast.success(`Oracle sync complete: ${result.succeeded} succeeded, ${result.failed} failed`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to trigger Oracle sync');
+    } finally {
+      setAllOracleSyncPending(false);
     }
   };
 
@@ -101,7 +130,7 @@ export default function RegionIntegrationPage() {
         <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
         <div>
           <h1 className="text-xl font-bold text-slate-900">Region Integration</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Trigger VendHQ sales backup and item sync for individual regions or all regions at once.</p>
+          <p className="mt-0.5 text-sm text-slate-500">Trigger VendHQ sales backup, Oracle Fusion sync, and item sync for individual regions or all regions at once.</p>
         </div>
       </div>
 
@@ -123,6 +152,14 @@ export default function RegionIntegrationPage() {
             >
               <RefreshCw className={`h-4 w-4 ${allBackupPending ? 'animate-spin' : ''}`} />
               {allBackupPending ? 'Running…' : 'Run All Sales Backups'}
+            </Button>
+            <Button
+              onClick={handleTriggerAllOracleSync}
+              disabled={allOracleSyncPending}
+              className="gap-2"
+            >
+              <Send className={`h-4 w-4 ${allOracleSyncPending ? 'animate-spin' : ''}`} />
+              {allOracleSyncPending ? 'Pushing…' : 'Push All to Oracle'}
             </Button>
             <Button
               variant="outline"

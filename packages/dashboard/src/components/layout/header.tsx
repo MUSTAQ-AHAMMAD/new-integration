@@ -3,16 +3,33 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { api, authStorage } from '@/lib/api';
-import { Bell, LogOut, RefreshCw, Zap } from 'lucide-react';
+import { useRegion } from '@/providers/region-provider';
+import { Bell, ChevronDown, Globe, LogOut, RefreshCw, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNode }) {
   const qc = useQueryClient();
   const router = useRouter();
+  const { selectedRegion, setSelectedRegion } = useRegion();
+
   const { data: overview } = useQuery({
-    queryKey: ['dashboard-overview'],
-    queryFn: api.getOverview,
+    queryKey: ['dashboard-overview', selectedRegion],
+    queryFn: () => api.getOverview(selectedRegion ?? undefined),
     refetchInterval: 30000,
+  });
+
+  const { data: regions } = useQuery({
+    queryKey: ['vendhq-regions'],
+    queryFn: api.listVendHqRegions,
+    staleTime: 5 * 60 * 1000,
   });
 
   const handleLogout = () => {
@@ -42,6 +59,52 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Country / Region switcher */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline max-w-[100px] truncate">
+                {selectedRegion ?? 'All Regions'}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuLabel>Location</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => {
+                setSelectedRegion(null);
+                void qc.invalidateQueries({ queryKey: ['dashboard-overview', selectedRegion] });
+              }}
+              className={!selectedRegion ? 'bg-indigo-50 text-indigo-700 font-semibold' : ''}
+            >
+              All Regions
+            </DropdownMenuItem>
+            {regions?.map((r) => (
+              <DropdownMenuItem
+                key={r.id}
+                onClick={() => {
+                  setSelectedRegion(r.region);
+                  void qc.invalidateQueries({ queryKey: ['dashboard-overview', r.region] });
+                }}
+                className={
+                  selectedRegion === r.region
+                    ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                    : ''
+                }
+              >
+                {r.region}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         {(overview?.unresolvedAlerts ?? 0) > 0 && (
           <div className="relative">
             <button className="flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-200 transition-colors hover:bg-red-100">
