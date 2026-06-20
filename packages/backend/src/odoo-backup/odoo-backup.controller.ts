@@ -36,7 +36,8 @@ export class OdooBackupController {
   @Get('orders')
   @ApiOperation({ summary: 'List recent backed-up Odoo orders' })
   async listOrders(@Query('limit') limit?: string) {
-    const take = Math.min(parseInt(limit ?? '100', 10) || 100, 500);
+    const parsed = parseInt(limit ?? '100', 10);
+    const take = Math.min(isNaN(parsed) ? 100 : parsed, 500);
     return this.prisma.backupOdooOrder.findMany({
       orderBy: { createdAt: 'desc' },
       take,

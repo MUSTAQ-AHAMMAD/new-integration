@@ -161,24 +161,13 @@ export class OdooBackupService {
       rawJson: order as object,
     };
 
-    const existing = await this.prisma.backupOdooOrder.findUnique({
+    const upserted = await this.prisma.backupOdooOrder.upsert({
       where: { orderId: order.id },
+      create: { orderId: order.id, ...orderData },
+      update: orderData,
       select: { id: true },
     });
-
-    let parentId: string;
-    if (existing) {
-      await this.prisma.backupOdooOrder.update({
-        where: { id: existing.id },
-        data: orderData,
-      });
-      parentId = existing.id;
-    } else {
-      const created = await this.prisma.backupOdooOrder.create({
-        data: { orderId: order.id, ...orderData },
-      });
-      parentId = created.id;
-    }
+    const parentId = upserted.id;
 
     // ── Order lines ──────────────────────────────────────────────────────────
     const lines: OdooOrderLine[] = Array.isArray(order.lines)
@@ -187,38 +176,45 @@ export class OdooBackupService {
         ? order.order_line
         : [];
 
-    for (const line of lines) {
-      const productId = resolveId(line.product_id);
-      const productName = resolveName(line.product_id);
-      const lineId = typeof line.id === 'number' ? line.id : null;
+    if (lines.length > 0) {
+      // Pre-fetch all existing lines for this order to avoid N+1 queries
+      const existingLines = await this.prisma.backupOdooOrderLine.findMany({
+        where: { orderId: order.id },
+        select: { id: true, lineId: true },
+      });
+      const existingLineMap = new Map(
+        existingLines
+          .filter((l) => l.lineId != null)
+          .map((l) => [l.lineId as number, l.id]),
+      );
 
-      const existingLine = lineId
-        ? await this.prisma.backupOdooOrderLine.findFirst({
-            where: { orderId: order.id, lineId },
-            select: { id: true },
-          })
-        : null;
+      for (const line of lines) {
+        const productId = resolveId(line.product_id);
+        const productName = resolveName(line.product_id);
+        const lineId = typeof line.id === 'number' ? line.id : null;
 
-      const lineData = {
-        orderId: order.id,
-        lineId,
-        productId,
-        productName,
-        qty: resolveQty(line),
-        priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
-        priceSubtotal: line.price_subtotal != null ? Number(line.price_subtotal) : null,
-        priceSubtotalIncl: line.price_subtotal_incl != null ? Number(line.price_subtotal_incl) : null,
-        discount: line.discount != null ? Number(line.discount) : null,
-        parentOrderId: parentId,
-      };
+        const lineData = {
+          orderId: order.id,
+          lineId,
+          productId,
+          productName,
+          qty: resolveQty(line),
+          priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
+          priceSubtotal: line.price_subtotal != null ? Number(line.price_subtotal) : null,
+          priceSubtotalIncl: line.price_subtotal_incl != null ? Number(line.price_subtotal_incl) : null,
+          discount: line.discount != null ? Number(line.discount) : null,
+          parentOrderId: parentId,
+        };
 
-      if (existingLine) {
-        await this.prisma.backupOdooOrderLine.update({
-          where: { id: existingLine.id },
-          data: lineData,
-        });
-      } else {
-        await this.prisma.backupOdooOrderLine.create({ data: lineData });
+        const existingId = lineId != null ? existingLineMap.get(lineId) : undefined;
+        if (existingId) {
+          await this.prisma.backupOdooOrderLine.update({
+            where: { id: existingId },
+            data: lineData,
+          });
+        } else {
+          await this.prisma.backupOdooOrderLine.create({ data: lineData });
+        }
       }
     }
 
@@ -229,31 +225,38 @@ export class OdooBackupService {
         ? order.payment_ids
         : [];
 
-    for (const pmt of rawPayments) {
-      const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
+    if (rawPayments.length > 0) {
+      // Pre-fetch all existing payments for this order to avoid N+1 queries
+      const existingPayments = await this.prisma.backupOdooOrderPayment.findMany({
+        where: { orderId: order.id },
+        select: { id: true, paymentId: true },
+      });
+      const existingPaymentMap = new Map(
+        existingPayments
+          .filter((p) => p.paymentId != null)
+          .map((p) => [p.paymentId as number, p.id]),
+      );
 
-      const existingPmt = pmtId
-        ? await this.prisma.backupOdooOrderPayment.findFirst({
-            where: { orderId: order.id, paymentId: pmtId },
-            select: { id: true },
-          })
-        : null;
+      for (const pmt of rawPayments) {
+        const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
 
-      const pmtData = {
-        orderId: order.id,
-        paymentId: pmtId,
-        paymentName: typeof pmt.name === 'string' ? pmt.name : null,
-        amount: pmt.amount != null ? Number(pmt.amount) : null,
-        parentOrderId: parentId,
-      };
+        const pmtData = {
+          orderId: order.id,
+          paymentId: pmtId,
+          paymentName: typeof pmt.name === 'string' ? pmt.name : null,
+          amount: pmt.amount != null ? Number(pmt.amount) : null,
+          parentOrderId: parentId,
+        };
 
-      if (existingPmt) {
-        await this.prisma.backupOdooOrderPayment.update({
-          where: { id: existingPmt.id },
-          data: pmtData,
-        });
-      } else {
-        await this.prisma.backupOdooOrderPayment.create({ data: pmtData });
+        const existingId = pmtId != null ? existingPaymentMap.get(pmtId) : undefined;
+        if (existingId) {
+          await this.prisma.backupOdooOrderPayment.update({
+            where: { id: existingId },
+            data: pmtData,
+          });
+        } else {
+          await this.prisma.backupOdooOrderPayment.create({ data: pmtData });
+        }
       }
     }
   }
