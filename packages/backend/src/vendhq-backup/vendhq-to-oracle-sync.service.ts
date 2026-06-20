@@ -266,7 +266,7 @@ export class VendHqToOracleSyncService {
       await this.prisma.saleSyncStatus.updateMany({
         where: {
           saleId: sale.invoiceNumber,
-          outletId: sale.outletId ?? undefined,
+          ...(sale.outletId != null ? { outletId: sale.outletId } : {}),
         },
         data: {
           status: SaleStatus.SYNCED,
