@@ -269,56 +269,102 @@ export class OdooBackupService {
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
-    const apiPath = cred.apiPath?.trim() || DEFAULT_ODOO_ORDERS_API_PATH;
+    const explicitPath = cred.apiPath?.trim() || null;
+    const primaryPath = explicitPath ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const fallbackPath = '/api/sale.order';
 
-    let resp: AxiosResponse<unknown>;
-    try {
-      resp = await axios.get<unknown>(`${baseUrl}${apiPath}`, {
-        headers: { 'x-api-key': cred.apiKey },
-        params: {
-          ...(params.branchId !== undefined && { branch_id: params.branchId }),
-          ...(params.startDate && { start_date: params.startDate }),
-          ...(params.endDate && { end_date: params.endDate }),
-          limit: params.limit ?? 100,
-        },
-        timeout: 30_000,
-      });
-    } catch (err: unknown) {
-      // Convert AxiosError (network failures, 4xx/5xx from Odoo) into a
-      // BadGatewayException so the caller gets a meaningful HTTP error
-      // instead of a generic 500 "Internal server error".
-      if (err instanceof AxiosError) {
-        const status = err.response?.status;
-        const data = err.response?.data;
-        // Try to extract a human-readable message from the Odoo error body.
-        // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
-        // Guard against empty strings by treating them the same as null so the
-        // fallback chain reaches err.message when the body carries no useful text.
-        let odooMessage: string;
-        if (typeof data === 'string' && data) {
-          odooMessage = data;
-        } else if (typeof data === 'object' && data !== null) {
-          const d = data as Record<string, unknown>;
-          const nested = typeof d['error'] === 'object' && d['error'] !== null
-            ? (d['error'] as Record<string, unknown>)
-            : null;
-          odooMessage =
-            (nested && typeof nested['message'] === 'string' && nested['message'] ? nested['message'] : null) ??
-            (typeof d['message'] === 'string' && d['message'] ? d['message'] : null) ??
-            (typeof d['error'] === 'string' && d['error'] ? d['error'] : null) ??
-            err.message;
-        } else {
-          odooMessage = err.message;
+    /**
+     * Attempt a single GET against the given path.
+     * Returns the AxiosResponse on success.
+     * Throws BadGatewayException on non-404 AxiosErrors.
+     * Returns null on 404 so the caller can try an alternative path.
+     */
+    const tryFetch = async (apiPath: string): Promise<AxiosResponse<unknown> | null> => {
+      try {
+        return await axios.get<unknown>(`${baseUrl}${apiPath}`, {
+          headers: { 'x-api-key': cred.apiKey },
+          params: {
+            ...(params.branchId !== undefined && { branch_id: params.branchId }),
+            ...(params.startDate && { start_date: params.startDate }),
+            ...(params.endDate && { end_date: params.endDate }),
+            limit: params.limit ?? 100,
+          },
+          timeout: 30_000,
+        });
+      } catch (err: unknown) {
+        if (err instanceof AxiosError) {
+          const status = err.response?.status;
+          // On 404 without an explicit path, return null so we can auto-discover.
+          if (status === 404 && !explicitPath) {
+            return null;
+          }
+          const data = err.response?.data;
+          // Try to extract a human-readable message from the Odoo error body.
+          // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
+          // Guard against empty strings by treating them the same as null so the
+          // fallback chain reaches err.message when the body carries no useful text.
+          let odooMessage: string;
+          if (typeof data === 'string' && data) {
+            odooMessage = data;
+          } else if (typeof data === 'object' && data !== null) {
+            const d = data as Record<string, unknown>;
+            const nested = typeof d['error'] === 'object' && d['error'] !== null
+              ? (d['error'] as Record<string, unknown>)
+              : null;
+            odooMessage =
+              (nested && typeof nested['message'] === 'string' && nested['message'] ? nested['message'] : null) ??
+              (typeof d['message'] === 'string' && d['message'] ? d['message'] : null) ??
+              (typeof d['error'] === 'string' && d['error'] ? d['error'] : null) ??
+              err.message;
+          } else {
+            odooMessage = err.message;
+          }
+          const hint =
+            status === 404
+              ? ` — endpoint "${apiPath}" not found; update the credential's apiPath to match the server (e.g. /api/sale.order)`
+              : '';
+          throw new BadGatewayException(
+            `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}${hint}`,
+          );
         }
-        const hint =
-          status === 404
-            ? ` — endpoint "${apiPath}" not found; update the credential's apiPath to match the server (e.g. /api/sale.order)`
-            : '';
+        throw err;
+      }
+    };
+
+    let resp = await tryFetch(primaryPath);
+
+    if (resp === null) {
+      // primaryPath returned 404 and no explicit path is configured — try the
+      // sale-order REST endpoint as an automatic fallback.
+      this.logger.warn(
+        `OdooCredential region=${cred.region}: "${primaryPath}" returned 404, ` +
+          `retrying with "${fallbackPath}" (auto-discovery).`,
+      );
+      resp = await tryFetch(fallbackPath) as AxiosResponse<unknown>;
+      if (resp === null) {
+        // Both endpoints returned 404 — surface a clear error.
         throw new BadGatewayException(
-          `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}${hint}`,
+          `Odoo API error for region ${cred.region} (HTTP 404): ` +
+            `neither "${primaryPath}" nor "${fallbackPath}" were found on the server. ` +
+            `Set the credential's apiPath to the correct endpoint.`,
         );
       }
-      throw err;
+
+      // Persist the discovered path so future cron runs skip the discovery step.
+      try {
+        await this.prisma.odooCredential.update({
+          where: { id: cred.id },
+          data: { apiPath: fallbackPath },
+        });
+        this.logger.log(
+          `OdooCredential region=${cred.region}: apiPath auto-set to "${fallbackPath}".`,
+        );
+      } catch (persistErr) {
+        const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+        this.logger.warn(
+          `OdooCredential region=${cred.region}: failed to persist discovered apiPath: ${msg}`,
+        );
+      }
     }
 
     const orders = this.extractOrderList(resp.data);
