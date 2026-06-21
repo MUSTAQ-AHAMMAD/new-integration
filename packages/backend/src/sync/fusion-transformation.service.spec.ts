@@ -38,17 +38,23 @@ function makeOutlet(overrides: Record<string, unknown> = {}) {
     outletId: 'outlet-1',
     region: 'AE',
     currency: 'AED',
-    registers: [
-      {
-        registerName: '',
-        cashAccountId: 201,
-        bankAccountId: 202,
-        cashAccount: 'Cash Account',
-        bankAccount: 'Bank Account',
-      },
-    ],
     ...overrides,
   };
+}
+
+function makeRegisters(overrides: Record<string, unknown> = {}) {
+  return [
+    {
+      registerName: '',
+      cashAccountId: 201,
+      bankAccountId: 202,
+      cashAccount: 'Cash Account',
+      bankAccount: 'Bank Account',
+      outletId: 'outlet-1',
+      region: 'AE',
+      ...overrides,
+    },
+  ];
 }
 
 function makeSalesMeta(overrides: Record<string, unknown> = {}) {
@@ -102,6 +108,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     vendHqOutlet: {
       findFirst: jest.fn(),
     },
+    vendHqRegister: {
+      findMany: jest.fn(),
+    },
     fusionSalesMetadata: {
       findFirst: jest.fn(),
     },
@@ -130,6 +139,7 @@ function setupDefaultMocks(
     makeSale(salePatch),
   );
   mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(makeOutlet());
+  mockPrisma.vendHqRegister.findMany.mockResolvedValue(makeRegisters());
   mockPrisma.fusionSalesMetadata.findFirst.mockResolvedValue(makeSalesMeta());
   mockPrisma.fusionBusinessUnitMap.findFirst.mockResolvedValue(makeBuMap());
   mockPrisma.serviceProviderJournalMeta.findFirst.mockResolvedValue(null);
@@ -419,19 +429,15 @@ describe('FusionTransformationService', () => {
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false),
       );
-      mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(
-        makeOutlet({
-          registers: [
-            {
-              registerName: '',
-              cashAccountId: null,
-              bankAccountId: null,
-              cashAccount: '',
-              bankAccount: '',
-            },
-          ],
-        }),
-      );
+      mockPrisma.vendHqRegister.findMany.mockResolvedValue([
+        makeRegisters({
+          registerName: '',
+          cashAccountId: null,
+          bankAccountId: null,
+          cashAccount: '',
+          bankAccount: '',
+        })[0],
+      ]);
 
       await expect(service.buildSalePayloads('sale-1', 'AE')).rejects.toThrow(
         'Bank/cash account not configured',
@@ -449,19 +455,15 @@ describe('FusionTransformationService', () => {
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false, { bankAccountId: 202 }),
       );
-      mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(
-        makeOutlet({
-          registers: [
-            {
-              registerName: '',
-              cashAccountId: 201,
-              bankAccountId: 202,
-              cashAccount: 'Cash Acc',
-              bankAccount: 'Bank Acc',
-            },
-          ],
-        }),
-      );
+      mockPrisma.vendHqRegister.findMany.mockResolvedValue([
+        makeRegisters({
+          registerName: '',
+          cashAccountId: 201,
+          bankAccountId: 202,
+          cashAccount: 'Cash Acc',
+          bankAccount: 'Bank Acc',
+        })[0],
+      ]);
 
       const result = await service.buildSalePayloads('sale-1', 'AE');
 
@@ -484,19 +486,17 @@ describe('FusionTransformationService', () => {
         }),
       );
       mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(
-        makeOutlet({
-          currency: 'OMR',
-          registers: [
-            {
-              registerName: '',
-              cashAccountId: 201,
-              bankAccountId: 202,
-              cashAccount: 'Cash',
-              bankAccount: 'Bank',
-            },
-          ],
-        }),
+        makeOutlet({ currency: 'OMR' }),
       );
+      mockPrisma.vendHqRegister.findMany.mockResolvedValue([
+        makeRegisters({
+          registerName: '',
+          cashAccountId: 201,
+          bankAccountId: 202,
+          cashAccount: 'Cash',
+          bankAccount: 'Bank',
+        })[0],
+      ]);
 
       const result = await service.buildSalePayloads('sale-1', 'OM');
 

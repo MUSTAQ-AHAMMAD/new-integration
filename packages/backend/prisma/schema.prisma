@@ -509,8 +509,8 @@ model FusionBusinessUnitMap {
 
 model FusionReceiptMethod {
   id                  String   @id @default(cuid())
-  receiptMethodId     Int
-  receiptMethodName   String   @unique
+  receiptMethodId     BigInt
+  receiptMethodName   String
   receiptIsCash       Boolean  @default(false)
   receiptBankCharge   Float    @default(0)
   receiptMethodTax    Float    @default(0)
@@ -518,6 +518,7 @@ model FusionReceiptMethod {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  @@unique([receiptMethodName, region])
   @@index([region])
   @@index([receiptMethodName])
 }
@@ -771,7 +772,7 @@ model FusionStandardReceipt {
   glDate                DateTime?
   exchangeDate          DateTime?
   exchangeRateType      String?
-  receiptMethodId       Int?
+  receiptMethodId       BigInt?
   receiptNumber         String?
   remittanceBankAccId   String?
   depositDate           DateTime?

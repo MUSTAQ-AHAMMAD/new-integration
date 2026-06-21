@@ -73,11 +73,9 @@ export class FusionTransformationService {
       outletId
         ? this.prisma.vendHqOutlet.findFirst({
             where: { outletId, region },
-            include: { registers: true },
           })
         : this.prisma.vendHqOutlet.findFirst({
             where: { outletName: sale.outletName ?? undefined, region },
-            include: { registers: true },
           }),
       this.prisma.fusionSalesMetadata.findFirst({
         where: { customerType, region },
@@ -92,9 +90,17 @@ export class FusionTransformationService {
       );
 
     // ── 3. Resolve register / bank account ──────────────────
+    // VendHqRegister records are imported from Oracle and stored with
+    // outletId + region. Query directly to avoid reliance on the outletPk
+    // relation FK which may not be populated.
+    const resolvedOutletId = outletId ?? outlet?.outletId;
+    const registers = resolvedOutletId
+      ? await this.prisma.vendHqRegister.findMany({
+          where: { outletId: resolvedOutletId, region },
+        })
+      : [];
     const register =
-      outlet?.registers.find((r) => r.registerName === registerName) ??
-      outlet?.registers[0];
+      registers.find((r) => r.registerName === registerName) ?? registers[0];
 
     // ── 4. Build InvoiceHeader ───────────────────────────────
     const saleDate =
@@ -179,7 +185,7 @@ export class FusionTransformationService {
         standardReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: receiptMethod.receiptMethodId,
+          receiptMethodId: Number(receiptMethod.receiptMethodId),
           receiptNumber: `${pmtMethod}-${txnNumber}`,
           remittanceBankAccountId: bankAccountId!,
           accountValue: invoiceHeader.billToAccountNumber,
@@ -201,7 +207,7 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: receiptMethod.receiptMethodId,
+          receiptMethodId: Number(receiptMethod.receiptMethodId),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.bankAccount ?? ''),
@@ -214,7 +220,7 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: receiptMethod.receiptMethodId,
+          receiptMethodId: Number(receiptMethod.receiptMethodId),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.cashAccount ?? ''),

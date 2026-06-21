@@ -155,7 +155,7 @@ export class VendHqToOracleSyncService {
           currencyCode: sr.currencyCode,
           receiptDate: sr.saleDate,
           glDate: sr.saleDate,
-          receiptMethodId: sr.receiptMethodId,
+          receiptMethodId: BigInt(sr.receiptMethodId),
           receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
           remittanceBankAccId: String(sr.remittanceBankAccountId),
           orgId: sr.orgId,
