@@ -20,7 +20,7 @@ import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
 import {
   DEFAULT_ODOO_TIMEZONE,
-  extractBranchCode,
+  normalizeOrderForIngestion,
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
@@ -158,26 +158,17 @@ export class IbqBackupService {
         let ingestSkipped = 0;
         for (const order of result.orders) {
           try {
-            const branchCode = extractBranchCode(order.branch_id);
-            if (!branchCode) {
+            // IBQ instances don't carry per-order timezone; always use the
+            // region default (Asia/Dubai) as the timezone override.
+            const payload = normalizeOrderForIngestion(
+              order,
+              DEFAULT_ODOO_TIMEZONE,
+            );
+            if (!payload) {
               ingestSkipped++;
               continue;
             }
-
-            const amountTotal = Number(order.amount_total ?? 0);
-            const state = typeof order.state === 'string' ? order.state : 'draft';
-
-            await this.orderSyncService.ingestOrder({
-              odooOrderId: String(order.id),
-              odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
-              branchCode,
-              orderDate: order.date_order ? new Date(order.date_order) : new Date(),
-              originalTimezone: DEFAULT_ODOO_TIMEZONE,
-              totalAmount: amountTotal,
-              isPaid: ['paid', 'done', 'posted'].includes(state),
-              isCancelled: state === 'cancel',
-              isRefund: amountTotal < 0,
-            });
+            await this.orderSyncService.ingestOrder(payload);
             ingested++;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);

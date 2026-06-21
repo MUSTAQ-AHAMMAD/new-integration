@@ -21,10 +21,7 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
-import {
-  DEFAULT_ODOO_TIMEZONE,
-  extractBranchCode,
-} from '../common/odoo-utils';
+import { normalizeOrderForIngestion } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -97,30 +94,12 @@ export class OdooBackupService {
       let ingestSkipped = 0;
       for (const order of result.orders) {
         try {
-          const branchCode = extractBranchCode(order.branch_id);
-          if (!branchCode) {
+          const payload = normalizeOrderForIngestion(order);
+          if (!payload) {
             ingestSkipped++;
             continue;
           }
-
-          const amountTotal = Number(order.amount_total ?? 0);
-          const state = typeof order.state === 'string' ? order.state : 'draft';
-          const orderTimezone =
-            typeof order.timezone === 'string' && order.timezone
-              ? order.timezone
-              : DEFAULT_ODOO_TIMEZONE;
-
-          await this.orderSyncService.ingestOrder({
-            odooOrderId: String(order.id),
-            odooOrderNumber: String(order.name ?? order.id),
-            branchCode,
-            orderDate: order.date_order ? new Date(order.date_order) : new Date(),
-            originalTimezone: orderTimezone,
-            totalAmount: amountTotal,
-            isPaid: ['paid', 'done', 'posted'].includes(state),
-            isCancelled: state === 'cancel',
-            isRefund: amountTotal < 0,
-          });
+          await this.orderSyncService.ingestOrder(payload);
           ingested++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
