@@ -319,7 +319,7 @@ export class OdooClient {
           return this.normalizeItems<T>(resultObj['data']);
         }
         if (Array.isArray(resultObj['orders'])) {
-          return this.normalizeItems<T>(resultObj['orders'] as unknown[]);
+          return this.normalizeItems<T>(resultObj['orders']);
         }
       }
 

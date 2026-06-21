@@ -432,9 +432,9 @@ export class OdooBackupService {
       if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
       if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
-      // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
-      // Check the nested object case before the top-level `data`/`result` array
-      // cases so the most-specific envelope pattern wins.
+      // or { result: { data: [...], count: N } } or { result: { orders: [...] } }.
+      // This nested-object case is checked before the direct-array fallbacks below
+      // so the more specific envelope pattern takes precedence.
       if (typeof p['result'] === 'object' && p['result'] !== null && !Array.isArray(p['result'])) {
         const inner = p['result'] as Record<string, unknown>;
         if (Array.isArray(inner['records'])) return this.normalizeOrderItems(inner['records']);
