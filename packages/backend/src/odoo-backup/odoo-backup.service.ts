@@ -431,9 +431,10 @@ export class OdooBackupService {
       // IBQ unified API: { results: [{ order: { order_id, ... } }] }
       if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
       if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
-      if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
+      // Check the nested object case before the top-level `data`/`result` array
+      // cases so the most-specific envelope pattern wins.
       if (typeof p['result'] === 'object' && p['result'] !== null && !Array.isArray(p['result'])) {
         const inner = p['result'] as Record<string, unknown>;
         if (Array.isArray(inner['records'])) return this.normalizeOrderItems(inner['records']);
@@ -441,6 +442,7 @@ export class OdooBackupService {
         if (Array.isArray(inner['orders'])) return this.normalizeOrderItems(inner['orders']);
       }
       if (Array.isArray(p['result'])) return this.normalizeOrderItems(p['result']);
+      if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
     }
     return [];
   }

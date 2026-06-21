@@ -308,15 +308,18 @@ export class OdooClient {
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
       const result = payload.result;
-      if (this.isRecord(result) && !Array.isArray(result)) {
-        if (Array.isArray(result.records)) {
-          return this.normalizeItems<T>(result.records);
+      // Use explicit typeof check (not isRecord) because isRecord() returns true
+      // for arrays too, and we need to distinguish plain objects from direct arrays.
+      if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+        const resultObj = result as Record<string, unknown>;
+        if (Array.isArray(resultObj['records'])) {
+          return this.normalizeItems<T>(resultObj['records']);
         }
-        if (Array.isArray(result.data)) {
-          return this.normalizeItems<T>(result.data);
+        if (Array.isArray(resultObj['data'])) {
+          return this.normalizeItems<T>(resultObj['data']);
         }
-        if (Array.isArray(result.orders)) {
-          return this.normalizeItems<T>(result.orders as unknown[]);
+        if (Array.isArray(resultObj['orders'])) {
+          return this.normalizeItems<T>(resultObj['orders'] as unknown[]);
         }
       }
 
