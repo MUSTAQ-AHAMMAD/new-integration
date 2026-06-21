@@ -1,23 +1,12 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { extractBranchCode } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
-
-/**
- * Extract the branch code string from an Odoo/IBQ Many2one branch_id field.
- * Returns null when no branch information is available.
- */
-function extractBranchCode(
-  branchRaw: number | [number, string] | null | undefined,
-): string | null {
-  if (branchRaw == null) return null;
-  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
-  return String(branchRaw);
-}
 
 @ApiTags('sync')
 @Controller('sync')

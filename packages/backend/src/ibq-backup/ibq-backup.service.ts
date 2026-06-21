@@ -18,6 +18,10 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
+import {
+  DEFAULT_ODOO_TIMEZONE,
+  extractBranchCode,
+} from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -99,15 +103,6 @@ function resolveName(field: number | [number, string] | null | undefined): strin
   return null;
 }
 
-/** Extract a branch-code string from an Odoo Many2one branch_id field. */
-function extractBranchCode(
-  branchRaw: number | [number, string] | null | undefined,
-): string | null {
-  if (branchRaw == null) return null;
-  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
-  return String(branchRaw);
-}
-
 /** Flatten an IBQ API response envelope into a plain order array */
 function extractOrders(raw: IbqApiResponse): IbqOrderRaw[] {
   if (Array.isArray(raw)) return raw as IbqOrderRaw[];
@@ -177,7 +172,7 @@ export class IbqBackupService {
               odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
               branchCode,
               orderDate: order.date_order ? new Date(order.date_order) : new Date(),
-              originalTimezone: 'Asia/Dubai',
+              originalTimezone: DEFAULT_ODOO_TIMEZONE,
               totalAmount: amountTotal,
               isPaid: ['paid', 'done', 'posted'].includes(state),
               isCancelled: state === 'cancel',

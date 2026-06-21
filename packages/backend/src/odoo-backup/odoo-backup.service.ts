@@ -21,19 +21,14 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
+import {
+  DEFAULT_ODOO_TIMEZONE,
+  extractBranchCode,
+} from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
 const DEFAULT_SOURCE = 'default';
-
-/** Extract a branch-code string from an Odoo Many2one branch_id field. */
-function extractBranchCode(
-  branchRaw: number | [number, string] | null | undefined,
-): string | null {
-  if (branchRaw == null) return null;
-  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
-  return String(branchRaw);
-}
 
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
 function resolveId(
@@ -113,7 +108,7 @@ export class OdooBackupService {
           const orderTimezone =
             typeof order.timezone === 'string' && order.timezone
               ? order.timezone
-              : 'Asia/Dubai';
+              : DEFAULT_ODOO_TIMEZONE;
 
           await this.orderSyncService.ingestOrder({
             odooOrderId: String(order.id),
