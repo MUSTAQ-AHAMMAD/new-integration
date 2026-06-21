@@ -18,7 +18,7 @@
  */
 import { BadGatewayException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import axios, { AxiosError } from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 import {
   OdooClient,
   OdooOrder,
@@ -188,7 +188,7 @@ export class OdooBackupService {
     const rawBase = cred.baseUrl.replace(/\/$/, '');
     const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
 
-    let resp: import('axios').AxiosResponse<unknown>;
+    let resp: AxiosResponse<unknown>;
     try {
       resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
         headers: { 'x-api-key': cred.apiKey },
@@ -206,10 +206,13 @@ export class OdooBackupService {
       // instead of a generic 500 "Internal server error".
       if (err instanceof AxiosError) {
         const status = err.response?.status;
+        const data = err.response?.data;
         const odooMessage =
-          typeof err.response?.data === 'object' && err.response.data !== null
-            ? JSON.stringify(err.response.data)
-            : err.message;
+          typeof data === 'string' && data
+            ? data
+            : typeof data === 'object' && data !== null
+              ? JSON.stringify(data)
+              : err.message;
         throw new BadGatewayException(
           `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}`,
         );
