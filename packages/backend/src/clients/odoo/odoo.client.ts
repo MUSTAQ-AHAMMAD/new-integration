@@ -10,6 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
+import { toApiDatetime } from '../../common/odoo-utils';
 
 export interface OdooOrderLine {
   id?: number;
@@ -143,8 +144,8 @@ export class OdooClient {
               ...(params.branchId !== undefined && {
                 branch_id: params.branchId,
               }),
-              ...(params.startDate && { start_date: params.startDate }),
-              ...(params.endDate && { end_date: params.endDate }),
+              ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
+              ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
               limit: params.limit ?? 100,
             },
           });

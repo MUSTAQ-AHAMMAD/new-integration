@@ -21,6 +21,7 @@ import axios from 'axios';
 import {
   DEFAULT_ODOO_TIMEZONE,
   normalizeOrderForIngestion,
+  toApiDatetime,
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
@@ -80,11 +81,11 @@ const IBQ_INTEG_MODE = 'IBQ_BACKUP';
 const STATUS_ENABLED = 'ENABLED';
 const STATUS_DISABLED = 'DISABLED';
 
-/** Format a Date as the MM/DD/YYYY HH:MM:SS string the IBQ API expects */
+/** Format a Date as the YYYY-MM-DD HH:MM:SS string the IBQ API expects */
 function toIbqDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ` +
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   );
 }
@@ -233,12 +234,12 @@ export class IbqBackupService {
       params['branch_id'] = overrides.branchId;
     }
     if (overrides?.startDate) {
-      params['start_date'] = overrides.startDate;
+      params['start_date'] = toApiDatetime(overrides.startDate);
     } else if (cred.lastSyncAt) {
       params['start_date'] = toIbqDate(cred.lastSyncAt);
     }
     if (overrides?.endDate) {
-      params['end_date'] = overrides.endDate;
+      params['end_date'] = toApiDatetime(overrides.endDate, { end: true });
     }
 
     const baseUrl = cred.baseUrl.replace(/\/$/, '');
