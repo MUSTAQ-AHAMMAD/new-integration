@@ -93,13 +93,18 @@ function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
  * camelCase by including them verbatim.
  *
  * Example: "RECEIPT_METHOD_ID" → "receiptMethodId"
+ *
+ * Note: Prisma field names always start with a lowercase letter (camelCase),
+ * so the `replace(/^_/, '')` guard exists only as a safety measure.
  */
 function buildKeyNormalizer(
   fieldTypes: Map<string, string>,
 ): (key: string) => string {
   const upperToLower = new Map<string, string>();
   for (const camel of fieldTypes.keys()) {
-    // Derive the UPPER_SNAKE_CASE form so we can recognise external CSVs.
+    // Derive the UPPER_SNAKE_CASE form so we can recognize external CSVs.
+    // Works correctly for all Prisma camelCase field names that start with
+    // a lowercase letter (e.g. "receiptMethodId" → "RECEIPT_METHOD_ID").
     const upper = camel
       .replace(/([A-Z])/g, '_$1')
       .toUpperCase()
