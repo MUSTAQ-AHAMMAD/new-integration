@@ -202,7 +202,7 @@ export class OdooBackupService {
             if (!payload) {
               this.logger.warn(
                 `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
-                  `normalizeOrderForIngestion returned null (missing branch_id or date_order)`,
+                  `normalizeOrderForIngestion returned null (missing Odoo fields branch_id or date_order)`,
               );
               ingestSkipped++;
               continue;
