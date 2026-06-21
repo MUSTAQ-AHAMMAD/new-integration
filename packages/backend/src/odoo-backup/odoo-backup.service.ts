@@ -25,7 +25,7 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
-import { normalizeOrderForIngestion } from '../common/odoo-utils';
+import { normalizeOrderForIngestion, toApiDatetime } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -286,8 +286,8 @@ export class OdooBackupService {
           headers: { 'x-api-key': cred.apiKey },
           params: {
             ...(params.branchId !== undefined && { branch_id: params.branchId }),
-            ...(params.startDate && { start_date: params.startDate }),
-            ...(params.endDate && { end_date: params.endDate }),
+            ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
+            ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
             limit: params.limit ?? 100,
           },
           timeout: 30_000,
@@ -396,14 +396,53 @@ export class OdooBackupService {
 
   /** Flatten various Odoo REST API response envelopes to a plain order array. */
   private extractOrderList(payload: unknown): OdooOrder[] {
-    if (Array.isArray(payload)) return payload as OdooOrder[];
+    if (Array.isArray(payload)) return this.normalizeOrderItems(payload);
     if (typeof payload === 'object' && payload !== null) {
       const p = payload as Record<string, unknown>;
-      if (Array.isArray(p['records'])) return p['records'] as OdooOrder[];
-      if (Array.isArray(p['result'])) return p['result'] as OdooOrder[];
-      if (Array.isArray(p['data'])) return p['data'] as OdooOrder[];
+      // IBQ unified API: { results: [{ order: { order_id, ... } }] }
+      if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
+      if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
+      if (Array.isArray(p['result'])) return this.normalizeOrderItems(p['result']);
+      if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
     }
     return [];
+  }
+
+  /**
+   * Normalize a raw array of order items from any Odoo/IBQ API variant into
+   * the OdooOrder shape consumed by the rest of the service.
+   *
+   * Handles two envelope patterns:
+   *  1. Standard Odoo REST: each element IS the order object.
+   *  2. IBQ unified API: each element is `{ order: { order_id, amount_paid, ... } }`.
+   *     In this case the inner `order` object is unwrapped and field aliases are
+   *     normalised (`order_id` → `id`, `amount_paid` → `amount_total`).
+   */
+  private normalizeOrderItems(items: unknown[]): OdooOrder[] {
+    return items.map((item) => {
+      if (typeof item !== 'object' || item === null) return item as OdooOrder;
+      const raw = item as Record<string, unknown>;
+
+      // IBQ unified API wraps each order in a { order: { ... } } envelope.
+      const inner =
+        typeof raw['order'] === 'object' && raw['order'] !== null
+          ? (raw['order'] as Record<string, unknown>)
+          : raw;
+
+      // Normalise field name aliases used by IBQ's unified endpoint.
+      const normalised: Record<string, unknown> = { ...inner };
+      // `order_id` is the primary key in IBQ responses; map it to `id` so
+      // upsertOrder and logging code that references `order.id` works correctly.
+      if (normalised['id'] == null && normalised['order_id'] != null) {
+        normalised['id'] = normalised['order_id'];
+      }
+      // `amount_paid` is the IBQ equivalent of Odoo's `amount_total`.
+      if (normalised['amount_total'] == null && normalised['amount_paid'] != null) {
+        normalised['amount_total'] = normalised['amount_paid'];
+      }
+
+      return normalised as unknown as OdooOrder;
+    });
   }
 
   // ---------------------------------------------------------------------------

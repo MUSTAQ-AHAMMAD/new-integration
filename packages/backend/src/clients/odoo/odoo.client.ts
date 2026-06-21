@@ -263,28 +263,62 @@ export class OdooClient {
 
   private extractList<T>(payload: unknown): T[] {
     if (Array.isArray(payload)) {
-      return payload as T[];
+      return this.normalizeItems<T>(payload);
     }
 
     if (this.isRecord(payload)) {
+      // IBQ unified API: { results: [{ order: { order_id, ... } }] }
+      const results = payload.results;
+      if (Array.isArray(results)) {
+        return this.normalizeItems<T>(results);
+      }
+
       // Odoo 16+ REST API wraps list results in a `records` key
       const records = payload.records;
       if (Array.isArray(records)) {
-        return records as T[];
+        return this.normalizeItems<T>(records);
       }
 
       const result = payload.result;
       if (Array.isArray(result)) {
-        return result as T[];
+        return this.normalizeItems<T>(result);
       }
 
       const data = payload.data;
       if (Array.isArray(data)) {
-        return data as T[];
+        return this.normalizeItems<T>(data);
       }
     }
 
     return [];
+  }
+
+  /**
+   * Normalise raw list items from any Odoo/IBQ API variant.
+   * IBQ unified API wraps each order in `{ order: { order_id, amount_paid, ... } }`.
+   * This unwraps that envelope and maps field aliases so the rest of the code
+   * can use standard OdooOrder field names (`id`, `amount_total`).
+   */
+  private normalizeItems<T>(items: unknown[]): T[] {
+    return items.map((item) => {
+      if (typeof item !== 'object' || item === null) return item as T;
+      const raw = item as Record<string, unknown>;
+
+      const inner =
+        typeof raw['order'] === 'object' && raw['order'] !== null
+          ? (raw['order'] as Record<string, unknown>)
+          : raw;
+
+      const normalised: Record<string, unknown> = { ...inner };
+      if (normalised['id'] == null && normalised['order_id'] != null) {
+        normalised['id'] = normalised['order_id'];
+      }
+      if (normalised['amount_total'] == null && normalised['amount_paid'] != null) {
+        normalised['amount_total'] = normalised['amount_paid'];
+      }
+
+      return normalised as unknown as T;
+    });
   }
 
   private extractItem<T>(payload: unknown): T {
