@@ -276,8 +276,9 @@ export class OdooBackupService {
     /**
      * Attempt a single GET against the given path.
      * Returns the AxiosResponse on success.
-     * Throws BadGatewayException on non-404 AxiosErrors.
-     * Returns null on 404 so the caller can try an alternative path.
+     * Returns null on 404 only when no explicit path is configured (auto-discovery
+     * mode); otherwise throws BadGatewayException for all errors including 404.
+     * Throws BadGatewayException for non-404 AxiosErrors in all cases.
      */
     const tryFetch = async (apiPath: string): Promise<AxiosResponse<unknown> | null> => {
       try {
@@ -340,8 +341,8 @@ export class OdooBackupService {
         `OdooCredential region=${cred.region}: "${primaryPath}" returned 404, ` +
           `retrying with "${fallbackPath}" (auto-discovery).`,
       );
-      resp = await tryFetch(fallbackPath) as AxiosResponse<unknown>;
-      if (resp === null) {
+      const fallbackResp = await tryFetch(fallbackPath);
+      if (fallbackResp === null) {
         // Both endpoints returned 404 — surface a clear error.
         throw new BadGatewayException(
           `Odoo API error for region ${cred.region} (HTTP 404): ` +
@@ -349,6 +350,7 @@ export class OdooBackupService {
             `Set the credential's apiPath to the correct endpoint.`,
         );
       }
+      resp = fallbackResp;
 
       // Persist the discovered path so future cron runs skip the discovery step.
       try {
