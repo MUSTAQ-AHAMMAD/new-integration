@@ -193,12 +193,6 @@ export class OdooBackupService {
           limit: 500,
         });
 
-        // Advance the per-credential watermark on success.
-        await this.prisma.odooCredential.update({
-          where: { id: cred.id },
-          data: { lastSyncAt: runAt },
-        });
-
         // Ingest backed-up orders into the OrderSyncQueue.
         let ingested = 0;
         let ingestSkipped = 0;
@@ -206,6 +200,10 @@ export class OdooBackupService {
           try {
             const payload = normalizeOrderForIngestion(order);
             if (!payload) {
+              this.logger.warn(
+                `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
+                  `normalizeOrderForIngestion returned null (missing branch_id or date_order)`,
+              );
               ingestSkipped++;
               continue;
             }
@@ -219,6 +217,14 @@ export class OdooBackupService {
             ingestSkipped++;
           }
         }
+
+        // Advance the per-credential watermark after the ingestion loop so that
+        // any backup failure (backupOrdersForCredential throwing) prevents the
+        // watermark from advancing and the orders are re-fetched on the next run.
+        await this.prisma.odooCredential.update({
+          where: { id: cred.id },
+          data: { lastSyncAt: runAt },
+        });
 
         this.logger.log(
           `Odoo credential backup+ingest done for region=${cred.region}: ` +
