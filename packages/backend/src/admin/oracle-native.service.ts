@@ -54,6 +54,19 @@ function optNum(row: Record<string, unknown>, name: string): number | null {
   return s.trim() !== '' ? Number(v) : null;
 }
 
+function bigint(row: Record<string, unknown>, name: string): bigint {
+  const v = col(row, name);
+  if (v == null) return 0n;
+  try {
+    // Strip any decimal part (Oracle may return numeric types as floats).
+    // Falls back to 0n so a single bad row does not abort the whole import;
+    // the record will be skipped by Prisma's unique-constraint check.
+    return BigInt(String(v).split('.')[0]);
+  } catch {
+    return 0n;
+  }
+}
+
 const MAPPINGS: OracleTableMapping[] = [
   // OUTLETS_INTEGRATION_CONFIG → OutletIntegrationConfig
   {
@@ -87,14 +100,19 @@ const MAPPINGS: OracleTableMapping[] = [
     oracleTable: 'FUSION_RECEIPT_METHOD',
     prismaDelegate: (p) => p.fusionReceiptMethod,
     mapRow: (r) => ({
-      receiptMethodId: num(r, 'RECEIPT_METHOD_ID'),
+      receiptMethodId: bigint(r, 'RECEIPT_METHOD_ID'),
       receiptMethodName: str(r, 'RECEIPT_METHOD_NAME'),
       receiptIsCash: bool(r, 'RECEIPT_IS_CASH'),
       receiptBankCharge: num(r, 'RECEIPT_BANK_CHARGE'),
       receiptMethodTax: num(r, 'RECEIPT_METHOD_TAX'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({ receiptMethodName: str(r, 'RECEIPT_METHOD_NAME') }),
+    upsertWhere: (r) => ({
+      receiptMethodName_region: {
+        receiptMethodName: str(r, 'RECEIPT_METHOD_NAME'),
+        region: str(r, 'REGION'),
+      },
+    }),
   },
   // FUSION_SALES_METADATA → FusionSalesMetadata
   {

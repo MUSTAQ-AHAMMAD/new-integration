@@ -126,10 +126,16 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const s = String(value);
   switch (prismaType) {
-    case 'Int':
-    case 'BigInt': {
+    case 'Int': {
       const n = parseInt(s, 10);
       return isNaN(n) ? null : n;
+    }
+    case 'BigInt': {
+      try {
+        return BigInt(s.split('.')[0]);
+      } catch {
+        return null;
+      }
     }
     case 'Float':
     case 'Decimal': {
