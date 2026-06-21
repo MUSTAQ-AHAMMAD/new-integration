@@ -343,11 +343,13 @@ export class OdooBackupService {
       );
       const fallbackResp = await tryFetch(fallbackPath);
       if (fallbackResp === null) {
-        // Both endpoints returned 404 — surface a clear error.
+        // Both endpoints returned 404 while in auto-discovery mode (no explicit
+        // apiPath was set on this credential). Surface a clear error so the operator
+        // knows they must configure apiPath explicitly.
         throw new BadGatewayException(
           `Odoo API error for region ${cred.region} (HTTP 404): ` +
             `neither "${primaryPath}" nor "${fallbackPath}" were found on the server. ` +
-            `Set the credential's apiPath to the correct endpoint.`,
+            `Set the credential's apiPath to the correct endpoint to resolve this.`,
         );
       }
       resp = fallbackResp;
@@ -363,8 +365,11 @@ export class OdooBackupService {
         );
       } catch (persistErr) {
         const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
-        this.logger.warn(
-          `OdooCredential region=${cred.region}: failed to persist discovered apiPath: ${msg}`,
+        // Log at error level: if the persist fails, every subsequent cron run will
+        // hit the discovery round-trip again instead of using the cached path.
+        this.logger.error(
+          `OdooCredential region=${cred.region}: failed to persist discovered apiPath "${fallbackPath}" — ` +
+            `future runs will repeat auto-discovery until this is resolved: ${msg}`,
         );
       }
     }
