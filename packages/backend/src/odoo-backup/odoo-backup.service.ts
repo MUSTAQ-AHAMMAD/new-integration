@@ -25,7 +25,7 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
-import { normalizeOrderForIngestion } from '../common/odoo-utils';
+import { normalizeOrderForIngestion, toApiDatetime } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -286,8 +286,8 @@ export class OdooBackupService {
           headers: { 'x-api-key': cred.apiKey },
           params: {
             ...(params.branchId !== undefined && { branch_id: params.branchId }),
-            ...(params.startDate && { start_date: params.startDate }),
-            ...(params.endDate && { end_date: params.endDate }),
+            ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
+            ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
             limit: params.limit ?? 100,
           },
           timeout: 30_000,
