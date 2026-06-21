@@ -10,13 +10,16 @@
  *  3. Upserts each order into BackupIbqOrder / BackupIbqOrderLine /
  *     BackupIbqOrderPayment.
  *  4. Advances the lastSyncAt watermark on the credential.
+ *  5. Ingests each fetched order into OrderSyncQueue so the downstream
+ *     BullMQ→Oracle pipeline has real data to process.
  *
  * The IBQ API uses x-api-key header authentication (Odoo REST API convention).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncService } from '../sync/order-sync.service';
 
 // ---------------------------------------------------------------------------
 // Raw IBQ / Odoo POS API response shapes
@@ -96,6 +99,15 @@ function resolveName(field: number | [number, string] | null | undefined): strin
   return null;
 }
 
+/** Extract a branch-code string from an Odoo Many2one branch_id field. */
+function extractBranchCode(
+  branchRaw: number | [number, string] | null | undefined,
+): string | null {
+  if (branchRaw == null) return null;
+  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
+  return String(branchRaw);
+}
+
 /** Flatten an IBQ API response envelope into a plain order array */
 function extractOrders(raw: IbqApiResponse): IbqOrderRaw[] {
   if (Array.isArray(raw)) return raw as IbqOrderRaw[];
@@ -114,10 +126,15 @@ function extractOrders(raw: IbqApiResponse): IbqOrderRaw[] {
 export class IbqBackupService {
   private readonly logger = new Logger(IbqBackupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => OrderSyncService))
+    private readonly orderSyncService: OrderSyncService,
+  ) {}
 
   /**
-   * Runs every 15 minutes to back up IBQ POS orders.
+   * Runs every 15 minutes to back up IBQ POS orders and ingest them into
+   * OrderSyncQueue so the downstream BullMQ→Oracle pipeline has real data.
    * Can also be triggered manually via IbqBackupController.
    */
   @Cron('0 */15 * * * *')
@@ -140,8 +157,44 @@ export class IbqBackupService {
         }
 
         const result = await this.backupRegion(cred);
+
+        // Ingest backed-up orders into OrderSyncQueue
+        let ingested = 0;
+        let ingestSkipped = 0;
+        for (const order of result.orders) {
+          try {
+            const branchCode = extractBranchCode(order.branch_id);
+            if (!branchCode) {
+              ingestSkipped++;
+              continue;
+            }
+
+            const amountTotal = Number(order.amount_total ?? 0);
+            const state = typeof order.state === 'string' ? order.state : 'draft';
+
+            await this.orderSyncService.ingestOrder({
+              odooOrderId: String(order.id),
+              odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
+              branchCode,
+              orderDate: order.date_order ? new Date(order.date_order) : new Date(),
+              originalTimezone: 'Asia/Dubai',
+              totalAmount: amountTotal,
+              isPaid: ['paid', 'done', 'posted'].includes(state),
+              isCancelled: state === 'cancel',
+              isRefund: amountTotal < 0,
+            });
+            ingested++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(
+              `Failed to ingest IBQ order id=${String(order.id)} region=${cred.region}: ${msg}`,
+            );
+            ingestSkipped++;
+          }
+        }
+
         this.logger.log(
-          `IBQ backup done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped}`,
+          `IBQ backup+ingest done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped} ingested=${ingested} ingestSkipped=${ingestSkipped}`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

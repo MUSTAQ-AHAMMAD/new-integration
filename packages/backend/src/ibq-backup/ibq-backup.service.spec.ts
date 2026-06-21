@@ -65,9 +65,21 @@ function makeCred(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeService(prisma = makePrisma()) {
-  const service = new IbqBackupService(prisma as never);
-  return { service, prisma };
+function makeOrderSyncService() {
+  return {
+    ingestOrder: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeService(
+  prisma = makePrisma(),
+  orderSyncService = makeOrderSyncService(),
+) {
+  const service = new IbqBackupService(
+    prisma as never,
+    orderSyncService as never,
+  );
+  return { service, prisma, orderSyncService };
 }
 
 // ---------------------------------------------------------------------------

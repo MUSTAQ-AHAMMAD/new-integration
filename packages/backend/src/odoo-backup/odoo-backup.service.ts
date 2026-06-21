@@ -13,7 +13,7 @@
  * The service also exposes a `backupOrders` method used by the manual
  * fetch-odoo endpoint so raw data is persisted before processing.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
   OdooClient,
@@ -22,8 +22,18 @@ import {
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncService } from '../sync/order-sync.service';
 
 const DEFAULT_SOURCE = 'default';
+
+/** Extract a branch-code string from an Odoo Many2one branch_id field. */
+function extractBranchCode(
+  branchRaw: number | [number, string] | null | undefined,
+): string | null {
+  if (branchRaw == null) return null;
+  if (Array.isArray(branchRaw)) return String(branchRaw[0]);
+  return String(branchRaw);
+}
 
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
 function resolveId(
@@ -57,6 +67,8 @@ export class OdooBackupService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly odooClient: OdooClient,
+    @Inject(forwardRef(() => OrderSyncService))
+    private readonly orderSyncService: OrderSyncService,
   ) {}
 
   /**
@@ -84,8 +96,48 @@ export class OdooBackupService {
         update: { lastSyncAt: runAt },
       });
 
+      // Ingest backed-up orders into the OrderSyncQueue so the downstream
+      // pipeline (BullMQ → Oracle) has real data to process.
+      let ingested = 0;
+      let ingestSkipped = 0;
+      for (const order of result.orders) {
+        try {
+          const branchCode = extractBranchCode(order.branch_id);
+          if (!branchCode) {
+            ingestSkipped++;
+            continue;
+          }
+
+          const amountTotal = Number(order.amount_total ?? 0);
+          const state = typeof order.state === 'string' ? order.state : 'draft';
+          const orderTimezone =
+            typeof order.timezone === 'string' && order.timezone
+              ? order.timezone
+              : 'Asia/Dubai';
+
+          await this.orderSyncService.ingestOrder({
+            odooOrderId: String(order.id),
+            odooOrderNumber: String(order.name ?? order.id),
+            branchCode,
+            orderDate: order.date_order ? new Date(order.date_order) : new Date(),
+            originalTimezone: orderTimezone,
+            totalAmount: amountTotal,
+            isPaid: ['paid', 'done', 'posted'].includes(state),
+            isCancelled: state === 'cancel',
+            isRefund: amountTotal < 0,
+          });
+          ingested++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Failed to ingest Odoo order id=${String(order.id)}: ${msg}`,
+          );
+          ingestSkipped++;
+        }
+      }
+
       this.logger.log(
-        `Odoo backup done: saved=${result.saved} skipped=${result.skipped}`,
+        `Odoo backup+ingest done: saved=${result.saved} skipped=${result.skipped} ingested=${ingested} ingestSkipped=${ingestSkipped}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
