@@ -170,13 +170,78 @@ export class OdooBackupService {
   }
 
   /**
+   * Scheduled cron: backs up orders from every active per-region OdooCredential
+   * every 15 minutes, using the per-credential lastSyncAt watermark.
+   * Mirrors the IbqBackupService pattern so all regions are kept in sync
+   * automatically without manual intervention.
+   */
+  @Cron('0 */15 * * * *')
+  async runCredentialBackupJob(): Promise<void> {
+    const credentials = await this.prisma.odooCredential.findMany({
+      where: { active: true },
+    });
+
+    if (credentials.length === 0) {
+      return;
+    }
+
+    for (const cred of credentials) {
+      const runAt = new Date();
+      try {
+        const result = await this.backupOrdersForCredential(cred, {
+          startDate: cred.lastSyncAt?.toISOString(),
+          limit: 500,
+        });
+
+        // Advance the per-credential watermark on success.
+        await this.prisma.odooCredential.update({
+          where: { id: cred.id },
+          data: { lastSyncAt: runAt },
+        });
+
+        // Ingest backed-up orders into the OrderSyncQueue.
+        let ingested = 0;
+        let ingestSkipped = 0;
+        for (const order of result.orders) {
+          try {
+            const payload = normalizeOrderForIngestion(order);
+            if (!payload) {
+              ingestSkipped++;
+              continue;
+            }
+            await this.orderSyncService.ingestOrder(payload);
+            ingested++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(
+              `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
+            );
+            ingestSkipped++;
+          }
+        }
+
+        this.logger.log(
+          `Odoo credential backup+ingest done for region=${cred.region}: ` +
+            `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+            `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Odoo credential backup failed for region=${cred.region} url=${cred.baseUrl}: ${msg}`,
+        );
+      }
+    }
+  }
+
+  /**
    * Fetches orders from a specific OdooCredential (per-region DB credential)
    * and persists them to backup tables.
    * Uses a temporary axios instance scoped to the credential's baseUrl/apiKey.
    * Does NOT advance the lastSyncAt watermark — callers decide that.
    */
   async backupOrdersForCredential(
-    cred: { id: string; baseUrl: string; apiKey: string; region: string; apiPath?: string | null },
+    cred: { id: string; baseUrl: string; apiKey: string; region: string; apiPath?: string | null; lastSyncAt?: Date | null },
     params: {
       branchId?: number;
       startDate?: string;
@@ -239,8 +304,12 @@ export class OdooBackupService {
         } else {
           odooMessage = err.message;
         }
+        const hint =
+          status === 404
+            ? ` — endpoint "${apiPath}" not found; update the credential's apiPath to match the server (e.g. /api/sale.order)`
+            : '';
         throw new BadGatewayException(
-          `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}`,
+          `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}${hint}`,
         );
       }
       throw err;
