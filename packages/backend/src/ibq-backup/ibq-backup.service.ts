@@ -10,13 +10,20 @@
  *  3. Upserts each order into BackupIbqOrder / BackupIbqOrderLine /
  *     BackupIbqOrderPayment.
  *  4. Advances the lastSyncAt watermark on the credential.
+ *  5. Ingests each fetched order into OrderSyncQueue so the downstream
+ *     BullMQ→Oracle pipeline has real data to process.
  *
  * The IBQ API uses x-api-key header authentication (Odoo REST API convention).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
+import {
+  DEFAULT_ODOO_TIMEZONE,
+  normalizeOrderForIngestion,
+} from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncService } from '../sync/order-sync.service';
 
 // ---------------------------------------------------------------------------
 // Raw IBQ / Odoo POS API response shapes
@@ -114,10 +121,15 @@ function extractOrders(raw: IbqApiResponse): IbqOrderRaw[] {
 export class IbqBackupService {
   private readonly logger = new Logger(IbqBackupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => OrderSyncService))
+    private readonly orderSyncService: OrderSyncService,
+  ) {}
 
   /**
-   * Runs every 15 minutes to back up IBQ POS orders.
+   * Runs every 15 minutes to back up IBQ POS orders and ingest them into
+   * OrderSyncQueue so the downstream BullMQ→Oracle pipeline has real data.
    * Can also be triggered manually via IbqBackupController.
    */
   @Cron('0 */15 * * * *')
@@ -140,8 +152,41 @@ export class IbqBackupService {
         }
 
         const result = await this.backupRegion(cred);
+
+        // Ingest backed-up orders into OrderSyncQueue.
+        // Backup counts (saved/skipped) and ingestion counts (queued/skipped)
+        // are tracked separately: an order can be backed up but fail to ingest
+        // (e.g. missing branch mapping), and ingestion can be retried from the
+        // backup table without re-fetching from the IBQ API.
+        let ingested = 0;
+        let ingestSkipped = 0;
+        for (const order of result.orders) {
+          try {
+            // IBQ instances don't carry per-order timezone; always use the
+            // region default (Asia/Dubai) as the timezone override.
+            const payload = normalizeOrderForIngestion(
+              order,
+              DEFAULT_ODOO_TIMEZONE,
+            );
+            if (!payload) {
+              ingestSkipped++;
+              continue;
+            }
+            await this.orderSyncService.ingestOrder(payload);
+            ingested++;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(
+              `Failed to ingest IBQ order id=${String(order.id)} region=${cred.region}: ${msg}`,
+            );
+            ingestSkipped++;
+          }
+        }
+
         this.logger.log(
-          `IBQ backup done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped}`,
+          `IBQ backup+ingest done for region=${cred.region}: ` +
+            `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+            `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

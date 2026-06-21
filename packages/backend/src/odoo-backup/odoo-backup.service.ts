@@ -13,7 +13,7 @@
  * The service also exposes a `backupOrders` method used by the manual
  * fetch-odoo endpoint so raw data is persisted before processing.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
   OdooClient,
@@ -21,7 +21,9 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
+import { normalizeOrderForIngestion } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncService } from '../sync/order-sync.service';
 
 const DEFAULT_SOURCE = 'default';
 
@@ -57,6 +59,8 @@ export class OdooBackupService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly odooClient: OdooClient,
+    @Inject(forwardRef(() => OrderSyncService))
+    private readonly orderSyncService: OrderSyncService,
   ) {}
 
   /**
@@ -84,8 +88,36 @@ export class OdooBackupService {
         update: { lastSyncAt: runAt },
       });
 
+      // Ingest backed-up orders into the OrderSyncQueue so the downstream
+      // pipeline (BullMQ → Oracle) has real data to process.
+      // Note: backup (saved/backupSkipped) and ingestion (ingested/ingestSkipped)
+      // are counted separately — an order can be backed up successfully while
+      // failing ingestion (e.g. missing branch mapping), and vice-versa retries
+      // can re-ingest from backup without re-fetching from Odoo.
+      let ingested = 0;
+      let ingestSkipped = 0;
+      for (const order of result.orders) {
+        try {
+          const payload = normalizeOrderForIngestion(order);
+          if (!payload) {
+            ingestSkipped++;
+            continue;
+          }
+          await this.orderSyncService.ingestOrder(payload);
+          ingested++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Failed to ingest Odoo order id=${String(order.id)}: ${msg}`,
+          );
+          ingestSkipped++;
+        }
+      }
+
       this.logger.log(
-        `Odoo backup done: saved=${result.saved} skipped=${result.skipped}`,
+        `Odoo backup+ingest done: ` +
+          `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+          `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

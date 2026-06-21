@@ -23,8 +23,8 @@ import { ValidationService } from './validation.service';
     AlertsModule,
     PaymentMappingModule,
     ClientsModule,
-    OdooBackupModule,
-    IbqBackupModule,
+    forwardRef(() => OdooBackupModule),
+    forwardRef(() => IbqBackupModule),
   ],
   controllers: [SyncController],
   providers: [
