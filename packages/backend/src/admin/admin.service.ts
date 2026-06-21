@@ -88,6 +88,35 @@ function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
 }
 
 /**
+ * Builds a lookup map from UPPER_SNAKE_CASE (external CSV headers) to the
+ * camelCase field names used by Prisma.  Also handles keys that are already
+ * camelCase by including them verbatim.
+ *
+ * Example: "RECEIPT_METHOD_ID" → "receiptMethodId"
+ *
+ * Note: Prisma field names always start with a lowercase letter (camelCase),
+ * so the `replace(/^_/, '')` guard exists only as a safety measure.
+ */
+function buildKeyNormalizer(
+  fieldTypes: Map<string, string>,
+): (key: string) => string {
+  const upperToLower = new Map<string, string>();
+  for (const camel of fieldTypes.keys()) {
+    // Derive the UPPER_SNAKE_CASE form so we can recognize external CSVs.
+    // Works correctly for all Prisma camelCase field names that start with
+    // a lowercase letter (e.g. "receiptMethodId" → "RECEIPT_METHOD_ID").
+    const upper = camel
+      .replace(/([A-Z])/g, '_$1')
+      .toUpperCase()
+      .replace(/^_/, '');
+    upperToLower.set(upper, camel);
+    // Also allow the camelCase form directly (self-exported CSVs).
+    upperToLower.set(camel, camel);
+  }
+  return (key: string) => upperToLower.get(key) ?? key;
+}
+
+/**
  * Coerces a CSV string value to the correct JS type based on the Prisma
  * field type.  CSV export always produces strings, so without this step
  * Prisma would reject numeric and boolean columns.
@@ -270,14 +299,27 @@ export class AdminService {
     const delegate = this.getDelegate(table);
     const rows = AdminService.parseCsvToRows(csvText);
     const fieldTypes = getModelFieldTypes(table);
+    // Build a normalizer that maps both UPPER_SNAKE_CASE (external CSVs) and
+    // camelCase (self-exported CSVs) headers to the Prisma field names.
+    const normalizeKey = buildKeyNormalizer(fieldTypes);
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
 
     for (const row of rows) {
       try {
+        // Normalise keys first so UPPER_SNAKE_CASE headers from external CSVs
+        // are mapped to the camelCase field names expected by Prisma.
+        const normalizedRow = Object.fromEntries(
+          Object.entries(row).map(([k, v]) => [normalizeKey(k), v]),
+        );
         // Strip system / read-only columns so the DB generates them
-        const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = row;
+        const {
+          id: _id,
+          createdAt: _ca,
+          updatedAt: _ua,
+          ...data
+        } = normalizedRow;
         // Coerce each field to its correct Prisma type (CSV values are all
         // strings; without coercion Prisma rejects Int, Float and Boolean fields).
         // Fields not found in the DMMF are passed through as-is; Prisma will
