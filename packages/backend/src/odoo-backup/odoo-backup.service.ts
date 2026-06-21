@@ -30,6 +30,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
 const DEFAULT_SOURCE = 'default';
+/** Default REST endpoint used to fetch POS orders from Odoo. */
+const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
 function resolveId(
@@ -196,7 +198,7 @@ export class OdooBackupService {
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
-    const apiPath = cred.apiPath?.trim() || '/api/pos/order';
+    const apiPath = cred.apiPath?.trim() || DEFAULT_ODOO_ORDERS_API_PATH;
 
     let resp: AxiosResponse<unknown>;
     try {

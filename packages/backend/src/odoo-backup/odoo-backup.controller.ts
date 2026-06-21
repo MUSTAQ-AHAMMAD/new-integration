@@ -39,8 +39,9 @@ export class CreateOdooCredentialDto {
   @ApiProperty({
     required: false,
     description:
-      'REST endpoint path used to fetch orders. Defaults to /api/pos/order. ' +
-      'Set to /api/sale.order for Odoo instances that do not expose the POS endpoint.',
+      'REST endpoint path used to fetch orders. Defaults to /api/pos/order (Odoo POS REST API). ' +
+      'Set to /api/sale.order (Odoo sale-order REST API) for instances that serve sale orders ' +
+      'instead of POS orders, or supply any other path required by the instance.',
   })
   @IsOptional()
   @IsString()
@@ -71,8 +72,9 @@ export class UpdateOdooCredentialDto {
   @ApiProperty({
     required: false,
     description:
-      'REST endpoint path used to fetch orders. Defaults to /api/pos/order. ' +
-      'Set to /api/sale.order for Odoo instances that do not expose the POS endpoint.',
+      'REST endpoint path used to fetch orders. Defaults to /api/pos/order (Odoo POS REST API). ' +
+      'Set to /api/sale.order (Odoo sale-order REST API) for instances that serve sale orders ' +
+      'instead of POS orders, or supply any other path required by the instance.',
   })
   @IsOptional()
   @IsString()

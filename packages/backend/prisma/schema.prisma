@@ -1505,8 +1505,9 @@ model OdooCredential {
   region     String
   active     Boolean   @default(true)
   /// Override the default REST endpoint path used when fetching orders.
-  /// Defaults to "/api/pos/order" when null.  Set to "/api/sale.order"
-  /// for Odoo instances that do not expose the POS REST endpoint.
+  /// Defaults to "/api/pos/order" (Odoo POS REST API) when null.
+  /// Set to "/api/sale.order" for Odoo instances that serve sale orders
+  /// instead of POS orders, or to any other path required by the instance.
   apiPath    String?
   /// Timestamp watermark: next scheduled run fetches orders after this date
   lastSyncAt DateTime?
