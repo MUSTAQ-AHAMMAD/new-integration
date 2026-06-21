@@ -219,7 +219,13 @@ export class OdooClient {
     } catch (error: unknown) {
       if (attempt >= 3) {
         this.logger.error('Odoo request failed after retries');
-        throw error;
+        // Wrap non-HTTP errors so callers receive a proper 503 instead of an
+        // unhandled exception that becomes a generic 500 response.
+        const message =
+          error instanceof Error ? error.message : 'Odoo request failed';
+        throw new ServiceUnavailableException(
+          `Odoo service unreachable: ${message}`,
+        );
       }
 
       // Only clear the session cookie when using session-based auth
