@@ -47,7 +47,7 @@ interface IbqOrderPaymentRaw {
   [key: string]: unknown;
 }
 
-interface IbqOrderRaw {
+export interface IbqOrderRaw {
   id: number;
   name?: string;
   pos_reference?: string;
