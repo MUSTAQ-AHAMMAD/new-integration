@@ -135,33 +135,54 @@ export class OdooClient {
     return this.circuitBreaker.execute('odoo:getOrders', () =>
       this.withRetries(async (attempt) => {
         const headers = await this.authHeaders(attempt > 1);
+        const pageSize = 100;
+        const allOrders: OdooOrder[] = [];
+        let offset = 0;
 
-        if (this.apiKey) {
-          // POS REST API — uses query parameters directly
-          const response = await this.http.get('/api/pos/order', {
-            headers,
-            params: {
-              ...(params.branchId !== undefined && {
-                branch_id: params.branchId,
-              }),
-              ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
-              ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
-              limit: params.limit ?? 100,
-            },
-          });
-          return this.extractList<OdooOrder>(response.data);
+        while (true) {
+          let pageOrders: OdooOrder[];
+
+          if (this.apiKey) {
+            // POS REST API — uses query parameters directly
+            const response = await this.http.get('/api/pos/order', {
+              headers,
+              params: {
+                ...(params.branchId !== undefined && {
+                  branch_id: params.branchId,
+                }),
+                ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
+                ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
+                limit: pageSize,
+                offset,
+              },
+            });
+            pageOrders = this.extractList<OdooOrder>(response.data);
+          } else {
+            // Session-based fallback: use domain filter on sale.order
+            const domain = this.buildOrdersDomain(params);
+            const response = await this.http.get('/api/sale.order', {
+              headers,
+              params: {
+                domain: JSON.stringify(domain),
+                limit: pageSize,
+                offset,
+              },
+            });
+            pageOrders = this.extractList<OdooOrder>(response.data);
+          }
+
+          allOrders.push(...pageOrders);
+
+          // Fewer than a full page → last page reached
+          if (pageOrders.length < pageSize) break;
+
+          // Stop if the caller specified a hard limit
+          if (params.limit !== undefined && allOrders.length >= params.limit) break;
+
+          offset += pageSize;
         }
 
-        // Session-based fallback: use domain filter on sale.order
-        const domain = this.buildOrdersDomain(params);
-        const response = await this.http.get('/api/sale.order', {
-          headers,
-          params: {
-            domain: JSON.stringify(domain),
-            limit: params.limit ?? 100,
-          },
-        });
-        return this.extractList<OdooOrder>(response.data);
+        return allOrders;
       }),
     );
   }

@@ -402,6 +402,119 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
 });
 
 // ---------------------------------------------------------------------------
+// backupOrdersForCredential — branch name extraction
+// ---------------------------------------------------------------------------
+
+describe('OdooBackupService.backupOrdersForCredential — branch name extraction', () => {
+  const mockAxiosGet = jest.spyOn(axios, 'get');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('extracts branchName from the part before "/" in orderName when branch_id has no name', async () => {
+    const { service, prisma } = makeService();
+    // branch_id is a plain integer — resolveName returns null.
+    // branchName should fall back to the order name prefix.
+    const order = makeOrder({ branch_id: 246, name: 'CCNTRBHR/2139' });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ branchName: 'CCNTRBHR' }),
+      }),
+    );
+  });
+
+  it('uses the Many2one branch name when the API returns [id, name]', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ branch_id: [246, 'Bahrain Branch'], name: 'CCNTRBHR/2139' });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ branchName: 'Bahrain Branch' }),
+      }),
+    );
+  });
+
+  it('leaves branchName null when branch_id is absent and order name has no "/"', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ branch_id: null, name: 'ORDER-001' });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ branchName: null }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// backupOrdersForCredential — pagination
+// ---------------------------------------------------------------------------
+
+describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
+  const mockAxiosGet = jest.spyOn(axios, 'get');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('fetches a second page when the first page is exactly CREDENTIAL_PAGE_SIZE (100) records', async () => {
+    const { service } = makeService();
+    // Build 100 distinct orders for page 1 and 2 orders for page 2.
+    const page1 = Array.from({ length: 100 }, (_, i) => makeOrder({ id: 1000 + i }));
+    const page2 = [makeOrder({ id: 2000 }), makeOrder({ id: 2001 })];
+
+    mockAxiosGet
+      .mockResolvedValueOnce({ data: page1 }) // page 1 (offset=0)
+      .mockResolvedValueOnce({ data: page2 }); // page 2 (offset=100)
+
+    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+    expect(result.orders).toHaveLength(102);
+    expect(result.saved).toBe(102);
+  });
+
+  it('sends correct offset param for each page', async () => {
+    const { service } = makeService();
+    const page1 = Array.from({ length: 100 }, (_, i) => makeOrder({ id: 1000 + i }));
+    mockAxiosGet
+      .mockResolvedValueOnce({ data: page1 })
+      .mockResolvedValueOnce({ data: [] }); // empty page 2 → stop
+
+    await service.backupOrdersForCredential(
+      makeCredential({ baseUrl: 'https://odoo.example.com', apiPath: '/api/pos/order' }),
+      { limit: 100 },
+    );
+
+    const [, firstCallConfig] = mockAxiosGet.mock.calls[0] as [string, { params: Record<string, unknown> }];
+    const [, secondCallConfig] = mockAxiosGet.mock.calls[1] as [string, { params: Record<string, unknown> }];
+    expect(firstCallConfig.params).toMatchObject({ limit: 100, offset: 0 });
+    expect(secondCallConfig.params).toMatchObject({ limit: 100, offset: 100 });
+  });
+
+  it('stops after one page when page returns fewer than PAGE_SIZE records', async () => {
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValueOnce({ data: [makeOrder(), makeOrder({ id: 1002 })] });
+
+    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    expect(result.orders).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runCredentialBackupJob — cron watermark advancement
 // ---------------------------------------------------------------------------
 
