@@ -223,14 +223,36 @@ export class VendHqToOracleSyncService {
       });
 
       await this.prisma.fusionJournalLine.createMany({
-        data: jh.journalLines.map((jl) => ({
+        data: jh.journalLines.map((jl, idx) => ({
           status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
           requestDate: new Date(),
           region,
           jeHeaderId: jeHeaderId ?? null,
+          jeLineNum: idx + 1,
           ledgerId: jl.ledgerId,
           chartOfAccountsId: jl.chartOfAccountsId ?? null,
           currencyCode: jl.currencyCode,
+          enteredCrAmount: jl.enteredCrAmount ?? null,
+          accountedCr: jl.accountedCr ?? null,
+          enteredDrAmount: jl.enteredDrAmount ?? null,
+          accountedDr: jl.accountedDr ?? null,
+          segment1: jl.segment1 ?? null,
+          segment2: jl.segment2 ?? null,
+          segment3: jl.segment3 ?? null,
+          segment4: jl.segment4 ?? null,
+          segment5: jl.segment5 ?? null,
+          segment6: jl.segment6 ?? null,
+          segment7: jl.segment7 ?? null,
+          segment8: jl.segment8 ?? null,
+          segment9: jl.segment9 ?? null,
+          segment10: jl.segment10 ?? null,
+          accountingDate: jl.accountingDate ?? null,
+          transactionDate: jl.transactionDate ?? null,
+          userJeSourceName: jl.userJeSourceName ?? null,
+          userJeCategoryName: jl.jeCategoryName ?? null,
+          currencyConversionRate: jl.currencyConversionRate ?? null,
+          periodName: jl.periodName ?? null,
+          taxCode: jl.taxCode ?? null,
           headerId: jhAudit.id,
         })),
       });

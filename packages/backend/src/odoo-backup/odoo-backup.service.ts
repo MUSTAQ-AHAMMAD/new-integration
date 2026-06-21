@@ -32,6 +32,8 @@ import { OrderSyncService } from '../sync/order-sync.service';
 const DEFAULT_SOURCE = 'default';
 /** Default REST endpoint used to fetch POS orders from Odoo. */
 const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
+/** Number of records fetched per page during paginated credential backup. */
+const CREDENTIAL_PAGE_SIZE = 100;
 
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
 function resolveId(
@@ -274,13 +276,13 @@ export class OdooBackupService {
     const fallbackPath = '/api/sale.order';
 
     /**
-     * Attempt a single GET against the given path.
+     * Attempt a single GET against the given path at the given page offset.
      * Returns the AxiosResponse on success.
      * Returns null on 404 only when no explicit path is configured (auto-discovery
      * mode); otherwise throws BadGatewayException for all errors including 404.
      * Throws BadGatewayException for non-404 AxiosErrors in all cases.
      */
-    const tryFetch = async (apiPath: string): Promise<AxiosResponse<unknown> | null> => {
+    const tryFetch = async (apiPath: string, offset: number): Promise<AxiosResponse<unknown> | null> => {
       try {
         return await axios.get<unknown>(`${baseUrl}${apiPath}`, {
           headers: { 'x-api-key': cred.apiKey },
@@ -288,7 +290,8 @@ export class OdooBackupService {
             ...(params.branchId !== undefined && { branch_id: params.branchId }),
             ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
             ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
-            limit: params.limit ?? 100,
+            limit: CREDENTIAL_PAGE_SIZE,
+            offset,
           },
           timeout: 30_000,
         });
@@ -332,16 +335,18 @@ export class OdooBackupService {
       }
     };
 
-    let resp = await tryFetch(primaryPath);
+    // ── First page — includes auto-discovery ─────────────────────────────────
+    let resolvedPath = primaryPath;
+    let firstResp = await tryFetch(primaryPath, 0);
 
-    if (resp === null) {
+    if (firstResp === null) {
       // primaryPath returned 404 and no explicit path is configured — try the
       // sale-order REST endpoint as an automatic fallback.
       this.logger.warn(
         `OdooCredential region=${cred.region}: "${primaryPath}" returned 404, ` +
           `retrying with "${fallbackPath}" (auto-discovery).`,
       );
-      const fallbackResp = await tryFetch(fallbackPath);
+      const fallbackResp = await tryFetch(fallbackPath, 0);
       if (fallbackResp === null) {
         // Both endpoints returned 404 while in auto-discovery mode (no explicit
         // apiPath was set on this credential). Surface a clear error so the operator
@@ -352,7 +357,8 @@ export class OdooBackupService {
             `Set the credential's apiPath to the correct endpoint to resolve this.`,
         );
       }
-      resp = fallbackResp;
+      firstResp = fallbackResp;
+      resolvedPath = fallbackPath;
 
       // Persist the discovered path so future cron runs skip the discovery step.
       try {
@@ -374,11 +380,34 @@ export class OdooBackupService {
       }
     }
 
-    const orders = this.extractOrderList(resp.data);
+    // ── Pagination loop — fetch all pages ────────────────────────────────────
+    // The Odoo REST API caps results at CREDENTIAL_PAGE_SIZE per request.
+    // We loop using offset until a page returns fewer records than the page
+    // size, which signals that we've reached the last page.
+    const allOrders: OdooOrder[] = [];
+    let currentResp: AxiosResponse<unknown> = firstResp;
+    let offset = 0;
+
+    while (true) {
+      const pageOrders = this.extractOrderList(currentResp.data);
+      allOrders.push(...pageOrders);
+
+      // Fewer than a full page means this is the last page.
+      if (pageOrders.length < CREDENTIAL_PAGE_SIZE) break;
+
+      offset += CREDENTIAL_PAGE_SIZE;
+      this.logger.debug(
+        `OdooCredential region=${cred.region}: fetching next page at offset=${offset}`,
+      );
+      const nextResp = await tryFetch(resolvedPath, offset);
+      if (!nextResp) break; // should not happen for non-first pages, but guard anyway
+      currentResp = nextResp;
+    }
+
     let saved = 0;
     let skipped = 0;
 
-    for (const order of orders) {
+    for (const order of allOrders) {
       try {
         await this.upsertOrder(order);
         saved++;
@@ -391,7 +420,7 @@ export class OdooBackupService {
       }
     }
 
-    return { saved, skipped, orders };
+    return { saved, skipped, orders: allOrders };
   }
 
   /** Flatten various Odoo REST API response envelopes to a plain order array. */
@@ -456,7 +485,14 @@ export class OdooBackupService {
    */
   private async upsertOrder(order: OdooOrder): Promise<void> {
     const branchId = resolveId(order.branch_id);
-    const branchName = resolveName(order.branch_id);
+    // Try to get the branch name from the Many2one field; fall back to the
+    // part of the order name before the first "/" (e.g. "CCNTRBHR" from
+    // "CCNTRBHR/2139") when the API only returns the branch ID integer.
+    const branchName =
+      resolveName(order.branch_id) ??
+      (typeof order.name === 'string' && order.name.includes('/')
+        ? order.name.split('/')[0]
+        : null);
     const partnerId = resolveId(order.partner_id);
     const partnerName = resolveName(order.partner_id);
     const dateOrder = order.date_order ? new Date(order.date_order) : null;
@@ -484,11 +520,19 @@ export class OdooBackupService {
     const parentId = upserted.id;
 
     // ── Order lines ──────────────────────────────────────────────────────────
-    const lines: OdooOrderLine[] = Array.isArray(order.lines)
+    // Odoo POS uses `lines`, sale orders use `order_line`, some versions use
+    // `line_ids`.  Filter out any integer-only entries (IDs without data) that
+    // some API variants return instead of full embedded objects.
+    const rawLineItems: unknown[] = Array.isArray(order.lines)
       ? order.lines
       : Array.isArray(order.order_line)
         ? order.order_line
-        : [];
+        : Array.isArray(order['line_ids'])
+          ? (order['line_ids'] as unknown[])
+          : [];
+    const lines: OdooOrderLine[] = rawLineItems.filter(
+      (l): l is OdooOrderLine => typeof l === 'object' && l !== null,
+    );
 
     if (lines.length > 0) {
       // Pre-fetch all existing lines for this order to avoid N+1 queries
@@ -498,8 +542,8 @@ export class OdooBackupService {
       });
       const existingLineMap = new Map(
         existingLines
-          .filter((l) => l.lineId != null)
-          .map((l) => [l.lineId as number, l.id]),
+          .filter((l: { id: string; lineId: number | null }) => l.lineId != null)
+          .map((l: { id: string; lineId: number | null }) => [l.lineId as number, l.id]),
       );
 
       for (const line of lines) {
@@ -533,11 +577,15 @@ export class OdooBackupService {
     }
 
     // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
-    const rawPayments: OdooOrderPayment[] = Array.isArray(order.statement_ids)
+    // Filter out integer-only entries for the same reason as lines above.
+    const rawPaymentItems: unknown[] = Array.isArray(order.statement_ids)
       ? order.statement_ids
       : Array.isArray(order.payment_ids)
         ? order.payment_ids
         : [];
+    const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
+      (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
+    );
 
     if (rawPayments.length > 0) {
       // Pre-fetch all existing payments for this order to avoid N+1 queries
@@ -547,8 +595,8 @@ export class OdooBackupService {
       });
       const existingPaymentMap = new Map(
         existingPayments
-          .filter((p) => p.paymentId != null)
-          .map((p) => [p.paymentId as number, p.id]),
+          .filter((p: { id: string; paymentId: number | null }) => p.paymentId != null)
+          .map((p: { id: string; paymentId: number | null }) => [p.paymentId as number, p.id]),
       );
 
       for (const pmt of rawPayments) {
@@ -557,7 +605,17 @@ export class OdooBackupService {
         const pmtData = {
           orderId: order.id,
           paymentId: pmtId,
-          paymentName: typeof pmt.name === 'string' ? pmt.name : null,
+          // Odoo v15 uses `name` (e.g. "Cash"), v16+ stores the method as a
+          // Many2one `payment_method_id: [id, "Cash"]`.  Fall back through
+          // both so payment method names are captured in all versions.
+          paymentName:
+            typeof pmt.name === 'string'
+              ? pmt.name
+              : Array.isArray(pmt.payment_method_id)
+                ? (typeof (pmt.payment_method_id as [number, unknown])[1] === 'string'
+                    ? (pmt.payment_method_id as [number, string])[1]
+                    : null)
+                : null,
           amount: pmt.amount != null ? Number(pmt.amount) : null,
           parentOrderId: parentId,
         };
