@@ -36,6 +36,17 @@ export class CreateOdooCredentialDto {
   @IsString()
   region!: string;
 
+  @ApiProperty({
+    required: false,
+    description:
+      'REST endpoint path used to fetch orders. Defaults to /api/pos/order (Odoo POS REST API). ' +
+      'Set to /api/sale.order (Odoo sale-order REST API) for instances that serve sale orders ' +
+      'instead of POS orders, or supply any other path required by the instance.',
+  })
+  @IsOptional()
+  @IsString()
+  apiPath?: string;
+
   @ApiProperty({ required: false, default: true })
   @IsOptional()
   @IsBoolean()
@@ -57,6 +68,17 @@ export class UpdateOdooCredentialDto {
   @IsOptional()
   @IsString()
   region?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'REST endpoint path used to fetch orders. Defaults to /api/pos/order (Odoo POS REST API). ' +
+      'Set to /api/sale.order (Odoo sale-order REST API) for instances that serve sale orders ' +
+      'instead of POS orders, or supply any other path required by the instance.',
+  })
+  @IsOptional()
+  @IsString()
+  apiPath?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()
@@ -165,6 +187,7 @@ export class OdooBackupController {
         apiKey: dto.apiKey,
         region: dto.region,
         active: dto.active ?? true,
+        ...(dto.apiPath !== undefined && { apiPath: dto.apiPath }),
       },
     });
     return { ...cred, apiKey: this.maskKey(cred.apiKey) };
@@ -185,6 +208,7 @@ export class OdooBackupController {
         ...(dto.baseUrl !== undefined && { baseUrl: dto.baseUrl }),
         ...(dto.apiKey !== undefined && { apiKey: dto.apiKey }),
         ...(dto.region !== undefined && { region: dto.region }),
+        ...(dto.apiPath !== undefined && { apiPath: dto.apiPath }),
         ...(dto.active !== undefined && { active: dto.active }),
       },
     });
