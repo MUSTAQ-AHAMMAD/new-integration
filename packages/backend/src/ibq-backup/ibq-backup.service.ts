@@ -80,11 +80,11 @@ const IBQ_INTEG_MODE = 'IBQ_BACKUP';
 const STATUS_ENABLED = 'ENABLED';
 const STATUS_DISABLED = 'DISABLED';
 
-/** Format a Date as the MM/DD/YYYY HH:MM:SS string the IBQ API expects */
+/** Format a Date as the YYYY-MM-DD HH:MM:SS string the IBQ API expects */
 function toIbqDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ` +
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   );
 }

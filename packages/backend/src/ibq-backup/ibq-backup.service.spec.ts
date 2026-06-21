@@ -137,6 +137,8 @@ describe('IbqBackupService', () => {
       const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
       expect(callParams.params).toHaveProperty('start_date');
       expect(typeof callParams.params['start_date']).toBe('string');
+      // Must be YYYY-MM-DD HH:MM:SS (not the old MM/DD/YYYY format)
+      expect(callParams.params['start_date']).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     });
 
     it('does NOT send start_date param on first run (lastSyncAt null)', async () => {
