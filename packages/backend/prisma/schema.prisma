@@ -66,6 +66,13 @@ model OrderSyncQueue {
   odooOrderNumber        String
   branchCode             String
   branchName             String?
+  /// Region identifier (e.g. "AE", "KW") from the OdooCredential that fetched this order.
+  /// Populated during ingest so the processor can look up FusionSalesMetadata without
+  /// relying solely on the numeric branchCode.
+  region                 String?
+  /// FK to BackupOdooOrder.id — populated when the order was fetched via the Odoo
+  /// backup path. Lets the processor retrieve the full raw backup for transformation.
+  odooBackupOrderId      String?
   orderDate              DateTime
   orderDateUtc           DateTime
   originalTimezone       String
@@ -93,6 +100,7 @@ model OrderSyncQueue {
   @@unique([odooOrderId, branchCode])
   @@index([status])
   @@index([branchCode])
+  @@index([region])
   @@index([orderDate])
   @@index([orderDateUtc])
   @@index([isPaid])
@@ -218,6 +226,15 @@ model StoreConfiguration {
   transactionSource     String           @default("Manual")
   transactionType       String           @default("PASA CONSULTING SALE")
   invoiceCurrencyCode   String           @default("AED")
+  /// Region identifier (e.g. "AE", "KW", "OM") — matches OdooCredential.region
+  /// and is used to link a store to its regional Oracle configuration.
+  region                String?
+  /// Oracle Fusion numeric bank account ID for card/non-cash receipts.
+  /// Mirrors VendHqRegister.bankAccountId — must be populated for receipt creation.
+  bankAccountId         Int?
+  /// Oracle Fusion numeric cash account ID for cash receipts.
+  /// Mirrors VendHqRegister.cashAccountId — must be populated for receipt creation.
+  cashAccountId         Int?
 
   // Service provider → GL account mapping (JSON)
   serviceProviderJournalMapping Json?
@@ -241,6 +258,8 @@ model StoreConfiguration {
   @@index([branchCode])
   @@index([validationStatus])
   @@index([isActive])
+  @@index([region])
+  @@index([odooBranchId])
 }
 
 enum ValidationStatus {
@@ -1548,6 +1567,12 @@ model BackupOdooOrder {
   partnerName  String?
   /// Timezone string carried on the order, e.g. "Asia/Dubai"
   timezone     String?
+  /// Region identifier (e.g. "AE", "KW") from the OdooCredential that fetched this order.
+  /// Populated during per-region credential backup; null when fetched via global env-var path.
+  region       String?
+  /// Resolved StoreConfiguration.branchCode for this order (looked up by odooBranchId).
+  /// Cached here so the processor doesn't need to re-query the store config table.
+  resolvedBranchCode String?
   /// Full raw JSON payload preserved for debugging / re-processing
   rawJson      Json?
   createdAt    DateTime  @default(now())
@@ -1559,6 +1584,7 @@ model BackupOdooOrder {
   @@index([orderId])
   @@index([dateOrder])
   @@index([state])
+  @@index([region])
 }
 
 /// Line items belonging to a BackupOdooOrder.

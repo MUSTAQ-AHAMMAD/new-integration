@@ -44,8 +44,12 @@ function makePrisma() {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
     },
+    storeConfiguration: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     backupOdooOrder: {
       upsert: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
+      findUnique: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
     },
     backupOdooOrderLine: {
       findMany: jest.fn().mockResolvedValue([]),

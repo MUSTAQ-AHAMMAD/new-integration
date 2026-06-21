@@ -17,6 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StoreConfigService } from '../../store-config/store-config.service';
 import { FusionTransformationService } from '../../sync/fusion-transformation.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
+import { OdooTransformationService } from '../../sync/odoo-transformation.service';
 import { ValidationService } from '../../sync/validation.service';
 import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
@@ -36,6 +37,7 @@ export class OrderSyncProcessor {
     private readonly queuesService: QueuesService,
     private readonly soapClient: OracleSoapClient,
     private readonly transformationService: FusionTransformationService,
+    private readonly odooTransformationService: OdooTransformationService,
   ) {}
 
   @Process({ name: 'sync', concurrency: 10 })
@@ -246,45 +248,39 @@ export class OrderSyncProcessor {
           ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
           : null;
 
-      // ── 6. Locate the BackupVendHqSale record ─────────────────
-      //    The backup job stores the raw sale with its saleNumber / invoiceNumber
-      //    equal to the VendHQ invoice number (= odooOrderNumber here).
-      const backupSale = await this.prisma.backupVendHqSale.findFirst({
-        where: {
-          OR: [
-            { saleNumber: order.odooOrderNumber ?? odooOrderId },
-            { invoiceNumber: order.odooOrderNumber ?? odooOrderId },
-          ],
-        },
-      });
+      // ── 6. Resolve backup source and build Oracle payloads ─────
+      //
+      // Priority order:
+      //   A. Odoo backup path: order.odooBackupOrderId is set → use BackupOdooOrder
+      //      + OdooTransformationService (direct Odoo→Oracle mapping).
+      //   B. VendHQ backup path: look for BackupVendHqSale by saleNumber/invoiceNumber
+      //      → use FusionTransformationService (existing VendHQ→Oracle mapping).
+      //   C. No backup found: generate a placeholder reference and log a warning.
+      //
+      // The region used for all Oracle config lookups is taken from
+      // order.region (populated during ingest from OdooCredential.region) with
+      // a fallback to branchCode for legacy / VendHQ-sourced orders.
+      const effectiveRegion = order.region ?? branchCode;
 
       let oracleInvoiceNumber: string | null = null;
       let oracleCreditMemoNumber: string | null = null;
 
-      if (backupSale) {
-        // ── 7. Transform backup data → SOAP payloads ─────────────
-        const region = branchCode;
-        const {
-          invoiceHeader,
-          standardReceipts,
-          miscReceipts,
-          applyReceipts,
-          journalHeaders,
-        } = await this.transformationService.buildSalePayloads(
-          backupSale.id,
-          region,
-        );
+      // Shared helper — pushes one set of transformation results to Oracle
+      const pushToOracle = async (payloads: {
+        invoiceHeader: import('../../clients/oracle/oracle-soap.client').InvoiceHeader;
+        standardReceipts: import('../../clients/oracle/oracle-soap.client').StandardReceiptRequest[];
+        miscReceipts: import('../../clients/oracle/oracle-soap.client').MiscReceiptRequest[];
+        applyReceipts: import('../../clients/oracle/oracle-soap.client').ApplyReceiptRequest[];
+        journalHeaders: import('../../clients/oracle/oracle-soap.client').JournalHeader[];
+      }): Promise<string> => {
+        const { invoiceHeader, standardReceipts, miscReceipts, applyReceipts, journalHeaders } = payloads;
 
-        // ── 8. Push Invoice to Oracle Fusion ─────────────────────
-        const invoiceResult =
-          await this.soapClient.createSimpleInvoice(invoiceHeader);
+        // ── 8. Push Invoice ───────────────────────────────────────
+        const invoiceResult = await this.soapClient.createSimpleInvoice(invoiceHeader);
         const txnNumber = String(
-          invoiceResult.customerTrxId ??
-            invoiceResult.transactionNumber ??
-            odooOrderId,
+          invoiceResult.customerTrxId ?? invoiceResult.transactionNumber ?? odooOrderId,
         );
 
-        // Persist audit record
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
           data: {
             status: invoiceResult.serviceStatus ?? 'SUCCESS',
@@ -300,32 +296,26 @@ export class OrderSyncProcessor {
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             txnNumber: Number(invoiceResult.customerTrxId) || null,
             customerTxnId: Number(invoiceResult.customerTrxId) || null,
-            region,
+            region: effectiveRegion,
           },
         });
 
         await this.prisma.fusionInvoiceLine.createMany({
-            data: invoiceHeader.invoiceLines.map((il) => ({
-              status: invoiceResult.serviceStatus ?? 'SUCCESS',
-              requestDate: new Date(),
-              invoiceNumber: txnNumber,
-              lineNumber: il.lineNumber,
-              itemNumber: il.itemNumber ?? null,
-              description: il.description,
-              quantity: il.quantity,
-              currencyCode: invoiceHeader.invoiceCurrencyCode,
-              salesOrder: il.salesOrder ?? null,
-              salesOrderLine: Number(il.salesOrderLine) || null,
-              region,
-              headerId: auditHeader.id,
-            })),
-          });
-
-        if (order.isRefund) {
-          oracleCreditMemoNumber = txnNumber;
-        } else {
-          oracleInvoiceNumber = txnNumber;
-        }
+          data: invoiceHeader.invoiceLines.map((il) => ({
+            status: invoiceResult.serviceStatus ?? 'SUCCESS',
+            requestDate: new Date(),
+            invoiceNumber: txnNumber,
+            lineNumber: il.lineNumber,
+            itemNumber: il.itemNumber ?? null,
+            description: il.description,
+            quantity: il.quantity,
+            currencyCode: invoiceHeader.invoiceCurrencyCode,
+            salesOrder: il.salesOrder ?? null,
+            salesOrderLine: Number(il.salesOrderLine) || null,
+            region: effectiveRegion,
+            headerId: auditHeader.id,
+          })),
+        });
 
         // ── 9. Push Standard Receipts ─────────────────────────────
         for (const sr of standardReceipts) {
@@ -341,7 +331,7 @@ export class OrderSyncProcessor {
               receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
               remittanceBankAccId: String(sr.remittanceBankAccountId),
               orgId: sr.orgId,
-              region,
+              region: effectiveRegion,
             },
           });
         }
@@ -360,7 +350,7 @@ export class OrderSyncProcessor {
               receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
               bankAccNumber: mr.bankAccountName,
               recActivityName: mr.receivableActivityName,
-              region,
+              region: effectiveRegion,
             },
           });
         }
@@ -378,19 +368,19 @@ export class OrderSyncProcessor {
               receiptNumber: arResult.receiptNumber ?? ar.receiptNumber,
               currencyCode: ar.receiptCurrency,
               txnSource: ar.transactionSource,
-              region,
+              region: effectiveRegion,
             },
           });
         }
 
-        // ── 12. Journal Entries (non-NORMAL customers) ────────────
+        // ── 12. Journal Entries ───────────────────────────────────
         for (const jh of journalHeaders) {
           const jeHeaderId = await this.soapClient.importJournalEntry(jh);
           const jhAudit = await this.prisma.fusionJournalHeader.create({
             data: {
               status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
               requestDate: new Date(),
-              region,
+              region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
               ledgerId: jh.ledgerId,
               batchName: jh.batchName,
@@ -405,29 +395,73 @@ export class OrderSyncProcessor {
           });
 
           await this.prisma.fusionJournalLine.createMany({
-              data: jh.journalLines.map((jl) => ({
-                status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
-                requestDate: new Date(),
-                region,
-                jeHeaderId: jeHeaderId ?? null,
-                ledgerId: jl.ledgerId,
-                chartOfAccountsId: jl.chartOfAccountsId ?? null,
-                currencyCode: jl.currencyCode,
-                headerId: jhAudit.id,
-              })),
-            });
+            data: jh.journalLines.map((jl) => ({
+              status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
+              requestDate: new Date(),
+              region: effectiveRegion,
+              jeHeaderId: jeHeaderId ?? null,
+              ledgerId: jl.ledgerId,
+              chartOfAccountsId: jl.chartOfAccountsId ?? null,
+              currencyCode: jl.currencyCode,
+              headerId: jhAudit.id,
+            })),
+          });
+        }
+
+        return txnNumber;
+      };
+
+      // ── Path A: Odoo backup ───────────────────────────────────────
+      if (order.odooBackupOrderId) {
+        this.logger.log(
+          `Order ${odooOrderId}: using Odoo backup path (backupOrderId=${order.odooBackupOrderId})`,
+        );
+        const payloads = await this.odooTransformationService.buildOrderPayloads(
+          order.odooBackupOrderId,
+          branchCode,
+          effectiveRegion,
+        );
+        const txnNumber = await pushToOracle(payloads);
+        if (order.isRefund) {
+          oracleCreditMemoNumber = txnNumber;
+        } else {
+          oracleInvoiceNumber = txnNumber;
         }
       } else {
-        // No backup sale found — generate a reference but log a warning
-        this.logger.warn(
-          `No BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. Oracle SOAP calls skipped.`,
-        );
-        oracleInvoiceNumber = order.isRefund
-          ? null
-          : `INV-${order.odooOrderNumber}`;
-        oracleCreditMemoNumber = order.isRefund
-          ? `CM-${order.odooOrderNumber}`
-          : null;
+        // ── Path B: VendHQ backup fallback ────────────────────────
+        const backupSale = await this.prisma.backupVendHqSale.findFirst({
+          where: {
+            OR: [
+              { saleNumber: order.odooOrderNumber ?? odooOrderId },
+              { invoiceNumber: order.odooOrderNumber ?? odooOrderId },
+            ],
+          },
+        });
+
+        if (backupSale) {
+          this.logger.log(
+            `Order ${odooOrderId}: using VendHQ backup path (saleId=${backupSale.id})`,
+          );
+          const payloads = await this.transformationService.buildSalePayloads(
+            backupSale.id,
+            effectiveRegion,
+          );
+          const txnNumber = await pushToOracle(payloads);
+          if (order.isRefund) {
+            oracleCreditMemoNumber = txnNumber;
+          } else {
+            oracleInvoiceNumber = txnNumber;
+          }
+        } else {
+          // ── Path C: No backup found ───────────────────────────────
+          this.logger.warn(
+            `Order ${odooOrderId}: no BackupOdooOrder (odooBackupOrderId=${order.odooBackupOrderId ?? 'null'}) ` +
+              `and no BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. ` +
+              `Oracle SOAP calls skipped — set up OdooCredential and re-run the backup to populate.`,
+          );
+          oracleInvoiceNumber = order.isRefund ? null : `INV-${order.odooOrderNumber}`;
+          oracleCreditMemoNumber = order.isRefund ? `CM-${order.odooOrderNumber}` : null;
+        }
       }
 
       const oracleReference =

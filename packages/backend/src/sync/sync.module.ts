@@ -9,6 +9,7 @@ import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncController } from './sync.controller';
 import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
+import { OdooTransformationService } from './odoo-transformation.service';
 import { OrderSyncService } from './order-sync.service';
 import { StalledOrdersService } from './stalled-orders.service';
 import { SyncResolver } from './sync.resolver';
@@ -34,6 +35,7 @@ import { ValidationService } from './validation.service';
     TimezoneService,
     ValidationService,
     FusionTransformationService,
+    OdooTransformationService,
     StalledOrdersService,
     SyncResolver,
   ],
@@ -44,6 +46,7 @@ import { ValidationService } from './validation.service';
     TimezoneService,
     ValidationService,
     FusionTransformationService,
+    OdooTransformationService,
     StalledOrdersService,
   ],
 })

@@ -10,6 +10,13 @@ export interface OdooOrderData {
   odooOrderNumber: string;
   branchCode: string;
   branchName?: string;
+  /** Region identifier from the OdooCredential (e.g. "AE", "KW"). Stored on
+   *  OrderSyncQueue so the processor can look up FusionSalesMetadata / StoreConfig
+   *  by region without re-parsing the numeric branchCode. */
+  region?: string;
+  /** BackupOdooOrder.id — links the queue entry back to the raw Odoo backup so
+   *  the processor can fetch full line/payment data for Oracle transformation. */
+  odooBackupOrderId?: string;
   orderDate: Date;
   originalTimezone: string;
   customerName?: string;
@@ -69,6 +76,8 @@ export class OrderSyncService {
         odooOrderNumber: processedData.odooOrderNumber,
         branchCode: processedData.branchCode,
         branchName: processedData.branchName,
+        region: processedData.region,
+        odooBackupOrderId: processedData.odooBackupOrderId,
         orderDate: processedData.orderDate,
         orderDateUtc,
         originalTimezone: processedData.originalTimezone,
@@ -92,6 +101,8 @@ export class OrderSyncService {
       update: {
         odooOrderNumber: processedData.odooOrderNumber,
         branchName: processedData.branchName,
+        region: processedData.region,
+        odooBackupOrderId: processedData.odooBackupOrderId,
         orderDate: processedData.orderDate,
         orderDateUtc,
         originalTimezone: processedData.originalTimezone,
