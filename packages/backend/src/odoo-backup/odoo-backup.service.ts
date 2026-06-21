@@ -90,6 +90,10 @@ export class OdooBackupService {
 
       // Ingest backed-up orders into the OrderSyncQueue so the downstream
       // pipeline (BullMQ → Oracle) has real data to process.
+      // Note: backup (saved/backupSkipped) and ingestion (ingested/ingestSkipped)
+      // are counted separately — an order can be backed up successfully while
+      // failing ingestion (e.g. missing branch mapping), and vice-versa retries
+      // can re-ingest from backup without re-fetching from Odoo.
       let ingested = 0;
       let ingestSkipped = 0;
       for (const order of result.orders) {
@@ -111,7 +115,9 @@ export class OdooBackupService {
       }
 
       this.logger.log(
-        `Odoo backup+ingest done: saved=${result.saved} skipped=${result.skipped} ingested=${ingested} ingestSkipped=${ingestSkipped}`,
+        `Odoo backup+ingest done: ` +
+          `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+          `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

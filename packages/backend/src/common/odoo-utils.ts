@@ -42,6 +42,11 @@ export interface RawOdooOrderFields {
  *
  * @param order      Raw order from the API
  * @param timezone   Override timezone (pass undefined to read from order.timezone)
+ *
+ * Note: when `order.date_order` is absent the current wall-clock time is used
+ * as a best-effort fallback. The caller's `TimezoneService.normalizeToUtc()`
+ * will still apply the correct UTC offset using `originalTimezone`, so the
+ * stored `orderDateUtc` value is consistent even in that edge case.
  */
 export function normalizeOrderForIngestion(
   order: RawOdooOrderFields,

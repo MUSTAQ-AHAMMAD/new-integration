@@ -153,7 +153,11 @@ export class IbqBackupService {
 
         const result = await this.backupRegion(cred);
 
-        // Ingest backed-up orders into OrderSyncQueue
+        // Ingest backed-up orders into OrderSyncQueue.
+        // Backup counts (saved/skipped) and ingestion counts (queued/skipped)
+        // are tracked separately: an order can be backed up but fail to ingest
+        // (e.g. missing branch mapping), and ingestion can be retried from the
+        // backup table without re-fetching from the IBQ API.
         let ingested = 0;
         let ingestSkipped = 0;
         for (const order of result.orders) {
@@ -180,7 +184,9 @@ export class IbqBackupService {
         }
 
         this.logger.log(
-          `IBQ backup+ingest done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped} ingested=${ingested} ingestSkipped=${ingestSkipped}`,
+          `IBQ backup+ingest done for region=${cred.region}: ` +
+            `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+            `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
