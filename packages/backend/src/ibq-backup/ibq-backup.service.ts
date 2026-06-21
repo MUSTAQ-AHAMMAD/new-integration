@@ -21,6 +21,7 @@ import axios from 'axios';
 import {
   DEFAULT_ODOO_TIMEZONE,
   normalizeOrderForIngestion,
+  toApiDatetime,
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
@@ -233,12 +234,12 @@ export class IbqBackupService {
       params['branch_id'] = overrides.branchId;
     }
     if (overrides?.startDate) {
-      params['start_date'] = overrides.startDate;
+      params['start_date'] = toApiDatetime(overrides.startDate);
     } else if (cred.lastSyncAt) {
       params['start_date'] = toIbqDate(cred.lastSyncAt);
     }
     if (overrides?.endDate) {
-      params['end_date'] = overrides.endDate;
+      params['end_date'] = toApiDatetime(overrides.endDate, { end: true });
     }
 
     const baseUrl = cred.baseUrl.replace(/\/$/, '');

@@ -141,6 +141,36 @@ describe('IbqBackupService', () => {
       expect(callParams.params['start_date']).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
     });
 
+    it('appends 00:00:00 to a date-only startDate override from the UI', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred(), { startDate: '2026-02-01' });
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params['start_date']).toBe('2026-02-01 00:00:00');
+    });
+
+    it('appends 23:59:59 to a date-only endDate override from the UI', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred(), { endDate: '2026-02-01' });
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params['end_date']).toBe('2026-02-01 23:59:59');
+    });
+
+    it('does not modify a startDate override that already has a time component', async () => {
+      const { service } = makeService();
+      mockAxios.mockResolvedValue({ data: { result: [] } });
+
+      await service.backupRegion(makeCred(), { startDate: '2026-02-01 21:00:00' });
+
+      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      expect(callParams.params['start_date']).toBe('2026-02-01 21:00:00');
+    });
+
     it('does NOT send start_date param on first run (lastSyncAt null)', async () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });

@@ -7,6 +7,26 @@
 export const DEFAULT_ODOO_TIMEZONE = 'Asia/Dubai';
 
 /**
+ * Ensures a date string sent to the Odoo/IBQ `/api/pos/order` endpoint has a
+ * time component. The UI date-picker produces `YYYY-MM-DD` (no time) but the
+ * API requires `YYYY-MM-DD HH:MM:SS`.
+ *
+ * - If the string already contains a time (a space or 'T' after the date part)
+ *   it is returned unchanged.
+ * - For start dates (default) the time `00:00:00` is appended.
+ * - For end dates pass `{ end: true }` and `23:59:59` is appended instead.
+ */
+export function toApiDatetime(
+  date: string,
+  options?: { end?: boolean },
+): string {
+  // Already has a time component — leave it alone
+  if (/[\sT]\d{2}:\d{2}/.test(date)) return date;
+  const time = options?.end ? '23:59:59' : '00:00:00';
+  return `${date} ${time}`;
+}
+
+/**
  * Extract a branch-code string from an Odoo Many2one branch_id field.
  * Returns null when the field is absent so callers can skip the order.
  *
