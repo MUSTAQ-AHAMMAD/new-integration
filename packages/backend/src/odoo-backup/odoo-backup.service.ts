@@ -16,9 +16,9 @@
  * Per-region Odoo credentials can be stored in the OdooCredential table and
  * used by the manual fetch-odoo endpoint instead of the global env vars.
  */
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import {
   OdooClient,
   OdooOrder,
@@ -182,17 +182,40 @@ export class OdooBackupService {
       limit?: number;
     },
   ): Promise<{ saved: number; skipped: number; orders: OdooOrder[] }> {
-    const baseUrl = cred.baseUrl.replace(/\/$/, '');
-    const resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
-      headers: { 'x-api-key': cred.apiKey },
-      params: {
-        ...(params.branchId !== undefined && { branch_id: params.branchId }),
-        ...(params.startDate && { start_date: params.startDate }),
-        ...(params.endDate && { end_date: params.endDate }),
-        limit: params.limit ?? 100,
-      },
-      timeout: 30_000,
-    });
+    // Ensure the stored baseUrl always has an https:// scheme so that the
+    // axios request doesn't fail with "Invalid URL" when the credential was
+    // saved without an explicit protocol prefix.
+    const rawBase = cred.baseUrl.replace(/\/$/, '');
+    const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
+
+    let resp: import('axios').AxiosResponse<unknown>;
+    try {
+      resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
+        headers: { 'x-api-key': cred.apiKey },
+        params: {
+          ...(params.branchId !== undefined && { branch_id: params.branchId }),
+          ...(params.startDate && { start_date: params.startDate }),
+          ...(params.endDate && { end_date: params.endDate }),
+          limit: params.limit ?? 100,
+        },
+        timeout: 30_000,
+      });
+    } catch (err: unknown) {
+      // Convert AxiosError (network failures, 4xx/5xx from Odoo) into a
+      // BadGatewayException so the caller gets a meaningful HTTP error
+      // instead of a generic 500 "Internal server error".
+      if (err instanceof AxiosError) {
+        const status = err.response?.status;
+        const odooMessage =
+          typeof err.response?.data === 'object' && err.response.data !== null
+            ? JSON.stringify(err.response.data)
+            : err.message;
+        throw new BadGatewayException(
+          `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}`,
+        );
+      }
+      throw err;
+    }
 
     const orders = this.extractOrderList(resp.data);
     let saved = 0;
