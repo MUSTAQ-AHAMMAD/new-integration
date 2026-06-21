@@ -94,10 +94,9 @@ describe('OdooClient.getOrders — response envelope parsing', () => {
 
   // ── KNOWN GAPS — envelopes that silently produce fetched:0 ────────────────
 
-  it('❌ BUG: {result:{records:[...]}} nested envelope → silently returns 0 orders', async () => {
+  it('✅ {result:{records:[...]}} nested envelope (Odoo 17/18 REST API) → orders extracted correctly', async () => {
     // Odoo 17/18 wraps POS orders as { result: { records: [...], length: N } }.
-    // extractList() only unwraps result when it is itself an array, so it
-    // falls through and returns [] — this is the bug behind fetched:0.
+    // extractList() unwraps the nested object and returns the records array.
     const { client, httpGet } = makeClient();
     httpGet.mockResolvedValue({
       data: { result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 } },
@@ -105,18 +104,16 @@ describe('OdooClient.getOrders — response envelope parsing', () => {
 
     const orders = await client.getOrders({ limit: 100 });
 
-    // Documents current broken behaviour — should be 2 once fixed.
-    expect(orders).toHaveLength(0);
+    expect(orders).toHaveLength(2);
   });
 
-  it('❌ BUG: {result:{data:[...]}} nested envelope → silently returns 0 orders', async () => {
+  it('✅ {result:{data:[...]}} nested envelope → orders extracted correctly', async () => {
     const { client, httpGet } = makeClient();
     httpGet.mockResolvedValue({ data: { result: { data: [makeOrder()], count: 1 } } });
 
     const orders = await client.getOrders({ limit: 100 });
 
-    // Documents current broken behaviour — should be 1 once fixed.
-    expect(orders).toHaveLength(0);
+    expect(orders).toHaveLength(1);
   });
 
   it('empty / unrecognised response returns empty array without throwing', async () => {
