@@ -58,7 +58,9 @@ function bigint(row: Record<string, unknown>, name: string): bigint {
   const v = col(row, name);
   if (v == null) return 0n;
   try {
-    // Strip any decimal part (Oracle may return numeric types as floats)
+    // Strip any decimal part (Oracle may return numeric types as floats).
+    // Falls back to 0n so a single bad row does not abort the whole import;
+    // the record will be skipped by Prisma's unique-constraint check.
     return BigInt(String(v).split('.')[0]);
   } catch {
     return 0n;

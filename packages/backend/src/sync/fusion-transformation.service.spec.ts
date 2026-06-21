@@ -42,19 +42,21 @@ function makeOutlet(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeRegister(overrides: Record<string, unknown> = {}) {
+  return {
+    registerName: '',
+    cashAccountId: 201,
+    bankAccountId: 202,
+    cashAccount: 'Cash Account',
+    bankAccount: 'Bank Account',
+    outletId: 'outlet-1',
+    region: 'AE',
+    ...overrides,
+  };
+}
+
 function makeRegisters(overrides: Record<string, unknown> = {}) {
-  return [
-    {
-      registerName: '',
-      cashAccountId: 201,
-      bankAccountId: 202,
-      cashAccount: 'Cash Account',
-      bankAccount: 'Bank Account',
-      outletId: 'outlet-1',
-      region: 'AE',
-      ...overrides,
-    },
-  ];
+  return [makeRegister(overrides)];
 }
 
 function makeSalesMeta(overrides: Record<string, unknown> = {}) {
@@ -430,13 +432,13 @@ describe('FusionTransformationService', () => {
         makeReceiptMethod('Credit Card', false),
       );
       mockPrisma.vendHqRegister.findMany.mockResolvedValue([
-        makeRegisters({
+        makeRegister({
           registerName: '',
           cashAccountId: null,
           bankAccountId: null,
           cashAccount: '',
           bankAccount: '',
-        })[0],
+        }),
       ]);
 
       await expect(service.buildSalePayloads('sale-1', 'AE')).rejects.toThrow(
@@ -456,13 +458,13 @@ describe('FusionTransformationService', () => {
         makeReceiptMethod('Credit Card', false, { bankAccountId: 202 }),
       );
       mockPrisma.vendHqRegister.findMany.mockResolvedValue([
-        makeRegisters({
+        makeRegister({
           registerName: '',
           cashAccountId: 201,
           bankAccountId: 202,
           cashAccount: 'Cash Acc',
           bankAccount: 'Bank Acc',
-        })[0],
+        }),
       ]);
 
       const result = await service.buildSalePayloads('sale-1', 'AE');
@@ -489,13 +491,13 @@ describe('FusionTransformationService', () => {
         makeOutlet({ currency: 'OMR' }),
       );
       mockPrisma.vendHqRegister.findMany.mockResolvedValue([
-        makeRegisters({
+        makeRegister({
           registerName: '',
           cashAccountId: 201,
           bankAccountId: 202,
           cashAccount: 'Cash',
           bankAccount: 'Bank',
-        })[0],
+        }),
       ]);
 
       const result = await service.buildSalePayloads('sale-1', 'OM');
