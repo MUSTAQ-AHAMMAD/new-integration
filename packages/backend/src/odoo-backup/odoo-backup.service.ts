@@ -196,7 +196,7 @@ export class OdooBackupService {
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
-    const apiPath = (cred.apiPath?.trim() || '/api/pos/order');
+    const apiPath = cred.apiPath?.trim() || '/api/pos/order';
 
     let resp: AxiosResponse<unknown>;
     try {
