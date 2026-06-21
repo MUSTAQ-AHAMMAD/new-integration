@@ -74,7 +74,7 @@ export default function FetchOdooPage() {
               className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="">
-                {loadingCreds ? 'Loading credentials…' : '— Global (env var) — '}
+                {loadingCreds ? 'Loading credentials…' : '— Global (env var) —'}
               </option>
               {credentials.map((cred) => (
                 <option key={cred.id} value={cred.id}>

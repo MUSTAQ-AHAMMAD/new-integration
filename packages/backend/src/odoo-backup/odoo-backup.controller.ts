@@ -205,7 +205,7 @@ export class OdooBackupController {
   // ---------------------------------------------------------------------------
 
   private maskKey(key: string): string {
-    if (key.length <= 6) return '*'.repeat(key.length);
-    return `${key.slice(0, 3)}${'*'.repeat(Math.max(4, key.length - 3))}`;
+    if (key.length <= 8) return '*'.repeat(key.length);
+    return `${'*'.repeat(key.length - 4)}${key.slice(-4)}`;
   }
 }

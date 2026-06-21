@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { extractBranchCode, normalizeOrderForIngestion } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
@@ -114,7 +114,7 @@ export class SyncController {
         where: { id: body.credentialId },
       });
       if (!cred) {
-        return { ok: false, error: `Odoo credential not found: ${body.credentialId}` };
+        throw new NotFoundException(`Odoo credential not found: ${body.credentialId}`);
       }
       ({ orders, saved: backedUp, skipped: backupSkipped } =
         await this.odooBackupService.backupOrdersForCredential(cred, {
