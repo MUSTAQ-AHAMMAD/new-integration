@@ -16,9 +16,9 @@
  * Per-region Odoo credentials can be stored in the OdooCredential table and
  * used by the manual fetch-odoo endpoint instead of the global env vars.
  */
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import axios from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 import {
   OdooClient,
   OdooOrder,
@@ -182,17 +182,61 @@ export class OdooBackupService {
       limit?: number;
     },
   ): Promise<{ saved: number; skipped: number; orders: OdooOrder[] }> {
-    const baseUrl = cred.baseUrl.replace(/\/$/, '');
-    const resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
-      headers: { 'x-api-key': cred.apiKey },
-      params: {
-        ...(params.branchId !== undefined && { branch_id: params.branchId }),
-        ...(params.startDate && { start_date: params.startDate }),
-        ...(params.endDate && { end_date: params.endDate }),
-        limit: params.limit ?? 100,
-      },
-      timeout: 30_000,
-    });
+    // Ensure the stored baseUrl always has an https:// scheme so that the
+    // axios request doesn't fail with "Invalid URL" when the credential was
+    // saved without an explicit protocol prefix.
+    const rawBase = cred.baseUrl.replace(/\/$/, '');
+    if (!/^https?:\/\//i.test(rawBase)) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region} baseUrl has no protocol — prepending https://. ` +
+          `Update the credential to include the full URL to avoid ambiguity.`,
+      );
+    }
+    const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
+
+    let resp: AxiosResponse<unknown>;
+    try {
+      resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
+        headers: { 'x-api-key': cred.apiKey },
+        params: {
+          ...(params.branchId !== undefined && { branch_id: params.branchId }),
+          ...(params.startDate && { start_date: params.startDate }),
+          ...(params.endDate && { end_date: params.endDate }),
+          limit: params.limit ?? 100,
+        },
+        timeout: 30_000,
+      });
+    } catch (err: unknown) {
+      // Convert AxiosError (network failures, 4xx/5xx from Odoo) into a
+      // BadGatewayException so the caller gets a meaningful HTTP error
+      // instead of a generic 500 "Internal server error".
+      if (err instanceof AxiosError) {
+        const status = err.response?.status;
+        const data = err.response?.data;
+        // Try to extract a human-readable message from the Odoo error body.
+        // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
+        let odooMessage: string;
+        if (typeof data === 'string' && data) {
+          odooMessage = data;
+        } else if (typeof data === 'object' && data !== null) {
+          const d = data as Record<string, unknown>;
+          const nested = typeof d['error'] === 'object' && d['error'] !== null
+            ? (d['error'] as Record<string, unknown>)
+            : null;
+          odooMessage =
+            (nested && typeof nested['message'] === 'string' ? nested['message'] : null) ??
+            (typeof d['message'] === 'string' ? d['message'] : null) ??
+            (typeof d['error'] === 'string' ? d['error'] : null) ??
+            err.message;
+        } else {
+          odooMessage = err.message;
+        }
+        throw new BadGatewayException(
+          `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}`,
+        );
+      }
+      throw err;
+    }
 
     const orders = this.extractOrderList(resp.data);
     let saved = 0;
