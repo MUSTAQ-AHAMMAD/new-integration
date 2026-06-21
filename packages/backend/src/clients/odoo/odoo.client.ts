@@ -5,7 +5,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosError, AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
 
 export interface OdooOrderLine {
@@ -217,6 +217,20 @@ export class OdooClient {
     try {
       return await operation(attempt);
     } catch (error: unknown) {
+      // 4xx responses are permanent failures — retrying them will not help and
+      // only wastes time/quota.  Surface the error immediately.
+      if (error instanceof AxiosError && error.response?.status !== undefined) {
+        const status = error.response.status;
+        if (status >= 400 && status < 500) {
+          this.logger.error(
+            `Odoo request failed with permanent HTTP ${status} — not retrying`,
+          );
+          throw new ServiceUnavailableException(
+            `Odoo request failed (HTTP ${status}): ${error.message}`,
+          );
+        }
+      }
+
       if (attempt >= 3) {
         this.logger.error('Odoo request failed after retries');
         // Wrap non-HTTP errors so callers receive a proper 503 instead of an

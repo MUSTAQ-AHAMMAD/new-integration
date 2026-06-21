@@ -174,7 +174,7 @@ export class OdooBackupService {
    * Does NOT advance the lastSyncAt watermark — callers decide that.
    */
   async backupOrdersForCredential(
-    cred: { id: string; baseUrl: string; apiKey: string; region: string },
+    cred: { id: string; baseUrl: string; apiKey: string; region: string; apiPath?: string | null },
     params: {
       branchId?: number;
       startDate?: string;
@@ -194,9 +194,13 @@ export class OdooBackupService {
     }
     const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
 
+    // Use the per-credential apiPath when configured; fall back to the POS REST
+    // endpoint which is the default for Odoo instances that expose it.
+    const apiPath = (cred.apiPath?.trim() || '/api/pos/order');
+
     let resp: AxiosResponse<unknown>;
     try {
-      resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
+      resp = await axios.get<unknown>(`${baseUrl}${apiPath}`, {
         headers: { 'x-api-key': cred.apiKey },
         params: {
           ...(params.branchId !== undefined && { branch_id: params.branchId }),
@@ -215,6 +219,8 @@ export class OdooBackupService {
         const data = err.response?.data;
         // Try to extract a human-readable message from the Odoo error body.
         // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
+        // Guard against empty strings by treating them the same as null so the
+        // fallback chain reaches err.message when the body carries no useful text.
         let odooMessage: string;
         if (typeof data === 'string' && data) {
           odooMessage = data;
@@ -224,9 +230,9 @@ export class OdooBackupService {
             ? (d['error'] as Record<string, unknown>)
             : null;
           odooMessage =
-            (nested && typeof nested['message'] === 'string' ? nested['message'] : null) ??
-            (typeof d['message'] === 'string' ? d['message'] : null) ??
-            (typeof d['error'] === 'string' ? d['error'] : null) ??
+            (nested && typeof nested['message'] === 'string' && nested['message'] ? nested['message'] : null) ??
+            (typeof d['message'] === 'string' && d['message'] ? d['message'] : null) ??
+            (typeof d['error'] === 'string' && d['error'] ? d['error'] : null) ??
             err.message;
         } else {
           odooMessage = err.message;
