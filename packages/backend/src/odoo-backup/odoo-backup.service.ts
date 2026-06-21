@@ -12,9 +12,13 @@
  *
  * The service also exposes a `backupOrders` method used by the manual
  * fetch-odoo endpoint so raw data is persisted before processing.
+ *
+ * Per-region Odoo credentials can be stored in the OdooCredential table and
+ * used by the manual fetch-odoo endpoint instead of the global env vars.
  */
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import axios from 'axios';
 import {
   OdooClient,
   OdooOrder,
@@ -161,6 +165,65 @@ export class OdooBackupService {
     }
 
     return { saved, skipped, orders };
+  }
+
+  /**
+   * Fetches orders from a specific OdooCredential (per-region DB credential)
+   * and persists them to backup tables.
+   * Uses a temporary axios instance scoped to the credential's baseUrl/apiKey.
+   * Does NOT advance the lastSyncAt watermark — callers decide that.
+   */
+  async backupOrdersForCredential(
+    cred: { id: string; baseUrl: string; apiKey: string; region: string },
+    params: {
+      branchId?: number;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+    },
+  ): Promise<{ saved: number; skipped: number; orders: OdooOrder[] }> {
+    const baseUrl = cred.baseUrl.replace(/\/$/, '');
+    const resp = await axios.get<unknown>(`${baseUrl}/api/pos/order`, {
+      headers: { 'x-api-key': cred.apiKey },
+      params: {
+        ...(params.branchId !== undefined && { branch_id: params.branchId }),
+        ...(params.startDate && { start_date: params.startDate }),
+        ...(params.endDate && { end_date: params.endDate }),
+        limit: params.limit ?? 100,
+      },
+      timeout: 30_000,
+    });
+
+    const orders = this.extractOrderList(resp.data);
+    let saved = 0;
+    let skipped = 0;
+
+    for (const order of orders) {
+      try {
+        await this.upsertOrder(order);
+        saved++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
+        );
+        skipped++;
+      }
+    }
+
+    return { saved, skipped, orders };
+  }
+
+  /** Flatten various Odoo REST API response envelopes to a plain order array. */
+  private extractOrderList(payload: unknown): OdooOrder[] {
+    if (Array.isArray(payload)) return payload as OdooOrder[];
+    if (typeof payload === 'object' && payload !== null) {
+      const p = payload as Record<string, unknown>;
+      if (Array.isArray(p['records'])) return p['records'] as OdooOrder[];
+      if (Array.isArray(p['result'])) return p['result'] as OdooOrder[];
+      if (Array.isArray(p['data'])) return p['data'] as OdooOrder[];
+    }
+    return [];
   }
 
   // ---------------------------------------------------------------------------

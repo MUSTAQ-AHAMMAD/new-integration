@@ -22,6 +22,7 @@ interface PrismaDelegate {
 const TABLE_MAP: Record<string, keyof PrismaService> = {
   'fusion-credentials': 'fusionCredential',
   'vendhq-credentials': 'vendHqCredential',
+  'odoo-credentials': 'odooCredential',
   'outlet-config': 'outletIntegrationConfig',
   'fusion-bu-map': 'fusionBusinessUnitMap',
   'fusion-receipt-methods': 'fusionReceiptMethod',

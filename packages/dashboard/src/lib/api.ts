@@ -186,11 +186,15 @@ export const api = {
     }),
 
   /** Manually pull orders from Odoo and ingest them into the sync queue */
-  fetchOdooOrders: (params?: { branchId?: number; startDate?: string; endDate?: string; limit?: number }) =>
-    apiRequest<{ ok: boolean; fetched: number; ingested: number; skipped: number; errors: string[] }>('/sync/fetch-odoo', {
+  fetchOdooOrders: (params?: { credentialId?: string; branchId?: number; startDate?: string; endDate?: string; limit?: number }) =>
+    apiRequest<{ ok: boolean; fetched: number; backedUp: number; backupSkipped: number; ingested: number; skipped: number; errors: string[] }>('/sync/fetch-odoo', {
       method: 'POST',
       body: JSON.stringify(params ?? {}),
     }),
+
+  /** List all per-region Odoo credentials (API keys are masked) */
+  listOdooCredentials: () =>
+    apiRequest<OdooCredential[]>('/odoo-backup/credentials'),
 
   /** List all IBQ credentials (API keys are masked) */
   listIbqCredentials: () =>
@@ -441,6 +445,17 @@ export interface VendHqCredential {
   timezoneOffset: number;
   fusionTaxCode: string | null;
   businessStartDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OdooCredential {
+  id: string;
+  baseUrl: string;
+  apiKey: string;
+  region: string;
+  active: boolean;
+  lastSyncAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
