@@ -121,7 +121,7 @@ export class SyncController {
           branchId: body.branchId,
           startDate: body.startDate,
           endDate: body.endDate,
-          limit: body.limit ?? 100,
+          limit: body.limit,
         }));
     } else {
       // Legacy path: use the global ODOO_BASE_URL / ODOO_API_KEY env vars.
@@ -130,7 +130,7 @@ export class SyncController {
           branchId: body.branchId,
           startDate: body.startDate,
           endDate: body.endDate,
-          limit: body.limit ?? 100,
+          limit: body.limit,
         }));
     }
 

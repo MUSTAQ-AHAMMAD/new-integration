@@ -149,7 +149,7 @@ export class OdooBackupService {
       branchId: params.branchId,
       startDate: params.startDate,
       endDate: params.endDate,
-      limit: params.limit ?? 100,
+      limit: params.limit,
     });
 
     let saved = 0;
@@ -431,6 +431,16 @@ export class OdooBackupService {
       // IBQ unified API: { results: [{ order: { order_id, ... } }] }
       if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
       if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
+      // Odoo 17/18 REST API: { result: { records: [...], length: N } }
+      // or { result: { data: [...], count: N } } or { result: { orders: [...] } }.
+      // This nested-object case is checked before the direct-array fallbacks below
+      // so the more specific envelope pattern takes precedence.
+      if (typeof p['result'] === 'object' && p['result'] !== null && !Array.isArray(p['result'])) {
+        const inner = p['result'] as Record<string, unknown>;
+        if (Array.isArray(inner['records'])) return this.normalizeOrderItems(inner['records']);
+        if (Array.isArray(inner['data'])) return this.normalizeOrderItems(inner['data']);
+        if (Array.isArray(inner['orders'])) return this.normalizeOrderItems(inner['orders']);
+      }
       if (Array.isArray(p['result'])) return this.normalizeOrderItems(p['result']);
       if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
     }

@@ -300,14 +300,31 @@ export class OdooClient {
         return this.normalizeItems<T>(records);
       }
 
-      const result = payload.result;
-      if (Array.isArray(result)) {
-        return this.normalizeItems<T>(result);
-      }
-
       const data = payload.data;
       if (Array.isArray(data)) {
         return this.normalizeItems<T>(data);
+      }
+
+      // Odoo 17/18 REST API: { result: { records: [...], length: N } }
+      // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
+      const result = payload.result;
+      // Explicit typeof + !Array.isArray guards are used here to narrow `result`
+      // to a plain object so we can safely access its nested array properties.
+      if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+        const resultObj = result as Record<string, unknown>;
+        if (Array.isArray(resultObj['records'])) {
+          return this.normalizeItems<T>(resultObj['records']);
+        }
+        if (Array.isArray(resultObj['data'])) {
+          return this.normalizeItems<T>(resultObj['data']);
+        }
+        if (Array.isArray(resultObj['orders'])) {
+          return this.normalizeItems<T>(resultObj['orders']);
+        }
+      }
+
+      if (Array.isArray(result)) {
+        return this.normalizeItems<T>(result);
       }
     }
 
