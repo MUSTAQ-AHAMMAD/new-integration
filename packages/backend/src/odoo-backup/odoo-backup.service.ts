@@ -87,7 +87,19 @@ export class OdooBackupService {
         : undefined;
 
       const runAt = new Date();
-      const result = await this.backupOrders({ startDate, limit: 500 });
+      const result = await this.backupOrders({ startDate });
+
+      // Pre-load StoreConfigurations for branchCode resolution
+      const storeConfigs = await this.prisma.storeConfiguration.findMany({
+        where: { isActive: true },
+        select: { branchCode: true, odooBranchId: true, region: true },
+      });
+      const branchIdMap = new Map(
+        storeConfigs.map((sc) => [
+          sc.odooBranchId,
+          { branchCode: sc.branchCode, region: sc.region ?? null },
+        ]),
+      );
 
       // Advance the watermark after a successful cron run
       await this.prisma.odooBackupState.upsert({
@@ -111,7 +123,26 @@ export class OdooBackupService {
             ingestSkipped++;
             continue;
           }
-          await this.orderSyncService.ingestOrder(payload);
+
+          // Resolve canonical branchCode from StoreConfiguration.odooBranchId
+          const odooBranchId = order.branch_id != null
+            ? (Array.isArray(order.branch_id) ? order.branch_id[0] : order.branch_id)
+            : null;
+          const storeEntry = odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+          const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+          const resolvedRegion = storeEntry?.region ?? null;
+
+          const backupOrder = await this.prisma.backupOdooOrder.findUnique({
+            where: { orderId: order.id },
+            select: { id: true },
+          });
+
+          await this.orderSyncService.ingestOrder({
+            ...payload,
+            branchCode: resolvedBranchCode,
+            region: resolvedRegion ?? undefined,
+            odooBackupOrderId: backupOrder?.id,
+          });
           ingested++;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -187,12 +218,27 @@ export class OdooBackupService {
       return;
     }
 
+    // Pre-load all active StoreConfiguration records so we can resolve the
+    // canonical branchCode for each Odoo order's numeric branch_id without
+    // issuing a separate DB query per order.
+    const storeConfigs = await this.prisma.storeConfiguration.findMany({
+      where: { isActive: true },
+      select: { branchCode: true, odooBranchId: true, region: true },
+    });
+    // Map odooBranchId → { branchCode, region } for fast lookup
+    const branchIdMap = new Map(
+      storeConfigs.map((sc) => [
+        sc.odooBranchId,
+        { branchCode: sc.branchCode, region: sc.region ?? null },
+      ]),
+    );
+
     for (const cred of credentials) {
       const runAt = new Date();
       try {
         const result = await this.backupOrdersForCredential(cred, {
           startDate: cred.lastSyncAt?.toISOString(),
-          limit: 500,
+          limit: undefined, // fetch all pages
         });
 
         // Ingest backed-up orders into the OrderSyncQueue.
@@ -209,7 +255,33 @@ export class OdooBackupService {
               ingestSkipped++;
               continue;
             }
-            await this.orderSyncService.ingestOrder(payload);
+
+            // ── Resolve canonical branchCode from StoreConfiguration ──────────
+            // normalizeOrderForIngestion sets branchCode = String(branch_id) which
+            // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
+            // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
+            // the real branchCode so validation and Oracle transformation work correctly.
+            const odooBranchId = order.branch_id != null
+              ? (Array.isArray(order.branch_id) ? order.branch_id[0] : order.branch_id)
+              : null;
+            const storeEntry = odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+            const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+            // Prefer region from credential; fall back to StoreConfiguration.region
+            const resolvedRegion = cred.region || storeEntry?.region || null;
+
+            // Look up the BackupOdooOrder record we just upserted so we can link
+            // the queue entry back to the raw backup for transformation.
+            const backupOrder = await this.prisma.backupOdooOrder.findUnique({
+              where: { orderId: order.id },
+              select: { id: true },
+            });
+
+            await this.orderSyncService.ingestOrder({
+              ...payload,
+              branchCode: resolvedBranchCode,
+              region: resolvedRegion ?? undefined,
+              odooBackupOrderId: backupOrder?.id,
+            });
             ingested++;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -409,7 +481,7 @@ export class OdooBackupService {
 
     for (const order of allOrders) {
       try {
-        await this.upsertOrder(order);
+        await this.upsertOrder(order, cred.region);
         saved++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -492,8 +564,16 @@ export class OdooBackupService {
    * Upserts one Odoo order and its related line items and payments.
    * Uses the @@unique([orderId]) constraint on BackupOdooOrder to prevent
    * duplicate header rows.
+   *
+   * @param order           Raw order from the Odoo API
+   * @param region          Region identifier from the credential (optional)
+   * @param resolvedBranchCode  Canonical branchCode from StoreConfiguration (optional)
    */
-  private async upsertOrder(order: OdooOrder): Promise<void> {
+  private async upsertOrder(
+    order: OdooOrder,
+    region?: string | null,
+    resolvedBranchCode?: string | null,
+  ): Promise<void> {
     const branchId = resolveId(order.branch_id);
     // Try to get the branch name from the Many2one field; fall back to the
     // part of the order name before the first "/" (e.g. "CCNTRBHR" from
@@ -518,6 +598,8 @@ export class OdooBackupService {
       partnerId,
       partnerName,
       timezone: typeof order.timezone === 'string' ? order.timezone : null,
+      region: region ?? null,
+      resolvedBranchCode: resolvedBranchCode ?? null,
       rawJson: order as object,
     };
 

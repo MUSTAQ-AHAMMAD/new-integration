@@ -197,6 +197,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       mockQueues as unknown as QueuesService,
       mockSoapClient as unknown as OracleSoapClient,
       mockTransformation as unknown as FusionTransformationService,
+      {} as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
     );
 
     jest.clearAllMocks();
