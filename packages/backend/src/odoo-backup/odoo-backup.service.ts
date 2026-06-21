@@ -186,6 +186,12 @@ export class OdooBackupService {
     // axios request doesn't fail with "Invalid URL" when the credential was
     // saved without an explicit protocol prefix.
     const rawBase = cred.baseUrl.replace(/\/$/, '');
+    if (!/^https?:\/\//i.test(rawBase)) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region} baseUrl has no protocol — prepending https://. ` +
+          `Update the credential to include the full URL to avoid ambiguity.`,
+      );
+    }
     const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
 
     let resp: AxiosResponse<unknown>;
@@ -207,12 +213,24 @@ export class OdooBackupService {
       if (err instanceof AxiosError) {
         const status = err.response?.status;
         const data = err.response?.data;
-        const odooMessage =
-          typeof data === 'string' && data
-            ? data
-            : typeof data === 'object' && data !== null
-              ? JSON.stringify(data)
-              : err.message;
+        // Try to extract a human-readable message from the Odoo error body.
+        // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
+        let odooMessage: string;
+        if (typeof data === 'string' && data) {
+          odooMessage = data;
+        } else if (typeof data === 'object' && data !== null) {
+          const d = data as Record<string, unknown>;
+          const nested = typeof d['error'] === 'object' && d['error'] !== null
+            ? (d['error'] as Record<string, unknown>)
+            : null;
+          odooMessage =
+            (nested && typeof nested['message'] === 'string' ? nested['message'] : null) ??
+            (typeof d['message'] === 'string' ? d['message'] : null) ??
+            (typeof d['error'] === 'string' ? d['error'] : null) ??
+            err.message;
+        } else {
+          odooMessage = err.message;
+        }
         throw new BadGatewayException(
           `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}`,
         );
