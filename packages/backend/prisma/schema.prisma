@@ -1493,6 +1493,26 @@ model BackupIbqOrderPayment {
 
 // ─── Odoo (Main) Backup Tables ────────────────────────────────────────────────
 
+/// Stores API credentials for each Odoo instance (one per region/environment).
+/// Enables per-region Odoo fetches without relying solely on env vars.
+model OdooCredential {
+  id         String    @id @default(cuid())
+  /// Base URL of the Odoo instance, e.g. "https://mycompany.odoo.com"
+  baseUrl    String
+  /// API key sent as the `x-api-key` header on every request
+  apiKey     String
+  /// Human-readable region identifier, e.g. "AE", "SA", "KW"
+  region     String
+  active     Boolean   @default(true)
+  /// Timestamp watermark: next scheduled run fetches orders after this date
+  lastSyncAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([region])
+  @@index([active])
+}
+
 /// Tracks the last successful sync watermark for the main Odoo backup job.
 model OdooBackupState {
   id         String    @id @default(cuid())

@@ -86,6 +86,7 @@ const adminGroups: NavGroup[] = [
     items: [
       { href: '/admin/fusion-credentials', label: 'Fusion Credentials', icon: Server },
       { href: '/admin/vendhq-credentials', label: 'VendHQ Credentials', icon: Key },
+      { href: '/admin/odoo-credentials', label: 'Odoo Credentials', icon: Key },
     ],
   },
   {

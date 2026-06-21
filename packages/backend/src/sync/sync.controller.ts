@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { extractBranchCode } from '../common/odoo-utils';
+import { extractBranchCode, normalizeOrderForIngestion } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
@@ -16,6 +17,7 @@ export class SyncController {
     private readonly orderSyncService: OrderSyncService,
     private readonly odooBackupService: OdooBackupService,
     private readonly ibqBackupService: IbqBackupService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post('jobs')
@@ -95,21 +97,42 @@ export class SyncController {
   async fetchOdooOrders(
     @Body()
     body: {
+      credentialId?: string;
       branchId?: number;
       startDate?: string;
       endDate?: string;
       limit?: number;
     },
   ) {
-    // Step 1: fetch from Odoo and persist raw data to backup tables so the
-    // data is never lost even if the ingestion step fails.
-    const { orders, saved: backedUp, skipped: backupSkipped } =
-      await this.odooBackupService.backupOrders({
-        branchId: body.branchId,
-        startDate: body.startDate,
-        endDate: body.endDate,
-        limit: body.limit ?? 100,
+    let orders: import('../clients/odoo/odoo.client').OdooOrder[];
+    let backedUp: number;
+    let backupSkipped: number;
+
+    if (body.credentialId) {
+      // Per-region credential path: use the stored baseUrl/apiKey.
+      const cred = await this.prisma.odooCredential.findUnique({
+        where: { id: body.credentialId },
       });
+      if (!cred) {
+        throw new NotFoundException(`Odoo credential not found: ${body.credentialId}`);
+      }
+      ({ orders, saved: backedUp, skipped: backupSkipped } =
+        await this.odooBackupService.backupOrdersForCredential(cred, {
+          branchId: body.branchId,
+          startDate: body.startDate,
+          endDate: body.endDate,
+          limit: body.limit ?? 100,
+        }));
+    } else {
+      // Legacy path: use the global ODOO_BASE_URL / ODOO_API_KEY env vars.
+      ({ orders, saved: backedUp, skipped: backupSkipped } =
+        await this.odooBackupService.backupOrders({
+          branchId: body.branchId,
+          startDate: body.startDate,
+          endDate: body.endDate,
+          limit: body.limit ?? 100,
+        }));
+    }
 
     // Step 2: ingest each backed-up order into the sync queue.
     let ingested = 0;
@@ -201,28 +224,28 @@ export class SyncController {
 
     for (const order of orders) {
       try {
-        const branchCode = extractBranchCode(order.branch_id);
+        // Use normalizeOrderForIngestion which handles branch_id extraction.
+        // For IBQ instances that don't set branch_id, fall back to config_id
+        // (the POS configuration / terminal id) as the branch code so orders
+        // are not silently skipped by the ingestion step.
+        const payload = normalizeOrderForIngestion(
+          {
+            ...order,
+            branch_id: order.branch_id ?? order.config_id ?? null,
+          },
+          'Asia/Dubai',
+        );
 
-        if (!branchCode) {
+        if (!payload) {
           skipped++;
-          errors.push(`Order ${String(order.name ?? order.id)} skipped: missing branch_id`);
+          errors.push(
+            `Order ${String(order.name ?? order.pos_reference ?? order.id)} skipped: ` +
+              `no branch_id or config_id available for routing`,
+          );
           continue;
         }
 
-        const amountTotal = Number(order.amount_total ?? 0);
-        const state = typeof order.state === 'string' ? order.state : 'draft';
-
-        await this.orderSyncService.ingestOrder({
-          odooOrderId: String(order.id),
-          odooOrderNumber: String(order.name ?? order.id),
-          branchCode,
-          orderDate: order.date_order ? new Date(order.date_order) : new Date(),
-          originalTimezone: 'Asia/Dubai',
-          totalAmount: amountTotal,
-          isPaid: ['paid', 'done', 'posted'].includes(state),
-          isCancelled: state === 'cancel',
-          isRefund: amountTotal < 0,
-        });
+        await this.orderSyncService.ingestOrder(payload);
         ingested++;
       } catch (err) {
         skipped++;

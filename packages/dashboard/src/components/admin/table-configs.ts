@@ -39,6 +39,17 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'active', label: 'Active', type: 'boolean' },
     ],
   },
+  'odoo-credentials': {
+    title: 'Odoo Credentials',
+    fields: [
+      ...SYS_FIELDS,
+      { key: 'baseUrl', label: 'Base URL', required: true },
+      { key: 'apiKey', label: 'API Key', required: true },
+      { key: 'region', label: 'Region', required: true },
+      { key: 'active', label: 'Active', type: 'boolean' },
+      { key: 'lastSyncAt', label: 'Last Sync At', type: 'date', readOnly: true },
+    ],
+  },
   'outlet-config': {
     title: 'Outlet Integration Config',
     oracleTable: 'OUTLETS_INTEGRATION_CONFIG',
