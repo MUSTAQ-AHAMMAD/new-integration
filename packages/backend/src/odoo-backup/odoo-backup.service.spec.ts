@@ -196,10 +196,8 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
   // ── KNOWN GAPS — envelopes that return fetched:0 silently ────────────────
 
-  it('❌ BUG: {result:{records:[...]}} nested envelope → silently returns fetched:0', async () => {
+  it('handles {result:{records:[...]}} nested envelope (Odoo 17/18 REST API)', async () => {
     // Odoo 17/18 often wraps results as { result: { records: [...], length: N } }.
-    // extractOrderList() only checks result when it is a direct array,
-    // so the nested records array is never reached → orders = [].
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({
       data: { result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 } },
@@ -207,12 +205,10 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
     const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    // This assertion documents the current (broken) behaviour.
-    // When fixed, it should equal 2.
-    expect(result.orders).toHaveLength(0);
+    expect(result.orders).toHaveLength(2);
   });
 
-  it('❌ BUG: {result:{data:[...]}} nested envelope → silently returns fetched:0', async () => {
+  it('handles {result:{data:[...]}} nested envelope', async () => {
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({
       data: { result: { data: [makeOrder()], count: 1 } },
@@ -220,11 +216,10 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
     const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    // Documents current broken behaviour — should be 1 when fixed.
-    expect(result.orders).toHaveLength(0);
+    expect(result.orders).toHaveLength(1);
   });
 
-  it('❌ BUG: {result:{orders:[...]}} nested envelope → silently returns fetched:0', async () => {
+  it('handles {result:{orders:[...]}} nested envelope', async () => {
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({
       data: { result: { orders: [makeOrder()] } },
@@ -232,8 +227,7 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
     const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    // Documents current broken behaviour — should be 1 when fixed.
-    expect(result.orders).toHaveLength(0);
+    expect(result.orders).toHaveLength(1);
   });
 });
 

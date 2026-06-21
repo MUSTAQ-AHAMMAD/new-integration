@@ -300,14 +300,28 @@ export class OdooClient {
         return this.normalizeItems<T>(records);
       }
 
-      const result = payload.result;
-      if (Array.isArray(result)) {
-        return this.normalizeItems<T>(result);
-      }
-
       const data = payload.data;
       if (Array.isArray(data)) {
         return this.normalizeItems<T>(data);
+      }
+
+      // Odoo 17/18 REST API: { result: { records: [...], length: N } }
+      // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
+      const result = payload.result;
+      if (this.isRecord(result) && !Array.isArray(result)) {
+        if (Array.isArray(result.records)) {
+          return this.normalizeItems<T>(result.records);
+        }
+        if (Array.isArray(result.data)) {
+          return this.normalizeItems<T>(result.data);
+        }
+        if (Array.isArray(result.orders)) {
+          return this.normalizeItems<T>(result.orders as unknown[]);
+        }
+      }
+
+      if (Array.isArray(result)) {
+        return this.normalizeItems<T>(result);
       }
     }
 
