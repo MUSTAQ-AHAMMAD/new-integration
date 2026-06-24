@@ -89,12 +89,14 @@ export class SyncService {
     // - COMPLETED: no records at all (nothing to do)
     // - PARTIAL: all records were immediately skipped (no Oracle pushes queued)
     // - PENDING: at least one order was enqueued for Oracle processing
-    const finalStatus: JobStatus =
-      totalRecords === 0
-        ? JobStatus.COMPLETED
-        : enqueuedCount === 0
-          ? JobStatus.PARTIAL
-          : JobStatus.PENDING;
+    let finalStatus: JobStatus;
+    if (totalRecords === 0) {
+      finalStatus = JobStatus.COMPLETED;
+    } else if (enqueuedCount === 0) {
+      finalStatus = JobStatus.PARTIAL;
+    } else {
+      finalStatus = JobStatus.PENDING;
+    }
 
     // processedRecords starts at skippedCount — the orders that were immediately
     // handled (marked SKIPPED) without going through the queue.
