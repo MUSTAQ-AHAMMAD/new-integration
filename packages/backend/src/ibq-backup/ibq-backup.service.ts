@@ -7,8 +7,11 @@
  *     integMode = 'IBQ_BACKUP').
  *  2. Fetches POS orders from GET /api/pos/order using a start_date watermark
  *     (lastSyncAt) so only new/updated records are retrieved each run.
- *  3. Upserts each order into BackupIbqOrder / BackupIbqOrderLine /
- *     BackupIbqOrderPayment.
+ *     Paginates (offset/limit) until fewer than IBQ_PAGE_SIZE records are
+ *     returned so every order is captured in a single invocation.
+ *  3. Upserts each order into BackupIbqOrder, then replaces all child
+ *     BackupIbqOrderLine / BackupIbqOrderPayment rows via deleteMany +
+ *     createMany (two round-trips per order instead of N+1 per line/payment).
  *  4. Advances the lastSyncAt watermark on the credential.
  *  5. Ingests each fetched order into OrderSyncQueue so the downstream
  *     BullMQ→Oracle pipeline has real data to process.
@@ -80,6 +83,8 @@ interface IbqApiResponse {
 const IBQ_INTEG_MODE = 'IBQ_BACKUP';
 const STATUS_ENABLED = 'ENABLED';
 const STATUS_DISABLED = 'DISABLED';
+/** Records fetched per page during paginated cron runs */
+const IBQ_PAGE_SIZE = 500;
 
 /** Format a Date as the YYYY-MM-DD HH:MM:SS string the IBQ API expects */
 function toIbqDate(d: Date): string {
@@ -212,10 +217,14 @@ export class IbqBackupService {
    * Fetches and persists all new POS orders for one IBQ credential.
    * Uses lastSyncAt as the start_date watermark so only new/updated orders
    * are fetched on each run.
-   * Exposed publicly so the controller can trigger a manual run.
    *
-   * Optional overrides are used by the manual fetch endpoint; the cron
-   * path passes no overrides so the watermark logic is unaffected.
+   * When called from the cron (no overrides), the method paginates via
+   * offset/limit until the API returns fewer than IBQ_PAGE_SIZE records so
+   * every order is captured in a single invocation.  When called with an
+   * explicit limit override (e.g. from the manual fetch endpoint) pagination
+   * is skipped and exactly that many records are returned.
+   *
+   * Exposed publicly so the controller can trigger a manual run.
    */
   async backupRegion(
     cred: {
@@ -234,53 +243,68 @@ export class IbqBackupService {
       limit?: number;
     },
   ): Promise<{ saved: number; skipped: number; orders: IbqOrderRaw[] }> {
-    const params: Record<string, string | number> = {
-      limit: overrides?.limit ?? 500,
-    };
+    const runAt = new Date();
+    const allOrders: IbqOrderRaw[] = [];
+    let totalSaved = 0;
+    let totalSkipped = 0;
 
-    const effectiveCompanyId = overrides?.companyId ?? cred.companyId;
-    if (effectiveCompanyId != null) {
-      params['company_id'] = effectiveCompanyId;
-    }
-    if (overrides?.branchId != null) {
-      params['branch_id'] = overrides.branchId;
-    }
-    if (overrides?.startDate) {
-      params['start_date'] = toApiDatetime(overrides.startDate);
-    } else if (cred.lastSyncAt) {
-      params['start_date'] = toIbqDate(cred.lastSyncAt);
-    }
-    if (overrides?.endDate) {
-      params['end_date'] = toApiDatetime(overrides.endDate, { end: true });
-    }
+    // Use a fixed limit override when provided; otherwise paginate with IBQ_PAGE_SIZE
+    const pageSize = overrides?.limit ?? IBQ_PAGE_SIZE;
+    const shouldPaginate = !overrides?.limit;
+    let offset = 0;
 
     const baseUrl = cred.baseUrl.replace(/\/$/, '');
-    const resp = await axios.get<IbqApiResponse>(`${baseUrl}/api/pos/order`, {
-      headers: {
-        'x-api-key': cred.apiKey,
-        'Content-Type': 'application/json',
-      },
-      params,
-      timeout: 30_000,
-    });
 
-    const orders = extractOrders(resp.data ?? {});
-    let saved = 0;
-    let skipped = 0;
-    const runAt = new Date();
+    while (true) {
+      const params: Record<string, string | number> = { limit: pageSize };
+      if (shouldPaginate) params['offset'] = offset;
 
-    for (const order of orders) {
-      try {
-        const wasNew = await this.upsertOrder(order, cred.region);
-        if (wasNew) saved++;
-        else skipped++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Failed to persist IBQ order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
-        );
-        skipped++;
+      const effectiveCompanyId = overrides?.companyId ?? cred.companyId;
+      if (effectiveCompanyId != null) {
+        params['company_id'] = effectiveCompanyId;
       }
+      if (overrides?.branchId != null) {
+        params['branch_id'] = overrides.branchId;
+      }
+      if (overrides?.startDate) {
+        params['start_date'] = toApiDatetime(overrides.startDate);
+      } else if (cred.lastSyncAt) {
+        params['start_date'] = toIbqDate(cred.lastSyncAt);
+      }
+      if (overrides?.endDate) {
+        params['end_date'] = toApiDatetime(overrides.endDate, { end: true });
+      }
+
+      const resp = await axios.get<IbqApiResponse>(`${baseUrl}/api/pos/order`, {
+        headers: {
+          'x-api-key': cred.apiKey,
+          'Content-Type': 'application/json',
+        },
+        params,
+        timeout: 30_000,
+      });
+
+      const orders = extractOrders(resp.data ?? {});
+      if (orders.length === 0) break;
+
+      for (const order of orders) {
+        try {
+          const wasNew = await this.upsertOrder(order, cred.region);
+          if (wasNew) totalSaved++;
+          else totalSkipped++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Failed to persist IBQ order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
+          );
+          totalSkipped++;
+        }
+      }
+      allOrders.push(...orders);
+
+      // Stop if not paginating or if we received fewer records than requested
+      if (!shouldPaginate || orders.length < pageSize) break;
+      offset += pageSize;
     }
 
     // Advance watermark only on scheduled cron runs (no overrides)
@@ -291,7 +315,7 @@ export class IbqBackupService {
       });
     }
 
-    return { saved, skipped, orders };
+    return { saved: totalSaved, skipped: totalSkipped, orders: allOrders };
   }
 
   /**
@@ -394,8 +418,13 @@ export class IbqBackupService {
 
   /**
    * Upserts one IBQ POS order and its line items + payments.
-   * Returns true when the record was new or updated, false when skipped.
-   * Uses the @@unique([orderId, region]) constraint to prevent duplicates.
+   *
+   * Parent BackupIbqOrder: findUnique + create/update (preserving the
+   * is-new flag for saved/skipped counting).
+   * Child BackupIbqOrderLine / BackupIbqOrderPayment: deleteMany then
+   * createMany so stale rows are replaced without N+1 findFirst calls.
+   *
+   * Returns true when the record was newly created, false when it was updated.
    */
   private async upsertOrder(
     order: IbqOrderRaw,
@@ -452,81 +481,53 @@ export class IbqBackupService {
       parentId = created.id;
     }
 
-    // ── Order lines ──────────────────────────────────────────────────────────
+    // ── Order lines: delete stale rows then bulk-insert fresh ones ────────────
     const lines: IbqOrderLineRaw[] = Array.isArray(order.lines)
       ? order.lines
       : [];
 
-    for (const line of lines) {
-      const productId = resolveId(line.product_id);
-      const productName = resolveName(line.product_id);
-      const lineId = typeof line.id === 'number' ? line.id : null;
-
-      const existingLine = lineId
-        ? await this.prisma.backupIbqOrderLine.findFirst({
-            where: { orderId: order.id, lineId, region },
-            select: { id: true },
-          })
-        : null;
-
-      const lineData = {
-        orderId: order.id,
-        lineId,
-        productId,
-        productName,
-        qty: line.qty ?? null,
-        priceUnit: line.price_unit ?? null,
-        priceSubtotal: line.price_subtotal ?? null,
-        priceSubtotalIncl: line.price_subtotal_incl ?? null,
-        discount: line.discount ?? null,
-        region,
-        parentOrderId: parentId,
-      };
-
-      if (existingLine) {
-        await this.prisma.backupIbqOrderLine.update({
-          where: { id: existingLine.id },
-          data: lineData,
-        });
-      } else {
-        await this.prisma.backupIbqOrderLine.create({ data: lineData });
-      }
+    await this.prisma.backupIbqOrderLine.deleteMany({
+      where: { orderId: order.id, region },
+    });
+    if (lines.length > 0) {
+      await this.prisma.backupIbqOrderLine.createMany({
+        data: lines.map((line) => ({
+          orderId: order.id,
+          lineId: typeof line.id === 'number' ? line.id : null,
+          productId: resolveId(line.product_id),
+          productName: resolveName(line.product_id),
+          qty: line.qty ?? null,
+          priceUnit: line.price_unit ?? null,
+          priceSubtotal: line.price_subtotal ?? null,
+          priceSubtotalIncl: line.price_subtotal_incl ?? null,
+          discount: line.discount ?? null,
+          region,
+          parentOrderId: parentId,
+        })),
+      });
     }
 
-    // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
+    // ── Payments: Odoo v15 uses statement_ids, v18 may use payment_ids ────────
     const rawPayments: IbqOrderPaymentRaw[] = Array.isArray(order.statement_ids)
       ? order.statement_ids
       : Array.isArray(order.payment_ids)
         ? order.payment_ids
         : [];
 
-    for (const pmt of rawPayments) {
-      const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
-
-      const existingPmt = pmtId
-        ? await this.prisma.backupIbqOrderPayment.findFirst({
-            where: { orderId: order.id, paymentId: pmtId, region },
-            select: { id: true },
-          })
-        : null;
-
-      const pmtData = {
-        orderId: order.id,
-        paymentId: pmtId,
-        paymentName: pmt.name ?? null,
-        amount: pmt.amount ?? null,
-        region,
-        parentOrderId: parentId,
-      };
-
-      if (existingPmt) {
-        await this.prisma.backupIbqOrderPayment.update({
-          where: { id: existingPmt.id },
-          data: pmtData,
-        });
-      } else {
-        await this.prisma.backupIbqOrderPayment.create({ data: pmtData });
-      }
+    await this.prisma.backupIbqOrderPayment.deleteMany({
+      where: { orderId: order.id, region },
+    });
+    if (rawPayments.length > 0) {
+      await this.prisma.backupIbqOrderPayment.createMany({
+        data: rawPayments.map((pmt) => ({
+          orderId: order.id,
+          paymentId: typeof pmt.id === 'number' ? pmt.id : null,
+          paymentName: pmt.name ?? null,
+          amount: pmt.amount ?? null,
+          region,
+          parentOrderId: parentId,
+        })),
+      });
     }
 
     return !existing;

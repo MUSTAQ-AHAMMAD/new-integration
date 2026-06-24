@@ -43,14 +43,12 @@ function makePrisma() {
       update: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
     },
     backupIbqOrderLine: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     backupIbqOrderPayment: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
 }
@@ -256,11 +254,18 @@ describe('IbqBackupService', () => {
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
       prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
-      prisma.backupIbqOrderLine.findFirst.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderLine.create).toHaveBeenCalledTimes(2);
+      expect(prisma.backupIbqOrderLine.deleteMany).toHaveBeenCalled();
+      expect(prisma.backupIbqOrderLine.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.arrayContaining([
+            expect.objectContaining({ lineId: 1, qty: 2 }),
+            expect.objectContaining({ lineId: 2, qty: 1 }),
+          ]),
+        }),
+      );
     });
 
     it('persists payments from statement_ids when present', async () => {
@@ -270,14 +275,15 @@ describe('IbqBackupService', () => {
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
       prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
-      prisma.backupIbqOrderPayment.findFirst.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledTimes(1);
-      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledWith(
+      expect(prisma.backupIbqOrderPayment.deleteMany).toHaveBeenCalled();
+      expect(prisma.backupIbqOrderPayment.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ paymentName: 'Cash', amount: 105.0 }),
+          data: expect.arrayContaining([
+            expect.objectContaining({ paymentName: 'Cash', amount: 105.0 }),
+          ]),
         }),
       );
     });
@@ -290,14 +296,15 @@ describe('IbqBackupService', () => {
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
       prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
-      prisma.backupIbqOrderPayment.findFirst.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledTimes(1);
-      expect(prisma.backupIbqOrderPayment.create).toHaveBeenCalledWith(
+      expect(prisma.backupIbqOrderPayment.deleteMany).toHaveBeenCalled();
+      expect(prisma.backupIbqOrderPayment.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ paymentName: 'Card', amount: 50.0 }),
+          data: expect.arrayContaining([
+            expect.objectContaining({ paymentName: 'Card', amount: 50.0 }),
+          ]),
         }),
       );
     });

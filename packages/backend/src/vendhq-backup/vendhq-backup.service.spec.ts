@@ -31,7 +31,6 @@ function makePrisma() {
   return {
     vendHqCredential: {
       findMany: jest.fn(),
-      findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
     salesIntegrationStatus: {
@@ -39,19 +38,18 @@ function makePrisma() {
       upsert: jest.fn(),
     },
     backupVendHqSale: {
-      findFirst: jest.fn(),
-      create: jest.fn().mockResolvedValue({ id: 'sale-db-001' }),
-      update: jest.fn().mockResolvedValue({ id: 'sale-db-001' }),
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest
+        .fn()
+        .mockResolvedValue({ id: 'sale-db-001', invoiceNumber: 'INV-001' }),
     },
     backupVendHqLineItem: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     backupVendHqPayment: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     saleSyncStatus: {
       upsert: jest.fn().mockResolvedValue({}),
@@ -212,55 +210,56 @@ describe('VendHqSalesBackupService', () => {
       });
 
       // DB already has version 5 — incoming 3 should be skipped
-      prisma.backupVendHqSale.findFirst.mockResolvedValue({
-        id: 'db-001',
-        version: 5,
-      });
+      prisma.backupVendHqSale.findMany.mockResolvedValue([
+        { invoiceNumber: 'INV-001', version: 5 },
+      ]);
 
       const result = await service.backupRegion(makeCred());
       expect(result.skipped).toBe(1);
       expect(result.saved).toBe(0);
-      expect(prisma.backupVendHqSale.create).not.toHaveBeenCalled();
+      expect(prisma.backupVendHqSale.upsert).not.toHaveBeenCalled();
     });
 
-    it('creates a new sale record when it does not exist yet', async () => {
+    it('upserts a new sale record when it does not exist yet', async () => {
       const { service, prisma } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 10 })] },
       });
 
       // No existing record
-      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
 
       const result = await service.backupRegion(makeCred());
       expect(result.saved).toBe(1);
       expect(result.skipped).toBe(0);
-      expect(prisma.backupVendHqSale.create).toHaveBeenCalled();
+      expect(prisma.backupVendHqSale.upsert).toHaveBeenCalled();
     });
 
-    it('updates an existing sale when incoming version is higher', async () => {
+    it('upserts an existing sale when incoming version is higher', async () => {
       const { service, prisma } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 10 })] },
       });
 
       // DB has older version
-      prisma.backupVendHqSale.findFirst.mockResolvedValue({
-        id: 'db-001',
-        version: 3,
-      });
+      prisma.backupVendHqSale.findMany.mockResolvedValue([
+        { invoiceNumber: 'INV-001', version: 3 },
+      ]);
 
       const result = await service.backupRegion(makeCred());
       expect(result.saved).toBe(1);
-      expect(prisma.backupVendHqSale.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'db-001' } }),
+      expect(prisma.backupVendHqSale.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            invoiceNumber_region: { invoiceNumber: 'INV-001', region: 'SA' },
+          },
+        }),
       );
     });
 
     it('sends the after=lastSyncVersion parameter to the VendHQ API', async () => {
-      const { service, prisma } = makeService();
+      const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { data: [] } });
-      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
 
       await service.backupRegion(makeCred({ lastSyncVersion: 99 }));
 
@@ -289,7 +288,7 @@ describe('VendHqSalesBackupService', () => {
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 55 })] },
       });
-      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
 
       await service.backupRegion(makeCred({ lastSyncVersion: 10 }));
 
@@ -304,7 +303,7 @@ describe('VendHqSalesBackupService', () => {
       const { service, prisma } = makeService();
       const sale = makeSale({ version: 5 });
       mockAxios.mockResolvedValue({ data: { data: [sale] } });
-      prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
 
       await service.backupRegion(makeCred());
 
@@ -316,6 +315,81 @@ describe('VendHqSalesBackupService', () => {
           update: expect.objectContaining({ status: SaleStatus.PENDING }),
         }),
       );
+    });
+
+    it('persists line items via deleteMany + createMany', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({
+        data: {
+          data: [
+            makeSale({
+              version: 5,
+              line_items: [
+                { sku: 'SKU-1', name: 'Item A', quantity: 2, total_price: 50 },
+                { sku: 'SKU-2', name: 'Item B', quantity: 1, total_price: 25 },
+              ],
+            }),
+          ],
+        },
+      });
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.backupVendHqLineItem.deleteMany).toHaveBeenCalled();
+      expect(prisma.backupVendHqLineItem.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.arrayContaining([
+            expect.objectContaining({ itemNumber: 'SKU-1', quantity: 2 }),
+            expect.objectContaining({ itemNumber: 'SKU-2', quantity: 1 }),
+          ]),
+        }),
+      );
+    });
+
+    it('persists payments via deleteMany + createMany', async () => {
+      const { service, prisma } = makeService();
+      mockAxios.mockResolvedValue({
+        data: {
+          data: [
+            makeSale({
+              version: 5,
+              payments: [{ name: 'Cash', amount: 110 }],
+            }),
+          ],
+        },
+      });
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+
+      await service.backupRegion(makeCred());
+
+      expect(prisma.backupVendHqPayment.deleteMany).toHaveBeenCalled();
+      expect(prisma.backupVendHqPayment.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.arrayContaining([
+            expect.objectContaining({ paymentType: 'Cash', amount: 110 }),
+          ]),
+        }),
+      );
+    });
+
+    it('paginates: fetches second page when first page is full', async () => {
+      const { service, prisma } = makeService();
+      // First call returns 200 sales (full page), second returns 0 (end)
+      const fullPage = Array.from({ length: 200 }, (_, i) =>
+        makeSale({ id: `sale-${i}`, invoice_number: `INV-${i}`, version: i + 1 }),
+      );
+      mockAxios
+        .mockResolvedValueOnce({ data: { data: fullPage } })
+        .mockResolvedValueOnce({ data: { data: [] } });
+      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      prisma.backupVendHqSale.upsert.mockImplementation(({ create }) =>
+        Promise.resolve({ id: `db-${create.invoiceNumber}`, invoiceNumber: create.invoiceNumber }),
+      );
+
+      await service.backupRegion(makeCred({ lastSyncVersion: 0 }));
+
+      expect(mockAxios).toHaveBeenCalledTimes(2);
     });
   });
 

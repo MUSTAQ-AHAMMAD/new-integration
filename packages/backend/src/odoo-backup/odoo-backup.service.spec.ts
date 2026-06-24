@@ -52,14 +52,12 @@ function makePrisma() {
       findUnique: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
     },
     backupOdooOrderLine: {
-      findMany: jest.fn().mockResolvedValue([]),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     backupOdooOrderPayment: {
-      findMany: jest.fn().mockResolvedValue([]),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
 }
@@ -167,7 +165,7 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('✅ plain array response → orders extracted correctly', async () => {
@@ -299,7 +297,7 @@ describe('OdooBackupService.backupOrdersForCredential — watermark filter', () 
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     mockAxiosGet.mockResolvedValue({ data: [] });
   });
 
@@ -362,7 +360,7 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     mockAxiosGet.mockResolvedValue({ data: [] });
   });
 
@@ -475,7 +473,7 @@ describe('OdooBackupService.backupOrdersForCredential — branch name extraction
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('extracts branchName from the part before "/" in orderName when branch_id has no name', async () => {
@@ -534,7 +532,7 @@ describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('fetches a second page when the first page is exactly CREDENTIAL_PAGE_SIZE (100) records', async () => {
@@ -610,7 +608,7 @@ describe('OdooBackupService — new field mapping aligned with old integration',
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('stores amountUntaxed (TOTAL_PRICE) from amount_untaxed field', async () => {
@@ -709,9 +707,12 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+    expect(prisma.backupOdooOrderLine.deleteMany).toHaveBeenCalled();
+    expect(prisma.backupOdooOrderLine.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ taxName: 'VAT 5%' }),
+        data: expect.arrayContaining([
+          expect.objectContaining({ taxName: 'VAT 5%' }),
+        ]),
       }),
     );
   });
@@ -734,9 +735,12 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+    expect(prisma.backupOdooOrderLine.deleteMany).toHaveBeenCalled();
+    expect(prisma.backupOdooOrderLine.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ productCode: 'PROD-001' }),
+        data: expect.arrayContaining([
+          expect.objectContaining({ productCode: 'PROD-001' }),
+        ]),
       }),
     );
   });
@@ -752,9 +756,12 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
+    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
+        data: expect.arrayContaining([
+          expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
+        ]),
       }),
     );
   });
@@ -770,11 +777,14 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
+    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          paymentDate: new Date('2024-05-17T10:30:00Z'),
-        }),
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            paymentDate: new Date('2024-05-17T10:30:00Z'),
+          }),
+        ]),
       }),
     );
   });
@@ -790,9 +800,12 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
+    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ paymentName: 'Bank Transfer' }),
+        data: expect.arrayContaining([
+          expect.objectContaining({ paymentName: 'Bank Transfer' }),
+        ]),
       }),
     );
   });
@@ -806,7 +819,7 @@ describe('OdooBackupService.runCredentialBackupJob', () => {
   const mockAxiosGet = jest.spyOn(axios, 'get');
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('skips silently when no active credentials are configured', async () => {

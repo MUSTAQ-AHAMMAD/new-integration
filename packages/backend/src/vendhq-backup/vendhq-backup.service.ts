@@ -7,9 +7,12 @@
  *  1. Checks that the region is not disabled (SalesIntegrationStatus).
  *  2. Fetches new / updated sales from the VendHQ REST API using an
  *     incremental `after` version watermark (lastSyncVersion) so only
- *     new/updated records are fetched each run.
- *  3. Persists each sale into BackupVendHqSale / BackupVendHqLineItem /
- *     BackupVendHqPayment / BackupVendHqPromotion.
+ *     new/updated records are fetched each run.  Paginates until the
+ *     API returns fewer than VENDHQ_PAGE_SIZE records.
+ *  3. Persists each page in bulk: upserts parent BackupVendHqSale rows
+ *     concurrently, then replaces all child BackupVendHqLineItem /
+ *     BackupVendHqPayment rows with a single deleteMany + createMany pair
+ *     (eliminating N+1 queries).
  *  4. Upserts a SaleSyncStatus record so the downstream
  *     FusionTransformationService can pick it up.
  *  5. Updates lastSyncVersion and lastSyncAt on the credential so the
@@ -65,12 +68,25 @@ interface VendHqSaleRaw {
   [key: string]: unknown;
 }
 
+/** VendHQ v2 API response envelope for /api/2.0/sales */
+interface VendHqApiResponse {
+  data?: VendHqSaleRaw[];
+  /** Version cursor used for pagination — max version in the current page */
+  version?: { max?: number };
+}
+
 /** integMode value used in SalesIntegrationStatus for backup jobs */
 const BACKUP_INTEG_MODE = 'BACKUP';
 /** Status value meaning the integration is running / allowed */
 const STATUS_ENABLED = 'ENABLED';
 /** Status value meaning the integration has been paused by an operator */
 const STATUS_DISABLED = 'DISABLED';
+/** Maximum records per VendHQ API page (API cap is 200) */
+const VENDHQ_PAGE_SIZE = 200;
+/** Concurrency limit for parallel parent-sale upserts within one page */
+const UPSERT_CONCURRENCY = 20;
+/** Concurrency limit for parallel SaleSyncStatus upserts within one page */
+const SYNC_CONCURRENCY = 50;
 
 @Injectable()
 export class VendHqSalesBackupService {
@@ -119,8 +135,16 @@ export class VendHqSalesBackupService {
 
   /**
    * Fetches and persists all new sales for one VendHQ credential (region).
-   * Uses lastSyncVersion as the `after` watermark so only new/updated
-   * sales are fetched on each run — preventing redundant duplicate writes.
+   * Uses lastSyncVersion as the `after` watermark and paginates until the
+   * API returns fewer than VENDHQ_PAGE_SIZE records so that every page is
+   * captured in a single invocation.
+   *
+   * Each page is processed with upsertSalesPage which:
+   *  - batch-checks existing versions (one findMany per page)
+   *  - upserts parent sales concurrently (chunked Promise.all)
+   *  - replaces child LineItem / Payment rows with deleteMany + createMany
+   *    (two round-trips for the whole page regardless of record count)
+   *
    * Exposed publicly so the controller can trigger a manual run.
    */
   async backupRegion(cred: {
@@ -133,57 +157,64 @@ export class VendHqSalesBackupService {
     lastSyncVersion?: number;
   }): Promise<{ saved: number; skipped: number }> {
     const baseUrl = `https://${cred.domainName}.vendhq.com`;
-    const afterVersion = cred.lastSyncVersion ?? 0;
+    let afterVersion = cred.lastSyncVersion ?? 0;
+    let maxVersionSeen = afterVersion;
+    let totalSaved = 0;
+    let totalSkipped = 0;
 
-    const resp = await axios.get<{ data?: VendHqSaleRaw[] }>(
-      `${baseUrl}/api/2.0/sales`,
-      {
-        headers: {
-          Authorization: 'Bearer ' + cred.personalToken,
-          'Content-Type': 'application/json',
+    while (true) {
+      const resp = await axios.get<VendHqApiResponse>(
+        `${baseUrl}/api/2.0/sales`,
+        {
+          headers: {
+            Authorization: 'Bearer ' + cred.personalToken,
+            'Content-Type': 'application/json',
+          },
+          // `after` tells VendHQ to return only sales with version > afterVersion
+          params: {
+            page_size: VENDHQ_PAGE_SIZE,
+            ...(afterVersion > 0 ? { after: afterVersion } : {}),
+          },
+          timeout: 30_000,
         },
-        // `after` tells VendHQ to return only sales with version > afterVersion
-        params: {
-          page_size: 200,
-          ...(afterVersion > 0 ? { after: afterVersion } : {}),
-        },
-        timeout: 30_000,
-      },
-    );
+      );
 
-    const sales: VendHqSaleRaw[] = resp.data?.data ?? [];
-    let saved = 0;
-    let skipped = 0;
-    let maxVersion = afterVersion;
+      const sales: VendHqSaleRaw[] = resp.data?.data ?? [];
+      if (sales.length === 0) break;
 
-    for (const sale of sales) {
-      try {
-        const wasNew = await this.upsertSale(sale, cred.region, cred.currency);
-        if (wasNew) {
-          saved++;
-        } else {
-          skipped++;
-        }
-        // Track the highest version seen so we can advance the watermark
+      const { saved, skipped } = await this.upsertSalesPage(
+        sales,
+        cred.region,
+        cred.currency,
+      );
+      totalSaved += saved;
+      totalSkipped += skipped;
+
+      // Track max version for watermark advancement
+      for (const sale of sales) {
         const v = typeof sale.version === 'number' ? sale.version : 0;
-        if (v > maxVersion) maxVersion = v;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Failed to persist sale ${sale.id} (${sale.invoice_number ?? 'no-inv'}) ` +
-            `region=${cred.region}: ${msg}`,
-        );
-        skipped++;
+        if (v > maxVersionSeen) maxVersionSeen = v;
       }
+      // Use version.max from VendHQ response cursor when available
+      const apiVersionMax = resp.data?.version?.max;
+      if (typeof apiVersionMax === 'number' && apiVersionMax > maxVersionSeen) {
+        maxVersionSeen = apiVersionMax;
+      }
+
+      // Stop when the page is smaller than requested — no more records
+      if (sales.length < VENDHQ_PAGE_SIZE) break;
+
+      // Advance the version cursor for the next page
+      afterVersion = maxVersionSeen;
     }
 
     // Advance the watermark so the next run only fetches newer sales
-    if (maxVersion > afterVersion) {
+    if (maxVersionSeen > (cred.lastSyncVersion ?? 0)) {
       await this.prisma.vendHqCredential.update({
         where: { id: cred.id },
-        data: { lastSyncVersion: maxVersion, lastSyncAt: new Date() },
+        data: { lastSyncVersion: maxVersionSeen, lastSyncAt: new Date() },
       });
-    } else if (sales.length > 0) {
+    } else if (totalSaved + totalSkipped > 0) {
       // Sales were processed but had no version — at least record the timestamp
       await this.prisma.vendHqCredential.update({
         where: { id: cred.id },
@@ -191,7 +222,7 @@ export class VendHqSalesBackupService {
       });
     }
 
-    return { saved, skipped };
+    return { saved: totalSaved, skipped: totalSkipped };
   }
 
   // ---------------------------------------------------------------------------
@@ -284,165 +315,234 @@ export class VendHqSalesBackupService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Upserts one VendHQ sale and its line items + payments.
-   * Returns true if the record was new or updated, false if skipped (same version).
-   * Uses the @@unique([invoiceNumber, region]) DB constraint to prevent duplicates.
+   * Batch-upserts one page of VendHQ sales and their child records.
+   *
+   * Performance strategy:
+   *  1. One findMany to check existing versions → skip unchanged records.
+   *  2. Concurrent upsert for all parent BackupVendHqSale rows (chunked).
+   *  3. deleteMany + createMany for BackupVendHqLineItem (2 round-trips for
+   *     the whole page, regardless of how many line items exist).
+   *  4. deleteMany + createMany for BackupVendHqPayment (same).
+   *  5. Concurrent upsert for SaleSyncStatus rows (chunked).
+   *
+   * This replaces the old per-sale N+1 pattern (findFirst + create/update
+   * per line item and per payment) with a constant number of DB round-trips
+   * per page, enabling millions of records to be processed in minutes.
    */
-  private async upsertSale(
-    sale: VendHqSaleRaw,
+  private async upsertSalesPage(
+    sales: VendHqSaleRaw[],
     region: string,
     currency: string,
-  ): Promise<boolean> {
-    const invoiceNumber = sale.invoice_number ?? sale.id;
-    const saleDate = sale.sale_date ? new Date(sale.sale_date) : new Date();
-    const incomingVersion =
-      typeof sale.version === 'number' ? sale.version : null;
+  ): Promise<{ saved: number; skipped: number }> {
+    if (sales.length === 0) return { saved: 0, skipped: 0 };
 
-    // ── BackupVendHqSale (upsert on invoiceNumber+region) ─────────────────
-    const existing = await this.prisma.backupVendHqSale.findFirst({
-      where: { invoiceNumber, region },
-      select: { id: true, version: true },
+    const invoiceNumbers = sales.map((s) => s.invoice_number ?? s.id);
+
+    // 1. Batch-fetch existing versions (one query for the whole page)
+    const existingSales = await this.prisma.backupVendHqSale.findMany({
+      where: { invoiceNumber: { in: invoiceNumbers }, region },
+      select: { invoiceNumber: true, version: true },
+    });
+    const existingVersionMap = new Map(
+      existingSales.map((s) => [s.invoiceNumber, s.version ?? -1]),
+    );
+
+    // 2. Filter out records whose stored version is already current
+    const salesToProcess = sales.filter((sale) => {
+      const inv = sale.invoice_number ?? sale.id;
+      const incomingVersion =
+        typeof sale.version === 'number' ? sale.version : null;
+      const storedVersion = existingVersionMap.get(inv);
+      return (
+        storedVersion === undefined ||
+        incomingVersion === null ||
+        storedVersion < incomingVersion
+      );
     });
 
-    // Skip if we already have this version — no downstream work needed
-    if (
-      existing &&
-      incomingVersion !== null &&
-      (existing.version ?? -1) >= incomingVersion
-    ) {
-      return false;
+    if (salesToProcess.length === 0) {
+      return { saved: 0, skipped: sales.length };
     }
 
-    const saleData = {
-      invoiceNumber,
-      saleNumber: invoiceNumber,
-      outletName: sale.outlet_name ?? null,
-      outletId: sale.outlet_id ?? null,
-      registerName: sale.register_name ?? null,
-      saleDate,
-      totalPrice: sale.total_price ?? null,
-      totalTax: sale.total_tax ?? null,
-      totalLoyalty: sale.total_loyalty ?? null,
-      totalPriceInclTax: sale.total_price_incl_tax ?? null,
-      version: incomingVersion,
-      region,
-      customerType: this.resolveCustomerType(sale),
-      rawJson: sale as object,
-    };
+    // 3. Upsert all parent rows concurrently (in chunks to respect pool limits)
+    const upsertedSales: Array<{ id: string; invoiceNumber: string }> = [];
 
-    let parentId: string;
-    if (existing) {
-      await this.prisma.backupVendHqSale.update({
-        where: { id: existing.id },
-        data: saleData,
-      });
-      parentId = existing.id;
-    } else {
-      const created = await this.prisma.backupVendHqSale.create({
-        data: saleData,
-      });
-      parentId = created.id;
+    for (let i = 0; i < salesToProcess.length; i += UPSERT_CONCURRENCY) {
+      const chunk = salesToProcess.slice(i, i + UPSERT_CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map((sale) => {
+          const inv = sale.invoice_number ?? sale.id;
+          const saleDate = sale.sale_date
+            ? new Date(sale.sale_date)
+            : new Date();
+          const saleData = {
+            invoiceNumber: inv,
+            saleNumber: inv,
+            outletName: sale.outlet_name ?? null,
+            outletId: sale.outlet_id ?? null,
+            registerName: sale.register_name ?? null,
+            saleDate,
+            totalPrice: sale.total_price ?? null,
+            totalTax: sale.total_tax ?? null,
+            totalLoyalty: sale.total_loyalty ?? null,
+            totalPriceInclTax: sale.total_price_incl_tax ?? null,
+            version:
+              typeof sale.version === 'number' ? sale.version : null,
+            region,
+            customerType: this.resolveCustomerType(sale),
+            rawJson: sale as object,
+          };
+          return this.prisma.backupVendHqSale.upsert({
+            where: { invoiceNumber_region: { invoiceNumber: inv, region } },
+            create: saleData,
+            update: saleData,
+            select: { id: true, invoiceNumber: true },
+          });
+        }),
+      );
+      upsertedSales.push(...results);
     }
 
-    // ── BackupVendHqLineItem ───────────────────────────────────────────────
-    const lineItems: VendHqLineItemRaw[] = Array.isArray(sale.line_items)
-      ? sale.line_items
-      : [];
+    const parentIdMap = new Map(
+      upsertedSales.map((s) => [s.invoiceNumber, s.id]),
+    );
 
-    for (let idx = 0; idx < lineItems.length; idx++) {
-      const li = lineItems[idx];
-      const lineNumber = idx + 1;
+    // 4. Collect all child records for the processed sales
+    const allLineItems: {
+      invoiceNumber: string;
+      lineNumber: number;
+      itemNumber: string | null;
+      itemName: string | null;
+      productId: string | null;
+      productName: string | null;
+      quantity: number | null;
+      totalPrice: number | null;
+      totalTax: number | null;
+      taxName: string | null;
+      region: string;
+      saleDate: Date;
+      saleId: string;
+    }[] = [];
 
-      const existingLine = await this.prisma.backupVendHqLineItem.findFirst({
-        where: { invoiceNumber, lineNumber, region },
-        select: { id: true },
-      });
+    const allPayments: {
+      invoiceNumber: string;
+      outletName: string | null;
+      registerName: string | null;
+      amount: number | null;
+      currency: string;
+      paymentType: string;
+      paymentMethod: string;
+      paymentDate: Date;
+      region: string;
+      saleDate: Date;
+      saleId: string;
+    }[] = [];
 
-      const lineData = {
-        invoiceNumber,
-        lineNumber,
-        itemNumber: li.sku ?? null,
-        itemName: li.name ?? null,
-        productId: li.product_id ?? null,
-        productName: li.name ?? null,
-        quantity: li.quantity ?? null,
-        totalPrice: li.total_price ?? null,
-        totalTax: li.tax ?? null,
-        taxName: li.tax_name ?? null,
-        region,
-        saleDate,
-        saleId: parentId,
-      };
+    const processedInvoiceNumbers: string[] = [];
 
-      if (existingLine) {
-        await this.prisma.backupVendHqLineItem.update({
-          where: { id: existingLine.id },
-          data: lineData,
-        });
-      } else {
-        await this.prisma.backupVendHqLineItem.create({ data: lineData });
-      }
-    }
+    for (const sale of salesToProcess) {
+      const inv = sale.invoice_number ?? sale.id;
+      const parentId = parentIdMap.get(inv);
+      if (!parentId) continue;
+      processedInvoiceNumbers.push(inv);
 
-    // ── BackupVendHqPayment ────────────────────────────────────────────────
-    const payments: VendHqPaymentRaw[] = Array.isArray(sale.payments)
-      ? sale.payments
-      : [];
+      const saleDate = sale.sale_date ? new Date(sale.sale_date) : new Date();
 
-    for (const pmt of payments) {
-      const pmtName = pmt.name ?? pmt.payment_type_id ?? 'Unknown';
-
-      const existingPmt = await this.prisma.backupVendHqPayment.findFirst({
-        where: { invoiceNumber, paymentType: pmtName, region },
-        select: { id: true },
-      });
-
-      const pmtData = {
-        invoiceNumber,
-        outletName: sale.outlet_name ?? null,
-        registerName: sale.register_name ?? null,
-        amount: pmt.amount ?? null,
-        currency: currency,
-        paymentType: pmtName,
-        paymentMethod: pmtName,
-        paymentDate: saleDate,
-        region,
-        saleDate,
-        saleId: parentId,
-      };
-
-      if (existingPmt) {
-        await this.prisma.backupVendHqPayment.update({
-          where: { id: existingPmt.id },
-          data: pmtData,
-        });
-      } else {
-        await this.prisma.backupVendHqPayment.create({ data: pmtData });
-      }
-    }
-
-    // ── SaleSyncStatus (PENDING — downstream Oracle Fusion pipeline) ───────
-    await this.prisma.saleSyncStatus.upsert({
-      where: {
-        saleId_outletId_saleDate: {
-          saleId: sale.id,
-          outletId: sale.outlet_id ?? region,
+      const lineItems: VendHqLineItemRaw[] = Array.isArray(sale.line_items)
+        ? sale.line_items
+        : [];
+      for (let idx = 0; idx < lineItems.length; idx++) {
+        const li = lineItems[idx];
+        allLineItems.push({
+          invoiceNumber: inv,
+          lineNumber: idx + 1,
+          itemNumber: li.sku ?? null,
+          itemName: li.name ?? null,
+          productId: li.product_id ?? null,
+          productName: li.name ?? null,
+          quantity: li.quantity ?? null,
+          totalPrice: li.total_price ?? null,
+          totalTax: li.tax ?? null,
+          taxName: li.tax_name ?? null,
+          region,
           saleDate,
-        },
-      },
-      create: {
-        saleId: sale.id,
-        outletId: sale.outlet_id ?? region,
-        saleDate,
-        status: SaleStatus.PENDING,
-      },
-      update: {
-        // Re-queue only if the previous attempt failed or was skipped
-        status: SaleStatus.PENDING,
-      },
-    });
+          saleId: parentId,
+        });
+      }
 
-    return true;
+      const payments: VendHqPaymentRaw[] = Array.isArray(sale.payments)
+        ? sale.payments
+        : [];
+      for (const pmt of payments) {
+        const pmtName = pmt.name ?? pmt.payment_type_id ?? 'Unknown';
+        allPayments.push({
+          invoiceNumber: inv,
+          outletName: sale.outlet_name ?? null,
+          registerName: sale.register_name ?? null,
+          amount: pmt.amount ?? null,
+          currency,
+          paymentType: pmtName,
+          paymentMethod: pmtName,
+          paymentDate: saleDate,
+          region,
+          saleDate,
+          saleId: parentId,
+        });
+      }
+    }
+
+    // 5. Batch-replace child tables: delete stale rows then bulk-insert fresh ones.
+    //    Two round-trips for the whole page replaces the old N×M per-record pattern.
+    await this.prisma.backupVendHqLineItem.deleteMany({
+      where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
+    });
+    if (allLineItems.length > 0) {
+      await this.prisma.backupVendHqLineItem.createMany({
+        data: allLineItems,
+      });
+    }
+    await this.prisma.backupVendHqPayment.deleteMany({
+      where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
+    });
+    if (allPayments.length > 0) {
+      await this.prisma.backupVendHqPayment.createMany({ data: allPayments });
+    }
+
+    // 6. Upsert SaleSyncStatus rows concurrently (chunked)
+    for (let i = 0; i < salesToProcess.length; i += SYNC_CONCURRENCY) {
+      const chunk = salesToProcess.slice(i, i + SYNC_CONCURRENCY);
+      await Promise.all(
+        chunk.map((sale) => {
+          const saleDate = sale.sale_date
+            ? new Date(sale.sale_date)
+            : new Date();
+          return this.prisma.saleSyncStatus.upsert({
+            where: {
+              saleId_outletId_saleDate: {
+                saleId: sale.id,
+                outletId: sale.outlet_id ?? region,
+                saleDate,
+              },
+            },
+            create: {
+              saleId: sale.id,
+              outletId: sale.outlet_id ?? region,
+              saleDate,
+              status: SaleStatus.PENDING,
+            },
+            update: {
+              // Re-queue only if the previous attempt failed or was skipped
+              status: SaleStatus.PENDING,
+            },
+          });
+        }),
+      );
+    }
+
+    return {
+      saved: salesToProcess.length,
+      skipped: sales.length - salesToProcess.length,
+    };
   }
 
   /**
