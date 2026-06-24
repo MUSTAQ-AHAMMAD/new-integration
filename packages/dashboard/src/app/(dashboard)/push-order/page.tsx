@@ -14,7 +14,7 @@ import { formatDate, getStatusColor } from '@/lib/utils';
 
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
-function JobResultCard({ job }: { job: SyncJob }) {
+function JobResultCard({ job, onCancel, isCancelling }: { job: SyncJob; onCancel: () => void; isCancelling: boolean }) {
   const isRunning = !TERMINAL_STATUSES.has(job.status);
 
   return (
@@ -69,10 +69,15 @@ function JobResultCard({ job }: { job: SyncJob }) {
             </div>
           )}
         </dl>
-        <div className="mt-4 border-t pt-3">
+        <div className="mt-4 flex items-center justify-between border-t pt-3">
           <Link href="/orders" className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline">
             View full order history <ArrowRight className="h-3 w-3" />
           </Link>
+          {isRunning && (
+            <Button size="sm" variant="outline" onClick={onCancel} disabled={isCancelling}>
+              {isCancelling ? 'Cancelling...' : 'Cancel'}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -99,6 +104,15 @@ export default function PushOrderPage() {
       qc.invalidateQueries({ queryKey: ['sync-jobs'] });
     }
   }, [polledJob, qc]);
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => api.cancelSyncJob(id),
+    onSuccess: () => {
+      toast.success('Job cancelled');
+      qc.invalidateQueries({ queryKey: ['sync-jobs'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const mutation = useMutation({
     mutationFn: () => api.pushOrder(orderId.trim()),
@@ -170,7 +184,13 @@ export default function PushOrderPage() {
         </CardContent>
       </Card>
 
-      {displayJob && <JobResultCard job={displayJob} />}
+      {displayJob && (
+        <JobResultCard
+          job={displayJob}
+          onCancel={() => cancelMutation.mutate(displayJob.id)}
+          isCancelling={cancelMutation.isPending}
+        />
+      )}
     </div>
   );
 }
