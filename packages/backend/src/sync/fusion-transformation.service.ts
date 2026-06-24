@@ -2,8 +2,8 @@
  * FusionTransformationService — TypeScript port of the Java
  * VendHQSalesToFusionInvRecTransBackup transformation layer.
  *
- * Maps raw backup data (BackupVendhqSales / BackupVendhqLineItems /
- * BackupVendhqPayments) + config tables (FusionSalesMetadata,
+ * Maps raw backup data (BackupVendHqSale / BackupVendHqLineItem /
+ * BackupVendHqPayment) + config tables (FusionSalesMetadata,
  * VendHqOutlet, FusionReceiptMethod) into the SOAP model objects
  * consumed by OracleSoapClient.
  */
@@ -41,7 +41,7 @@ export class FusionTransformationService {
    *   addInvoiceMapping → addReceiptMappingLine → misc receipt
    *   → doApplyReceiptOnInvoice → addJournalEntry
    *
-   * @param saleDbId  - BackupVendhqSales.id (cuid)
+   * @param saleDbId  - BackupVendHqSale.id (cuid)
    * @param region    - region code (e.g. "AE", "KW", "OM")
    * @param transactionNumberOverride - if the invoice has already been created, pass its txn number
    */
