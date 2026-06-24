@@ -1528,9 +1528,14 @@ model OdooCredential {
   /// Defaults to "/api/pos/order" (Odoo POS REST API) when null.
   /// Set to "/api/sale.order" for Odoo instances that serve sale orders
   /// instead of POS orders, or to any other path required by the instance.
-  apiPath    String?
+  apiPath               String?
+  /// When false, TLS certificate verification is skipped for this credential.
+  /// Use only for dev/staging Odoo instances whose hostname does not match
+  /// the server certificate (e.g. *.dev.odoo.com vs a *.odoo.com cert).
+  /// Always keep true (the default) for production credentials.
+  rejectUnauthorizedSsl Boolean   @default(true)
   /// Timestamp watermark: next scheduled run fetches orders after this date
-  lastSyncAt DateTime?
+  lastSyncAt            DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 

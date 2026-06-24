@@ -46,6 +46,19 @@ export class CreateOdooCredentialDto {
   @IsString()
   apiPath?: string;
 
+  @ApiProperty({
+    required: false,
+    default: true,
+    description:
+      'When false, TLS certificate verification is disabled for this credential. ' +
+      'Use only for dev/staging Odoo instances whose hostname does not match the ' +
+      'server certificate (e.g. *.dev.odoo.com vs a *.odoo.com cert). ' +
+      'Always keep true for production.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  rejectUnauthorizedSsl?: boolean;
+
   @ApiProperty({ required: false, default: true })
   @IsOptional()
   @IsBoolean()
@@ -78,6 +91,18 @@ export class UpdateOdooCredentialDto {
   @IsOptional()
   @IsString()
   apiPath?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'When false, TLS certificate verification is disabled for this credential. ' +
+      'Use only for dev/staging Odoo instances whose hostname does not match the ' +
+      'server certificate (e.g. *.dev.odoo.com vs a *.odoo.com cert). ' +
+      'Always keep true for production.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  rejectUnauthorizedSsl?: boolean;
 
   @ApiProperty({ required: false })
   @IsOptional()
@@ -189,6 +214,9 @@ export class OdooBackupController {
         region: dto.region,
         active: dto.active ?? true,
         ...(dto.apiPath !== undefined && { apiPath: dto.apiPath }),
+        ...(dto.rejectUnauthorizedSsl !== undefined && {
+          rejectUnauthorizedSsl: dto.rejectUnauthorizedSsl,
+        }),
       },
     });
     return { ...cred, apiKey: this.maskKey(cred.apiKey) };
@@ -211,6 +239,9 @@ export class OdooBackupController {
         ...(dto.region !== undefined && { region: dto.region }),
         ...(dto.apiPath !== undefined && { apiPath: dto.apiPath }),
         ...(dto.active !== undefined && { active: dto.active }),
+        ...(dto.rejectUnauthorizedSsl !== undefined && {
+          rejectUnauthorizedSsl: dto.rejectUnauthorizedSsl,
+        }),
       },
     });
     return { ...cred, apiKey: this.maskKey(cred.apiKey) };

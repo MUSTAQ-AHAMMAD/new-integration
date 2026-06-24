@@ -47,6 +47,13 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'apiKey', label: 'API Key', required: true },
       { key: 'region', label: 'Region', required: true },
       { key: 'active', label: 'Active', type: 'boolean' },
+      {
+        key: 'rejectUnauthorizedSsl',
+        label: 'Verify SSL',
+        type: 'boolean',
+        description:
+          'Uncheck only for dev/staging instances where the hostname does not match the SSL certificate (e.g. *.dev.odoo.com). Always keep checked for production.',
+      },
       { key: 'lastSyncAt', label: 'Last Sync At', type: 'date', readOnly: true },
     ],
   },
