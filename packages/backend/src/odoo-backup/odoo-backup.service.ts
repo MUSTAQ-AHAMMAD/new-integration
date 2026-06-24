@@ -44,7 +44,9 @@ const DEFAULT_SOURCE = 'default';
 /** Default REST endpoint used to fetch POS orders from Odoo. */
 const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 /** Number of records fetched per page during paginated credential backup. */
-const CREDENTIAL_PAGE_SIZE = 100;
+const CREDENTIAL_PAGE_SIZE = 200;
+/** Per-request HTTP timeout (ms) for credential backup fetches. */
+const CREDENTIAL_FETCH_TIMEOUT_MS = 120_000;
 
 /**
  * Normalises a raw API path value from an OdooCredential.
@@ -575,7 +577,7 @@ export class OdooBackupService {
             offset,
           },
           httpsAgent,
-          timeout: 30_000,
+          timeout: CREDENTIAL_FETCH_TIMEOUT_MS,
         });
       } catch (err: unknown) {
         if (err instanceof AxiosError) {
@@ -673,43 +675,53 @@ export class OdooBackupService {
     }
 
     // ── Pagination loop — fetch all pages ────────────────────────────────────
-    // The Odoo REST API caps results at CREDENTIAL_PAGE_SIZE per request.
-    // We loop using offset until a page returns fewer records than the page
-    // size, which signals that we've reached the last page.
+    // Strategy: pre-fetch the next page while upserting the current page so
+    // that network I/O and DB writes overlap.  Pages are processed immediately
+    // as they arrive instead of accumulating all records in memory first, which
+    // keeps memory usage bounded regardless of result-set size.
     const allOrders: OdooOrder[] = [];
-    let currentResp: AxiosResponse<unknown> = firstResp;
-    let offset = 0;
-
-    while (true) {
-      const pageOrders = this.extractOrderList(currentResp.data);
-      allOrders.push(...pageOrders);
-
-      // Fewer than a full page means this is the last page.
-      if (pageOrders.length < CREDENTIAL_PAGE_SIZE) break;
-
-      offset += CREDENTIAL_PAGE_SIZE;
-      this.logger.debug(
-        `OdooCredential region=${cred.region}: fetching next page at offset=${offset}`,
-      );
-      const nextResp = await tryFetch(resolvedPath, offset);
-      if (!nextResp) break; // should not happen for non-first pages, but guard anyway
-      currentResp = nextResp;
-    }
-
     let saved = 0;
     let skipped = 0;
 
-    for (const order of allOrders) {
-      try {
-        await this.upsertOrder(order, cred.region);
-        saved++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
-        );
-        skipped++;
+    let currentPageOrders = this.extractOrderList(firstResp.data);
+    let offset = CREDENTIAL_PAGE_SIZE;
+
+    while (true) {
+      // Start fetching the next page in the background before we begin
+      // upserting the current page — this hides network latency behind DB work.
+      const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
+        currentPageOrders.length === CREDENTIAL_PAGE_SIZE
+          ? tryFetch(resolvedPath, offset)
+          : Promise.resolve(null);
+
+      // Upsert every order in the current page.
+      for (const order of currentPageOrders) {
+        try {
+          await this.upsertOrder(order, cred.region);
+          saved++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
+          );
+          skipped++;
+        }
       }
+
+      allOrders.push(...currentPageOrders);
+
+      // Last page reached — no more records to fetch.
+      if (currentPageOrders.length < CREDENTIAL_PAGE_SIZE) break;
+
+      this.logger.debug(
+        `OdooCredential region=${cred.region}: fetched page at offset=${offset - CREDENTIAL_PAGE_SIZE}, ` +
+          `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
+      );
+
+      const nextResp = await nextPageFetch;
+      if (!nextResp) break; // guard against unexpected null on non-first pages
+      currentPageOrders = this.extractOrderList(nextResp.data);
+      offset += CREDENTIAL_PAGE_SIZE;
     }
 
     return { saved, skipped, orders: allOrders };
