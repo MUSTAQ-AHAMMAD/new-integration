@@ -46,6 +46,18 @@ const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 /** Number of records fetched per page during paginated credential backup. */
 const CREDENTIAL_PAGE_SIZE = 100;
 
+/**
+ * Normalises a raw API path value from an OdooCredential.
+ * Returns null when no path is configured (triggers auto-discovery).
+ * Ensures the path starts with "/" to avoid malformed URLs when the
+ * operator omits the leading slash (e.g. "api/sales/order" → "/api/sales/order").
+ */
+function normalizeApiPath(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim() || null;
+  if (!trimmed) return null;
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
 /** Odoo Many2one field: either a plain integer id or a [id, name] tuple. */
 type Many2OneField = number | [number, string] | null | undefined;
 
@@ -415,12 +427,7 @@ export class OdooBackupService {
       ? rawBase
       : `https://${rawBase}`;
 
-    const rawPath = cred.apiPath?.trim() || null;
-    const apiPath = rawPath
-      ? rawPath.startsWith('/')
-        ? rawPath
-        : `/${rawPath}`
-      : DEFAULT_ODOO_ORDERS_API_PATH;
+    const apiPath = normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
 
     const url = `${baseUrl}${apiPath}`;
     const sslVerify = cred.rejectUnauthorizedSsl !== false;
@@ -520,14 +527,9 @@ export class OdooBackupService {
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
-    // Normalise: ensure the path always starts with "/" so the URL is well-formed
-    // even when the operator entered "api/sales/order" without the leading slash.
-    const rawPath = cred.apiPath?.trim() || null;
-    const explicitPath = rawPath
-      ? rawPath.startsWith('/')
-        ? rawPath
-        : `/${rawPath}`
-      : null;
+    // normalizeApiPath ensures the path starts with "/" to avoid malformed URLs
+    // when the operator omitted the leading slash (e.g. "api/sales/order").
+    const explicitPath = normalizeApiPath(cred.apiPath);
     const primaryPath = explicitPath ?? DEFAULT_ODOO_ORDERS_API_PATH;
     const fallbackPath = '/api/sale.order';
 
