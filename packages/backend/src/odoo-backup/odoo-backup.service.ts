@@ -769,12 +769,14 @@ export class OdooBackupService {
     // Only prefer statement_ids when it is non-empty; otherwise fall through to
     // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
     // carries real data are not silently dropped.
-    const rawPaymentItems: unknown[] =
-      Array.isArray(order.statement_ids) && order.statement_ids.length > 0
-        ? order.statement_ids
-        : Array.isArray(order.payment_ids)
-          ? order.payment_ids
-          : [];
+    let rawPaymentItems: unknown[];
+    if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
+      rawPaymentItems = order.statement_ids;
+    } else if (Array.isArray(order.payment_ids)) {
+      rawPaymentItems = order.payment_ids;
+    } else {
+      rawPaymentItems = [];
+    }
     const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
       (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
     );
