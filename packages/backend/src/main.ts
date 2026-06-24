@@ -14,12 +14,21 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 // Ensure BigInt values (e.g. from Prisma BigInt fields) can be serialised to
-// JSON without throwing "Do not know how to serialize a BigInt".  All BigInt
-// account IDs used here fit within Number.MAX_SAFE_INTEGER so converting to
-// number preserves precision.
+// JSON without throwing "Do not know how to serialize a BigInt".
+// A runtime guard protects against silent precision loss: any BigInt that
+// exceeds Number.MAX_SAFE_INTEGER would lose digits when coerced to a JS
+// number, so we throw early rather than silently corrupt data.
+// All Oracle account IDs used in this application are well within
+// Number.MAX_SAFE_INTEGER (9,007,199,254,740,991).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (BigInt.prototype as any).toJSON = function () {
-  return Number(this);
+  const n = this.valueOf() as bigint;
+  if (n > BigInt(Number.MAX_SAFE_INTEGER) || n < BigInt(-Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError(
+      `BigInt value ${n.toString()} cannot be safely serialised as a JSON number (exceeds MAX_SAFE_INTEGER)`,
+    );
+  }
+  return Number(n);
 };
 
 // Bootstrap-time logger (used before the Pino logger is attached to the app).
