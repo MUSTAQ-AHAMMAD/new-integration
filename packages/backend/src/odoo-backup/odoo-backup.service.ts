@@ -688,12 +688,12 @@ export class OdooBackupService {
     // set remains small in normal operation.  Very large initial back-fills
     // should be run in date-range slices via the manual fetch-odoo endpoint.
     const allOrders: OdooOrder[] = [];
-    let saved = 0;
-    let skipped = 0;
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
     let currentOffset = 0;
     let nextOffset = CREDENTIAL_PAGE_SIZE;
+    let saved = 0;
+    let skipped = 0;
 
     while (true) {
       // Start fetching the next page in the background before we begin
@@ -703,7 +703,11 @@ export class OdooBackupService {
           ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
-      // Upsert every order in the current page.
+      // Upsert every order in the current page, then add them to the return
+      // array.  Orders are collected after the upsert attempt (not before) so
+      // that allOrders reflects what has actually been persisted, including
+      // orders where upsert failed (tracked in skipped) — the ingest step
+      // looks up the backup row separately via backupOdooOrder.findUnique.
       for (const order of currentPageOrders) {
         try {
           await this.upsertOrder(order, cred.region);
@@ -716,7 +720,6 @@ export class OdooBackupService {
           skipped++;
         }
       }
-
       allOrders.push(...currentPageOrders);
 
       // Last page reached — no more records to fetch.
@@ -737,7 +740,14 @@ export class OdooBackupService {
         );
       }
 
-      if (!nextResp) break; // guard against unexpected null on non-first pages
+      if (!nextResp) {
+        // tryFetch only returns null for auto-discovery 404s on the first page;
+        // receiving null here on a subsequent page is unexpected.
+        this.logger.warn(
+          `OdooCredential region=${cred.region}: unexpected null response for page at offset=${nextOffset} — stopping pagination.`,
+        );
+        break;
+      }
       currentPageOrders = this.extractOrderList(nextResp.data);
       currentOffset = nextOffset;
       nextOffset += CREDENTIAL_PAGE_SIZE;
