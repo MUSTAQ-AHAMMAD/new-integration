@@ -88,7 +88,7 @@ export class OdooClient {
     this.apiKey = this.configService.get<string>('ODOO_API_KEY');
     this.http = axios.create({
       baseURL: this.configService.get<string>('ODOO_BASE_URL'),
-      timeout: 30_000,
+      timeout: 120_000,
     });
   }
 

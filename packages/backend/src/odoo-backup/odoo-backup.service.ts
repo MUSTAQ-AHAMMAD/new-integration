@@ -44,7 +44,9 @@ const DEFAULT_SOURCE = 'default';
 /** Default REST endpoint used to fetch POS orders from Odoo. */
 const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 /** Number of records fetched per page during paginated credential backup. */
-const CREDENTIAL_PAGE_SIZE = 100;
+const CREDENTIAL_PAGE_SIZE = 200;
+/** Per-request HTTP timeout (ms) for credential backup fetches. */
+const CREDENTIAL_FETCH_TIMEOUT_MS = 120_000;
 
 /**
  * Normalises a raw API path value from an OdooCredential.
@@ -575,7 +577,7 @@ export class OdooBackupService {
             offset,
           },
           httpsAgent,
-          timeout: 30_000,
+          timeout: CREDENTIAL_FETCH_TIMEOUT_MS,
         });
       } catch (err: unknown) {
         if (err instanceof AxiosError) {
@@ -673,43 +675,82 @@ export class OdooBackupService {
     }
 
     // ── Pagination loop — fetch all pages ────────────────────────────────────
-    // The Odoo REST API caps results at CREDENTIAL_PAGE_SIZE per request.
-    // We loop using offset until a page returns fewer records than the page
-    // size, which signals that we've reached the last page.
+    // Strategy: pre-fetch the next page while upserting the current page so
+    // that network I/O and DB writes overlap.
+    //
+    // Two explicit offset variables are maintained to avoid any ambiguity:
+    //   currentOffset — starting offset of the page currently being processed.
+    //   nextOffset    — starting offset of the next page to be fetched.
+    //
+    // allOrders is accumulated and returned so runCredentialBackupJob can pass
+    // each page through the ingestion pipeline without a second DB round-trip.
+    // Incremental 15-minute cron runs fetch only new records, so the in-memory
+    // set remains small in normal operation.  Very large initial back-fills
+    // should be run in date-range slices via the manual fetch-odoo endpoint.
     const allOrders: OdooOrder[] = [];
-    let currentResp: AxiosResponse<unknown> = firstResp;
-    let offset = 0;
 
-    while (true) {
-      const pageOrders = this.extractOrderList(currentResp.data);
-      allOrders.push(...pageOrders);
-
-      // Fewer than a full page means this is the last page.
-      if (pageOrders.length < CREDENTIAL_PAGE_SIZE) break;
-
-      offset += CREDENTIAL_PAGE_SIZE;
-      this.logger.debug(
-        `OdooCredential region=${cred.region}: fetching next page at offset=${offset}`,
-      );
-      const nextResp = await tryFetch(resolvedPath, offset);
-      if (!nextResp) break; // should not happen for non-first pages, but guard anyway
-      currentResp = nextResp;
-    }
-
+    let currentPageOrders = this.extractOrderList(firstResp.data);
+    let currentOffset = 0;
+    let nextOffset = CREDENTIAL_PAGE_SIZE;
     let saved = 0;
     let skipped = 0;
 
-    for (const order of allOrders) {
+    while (true) {
+      // Start fetching the next page in the background before we begin
+      // upserting the current page — this hides network latency behind DB work.
+      const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
+        currentPageOrders.length === CREDENTIAL_PAGE_SIZE
+          ? tryFetch(resolvedPath, nextOffset)
+          : Promise.resolve(null);
+
+      // Upsert every order in the current page, then add them to the return
+      // array.  Orders are collected after the upsert attempt (not before) so
+      // that allOrders reflects what has actually been persisted, including
+      // orders where upsert failed (tracked in skipped) — the ingest step
+      // looks up the backup row separately via backupOdooOrder.findUnique.
+      for (const order of currentPageOrders) {
+        try {
+          await this.upsertOrder(order, cred.region);
+          saved++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
+          );
+          skipped++;
+        }
+      }
+      allOrders.push(...currentPageOrders);
+
+      // Last page reached — no more records to fetch.
+      if (currentPageOrders.length < CREDENTIAL_PAGE_SIZE) break;
+
+      this.logger.debug(
+        `OdooCredential region=${cred.region}: processed page at offset=${currentOffset}, ` +
+          `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
+      );
+
+      let nextResp: AxiosResponse<unknown> | null;
       try {
-        await this.upsertOrder(order, cred.region);
-        saved++;
+        nextResp = await nextPageFetch;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
+        throw new BadGatewayException(
+          `Odoo API error for region ${cred.region} while fetching page at offset=${nextOffset}: ${msg}`,
         );
-        skipped++;
       }
+
+      if (!nextResp) {
+        // tryFetch only returns null for auto-discovery 404s on the first page;
+        // receiving null here on a subsequent page is unexpected.
+        this.logger.warn(
+          `OdooCredential region=${cred.region}: unexpected null response for page at offset=${nextOffset} — stopping pagination.`,
+        );
+        break;
+      }
+      currentPageOrders = this.extractOrderList(nextResp.data);
+      currentOffset = nextOffset;
+      nextOffset += CREDENTIAL_PAGE_SIZE;
     }
 
     return { saved, skipped, orders: allOrders };

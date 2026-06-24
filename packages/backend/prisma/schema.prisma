@@ -657,11 +657,11 @@ model VendHqRegister {
   outletId      String
   registerName  String
   cashAccount   String?
-  cashAccountId Int?
+  cashAccountId BigInt?
   bankAccount   String?
-  bankAccountId Int?
+  bankAccountId BigInt?
   giftAccount   String?
-  giftAccountId Int?
+  giftAccountId BigInt?
   version       Int       @default(1)
   deletedAt     DateTime?
   region        String

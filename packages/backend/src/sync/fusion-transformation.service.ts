@@ -187,7 +187,7 @@ export class FusionTransformationService {
           saleDate,
           receiptMethodId: Number(receiptMethod.receiptMethodId),
           receiptNumber: `${pmtMethod}-${txnNumber}`,
-          remittanceBankAccountId: bankAccountId!,
+          remittanceBankAccountId: Number(bankAccountId!),
           accountValue: invoiceHeader.billToAccountNumber,
           orgId: buMap?.businessUnitId ?? 0,
           receiptAmount: pmtAmount,
