@@ -63,8 +63,7 @@ function bigint(row: Record<string, unknown>, name: string): bigint {
   if (
     typeof v !== 'string' &&
     typeof v !== 'number' &&
-    typeof v !== 'bigint' &&
-    typeof v !== 'boolean'
+    typeof v !== 'bigint'
   )
     return 0n;
   try {

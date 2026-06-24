@@ -156,5 +156,6 @@ export function findArrayInPayload(
     }
   }
 
+  // No array key found anywhere in the payload — caller should fall back to [].
   return firstEmpty;
 }

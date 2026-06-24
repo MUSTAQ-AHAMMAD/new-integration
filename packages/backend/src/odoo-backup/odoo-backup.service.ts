@@ -689,6 +689,22 @@ export class OdooBackupService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Resolves the raw payment array from an Odoo order, preferring
+   * `statement_ids` (Odoo v15) when non-empty and falling back to
+   * `payment_ids` (Odoo v18) otherwise. Returns an empty array when neither
+   * field contains data.
+   */
+  private extractPaymentItems(order: OdooOrder): unknown[] {
+    if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
+      return order.statement_ids;
+    }
+    if (Array.isArray(order.payment_ids)) {
+      return order.payment_ids;
+    }
+    return [];
+  }
+
+  /**
    * Upserts one Odoo order and its related line items and payments.
    * Uses the @@unique([orderId]) constraint on BackupOdooOrder to prevent
    * duplicate header rows.
@@ -855,15 +871,7 @@ export class OdooBackupService {
     // Only prefer statement_ids when it is non-empty; otherwise fall through to
     // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
     // carries real data are not silently dropped.
-    let rawPaymentItems: unknown[];
-    if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
-      rawPaymentItems = order.statement_ids;
-    } else if (Array.isArray(order.payment_ids)) {
-      rawPaymentItems = order.payment_ids;
-    } else {
-      rawPaymentItems = [];
-    }
-    const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
+    const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(order).filter(
       (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
     );
 
