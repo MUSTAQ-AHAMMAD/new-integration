@@ -502,8 +502,8 @@ export class VendHqSalesBackupService {
     }
 
     // 5. Batch-replace child tables inside a transaction so that a failed
-    //    createMany never leaves stale-freed rows (atomicity guarantee).
-    //    Two round-trips for the whole page replaces the old N×M per-record pattern.
+    //    createMany never leaves orphaned rows (atomicity guarantee).
+    //    Two round-trips for the whole page replaces the old N+1 per-record pattern.
     await this.prisma.$transaction([
       this.prisma.backupVendHqLineItem.deleteMany({
         where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
