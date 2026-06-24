@@ -34,7 +34,7 @@ interface SyncJobRecord extends SyncJob {
 }
 
 interface FailedTransactionRecord extends FailedTransaction {
-  errorDetails?: unknown;
+  // FailedTransaction already includes originalPayload; no extra fields needed.
 }
 
 const PAGE_SIZE = 50;
@@ -171,7 +171,7 @@ export default function OrdersPage() {
             id: transaction.id,
             errorType: transaction.errorType,
             errorMessage: transaction.errorMessage,
-            errorDetails: transaction.errorDetails ?? null,
+            errorDetails: transaction.originalPayload ?? null,
             retryCount: transaction.retryCount,
             createdAt: transaction.createdAt,
           }))

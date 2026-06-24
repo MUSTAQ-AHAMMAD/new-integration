@@ -22,7 +22,7 @@ interface FailedTx {
   id: string;
   errorType: string;
   errorMessage: string;
-  errorDetails: unknown;
+  originalPayload: unknown;
   retryCount: number;
   maxRetries: number;
   isResolved: boolean;
@@ -304,7 +304,7 @@ export default function FailedPage() {
                                 variant="outline"
                                 onClick={() => {
                                   setEditTransaction(transaction);
-                                  setEditPayload(prettyJson(transaction.errorDetails ?? transaction));
+                                  setEditPayload(prettyJson(transaction.originalPayload ?? transaction));
                                 }}
                               >
                                 Edit & Retry
@@ -336,7 +336,7 @@ export default function FailedPage() {
             <DialogDescription>Raw payload and error detail snapshot for the selected failed transaction.</DialogDescription>
           </DialogHeader>
           <pre className="max-h-[60vh] overflow-auto rounded-lg bg-gray-900 p-4 text-xs text-green-400">
-            {prettyJson(payloadTransaction?.errorDetails ?? payloadTransaction)}
+            {prettyJson(payloadTransaction?.originalPayload ?? payloadTransaction)}
           </pre>
         </DialogContent>
       </Dialog>

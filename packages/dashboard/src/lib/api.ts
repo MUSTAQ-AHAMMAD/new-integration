@@ -243,6 +243,13 @@ export interface FailedTransaction {
   maxRetries: number;
   isResolved: boolean;
   createdAt: string;
+  originalPayload: unknown;
+  errorStack: string | null;
+  errorCode: string | null;
+  nextRetryAt: string | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  resolutionNote: string | null;
   orderSyncQueue?: { odooOrderNumber: string; branchCode: string } | null;
 }
 
@@ -306,6 +313,7 @@ export interface SyncJob {
   createdAt: string;
   createdBy: string;
   errorMessage: string | null;
+  errorDetails: unknown;
 }
 
 export interface QueueStats {
@@ -455,6 +463,7 @@ export interface OdooCredential {
   apiKey: string;
   region: string;
   active: boolean;
+  apiPath: string | null;
   lastSyncAt: string | null;
   createdAt: string;
   updatedAt: string;

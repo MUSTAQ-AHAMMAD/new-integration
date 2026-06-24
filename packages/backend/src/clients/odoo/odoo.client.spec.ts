@@ -135,13 +135,15 @@ describe('OdooClient.getOrders — HTTP parameters', () => {
     const { client, httpGet } = makeClient(makeConfig({ ODOO_API_KEY: 'my-key' }));
     httpGet.mockResolvedValue({ data: [] });
 
+    // The caller's `limit` is a stop condition, not the HTTP page size.
+    // The client always sends pageSize=100 to the API.
     await client.getOrders({ limit: 50 });
 
     expect(httpGet).toHaveBeenCalledWith(
       '/api/pos/order',
       expect.objectContaining({
         headers: expect.objectContaining({ 'x-api-key': 'my-key' }),
-        params: expect.objectContaining({ limit: 50 }),
+        params: expect.objectContaining({ limit: 100 }),
       }),
     );
   });

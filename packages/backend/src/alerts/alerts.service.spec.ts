@@ -6,6 +6,7 @@ import { GatewayService } from '../gateway/gateway.service';
 const mockPrisma = {
   alertLog: {
     create: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
   },

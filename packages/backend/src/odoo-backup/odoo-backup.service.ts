@@ -766,11 +766,15 @@ export class OdooBackupService {
 
     // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
     // Filter out integer-only entries for the same reason as lines above.
-    const rawPaymentItems: unknown[] = Array.isArray(order.statement_ids)
-      ? order.statement_ids
-      : Array.isArray(order.payment_ids)
-        ? order.payment_ids
-        : [];
+    // Only prefer statement_ids when it is non-empty; otherwise fall through to
+    // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
+    // carries real data are not silently dropped.
+    const rawPaymentItems: unknown[] =
+      Array.isArray(order.statement_ids) && order.statement_ids.length > 0
+        ? order.statement_ids
+        : Array.isArray(order.payment_ids)
+          ? order.payment_ids
+          : [];
     const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
       (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
     );
