@@ -356,6 +356,7 @@ export default function OdooToOraclePage() {
                 {credentials.map((cred) => (
                   <option key={cred.id} value={cred.id}>
                     {cred.region} — {cred.baseUrl}
+                    {cred.apiPath ? ` (${cred.apiPath})` : ' (auto-detect)'}
                     {!cred.active ? ' [inactive]' : ''}
                   </option>
                 ))}
