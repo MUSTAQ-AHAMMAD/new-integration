@@ -99,7 +99,8 @@ export class OdooTransformationService {
       billToLocation: storeConfig.billToLocation ?? '',
       billToAccountNumber: String(storeConfig.oracleOperatingUnitId),
       businessUnit: storeConfig.oracleBusinessUnit,
-      outletName: backup.branchName ?? undefined,
+      // Prefer warehouse name (outlet name from old integration); fall back to branch name
+      outletName: backup.warehouseName ?? backup.branchName ?? undefined,
       saleDate,
       transactionSource: storeConfig.transactionSource,
       transactionType: storeConfig.transactionType,
@@ -133,7 +134,8 @@ export class OdooTransformationService {
 
       const invLine: InvoiceLine = {
         lineNumber: invoiceHeader.invoiceLines.length + 1,
-        itemNumber: line.productId != null ? String(line.productId) : undefined,
+        // Prefer SKU/product_code (ITEM_NUMBER) over numeric product id
+        itemNumber: line.productCode ?? (line.productId != null ? String(line.productId) : undefined),
         memoLineName: isDiscount ? 'Discount Item' : undefined,
         description: productName,
         quantity: isDiscount && total > 0 ? 1 : qty,
@@ -148,15 +150,19 @@ export class OdooTransformationService {
     // When there are no line items (e.g. the API returned only the header),
     // synthesise a single line from the order total so Oracle always receives
     // a valid invoice with at least one line.
+    // Use amountUntaxed (excl. tax) when available — matches old integration's TOTAL_PRICE mapping.
     if (invoiceHeader.invoiceLines.length === 0 && backup.amountTotal != null) {
       this.logger.warn(
         `BackupOdooOrder id=${backupOrderId} has no line items — synthesising single line from amountTotal`,
       );
+      const syntheticAmount = backup.amountUntaxed != null
+        ? Number(backup.amountUntaxed)
+        : Number(backup.amountTotal);
       invoiceHeader.invoiceLines.push({
         lineNumber: 1,
         description: backup.orderName ?? 'Sale',
         quantity: 1,
-        unitSellingPrice: Number(backup.amountTotal),
+        unitSellingPrice: syntheticAmount,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         salesOrder: orderNumber,
         salesOrderLine: '1',

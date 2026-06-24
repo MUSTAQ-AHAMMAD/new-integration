@@ -503,6 +503,8 @@ export class OdooBackupService {
       // IBQ unified API: { results: [{ order: { order_id, ... } }] }
       if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
       if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
+      // Some Odoo/IBQ variants return { orders: [...] } at the top level
+      if (Array.isArray(p['orders'])) return this.normalizeOrderItems(p['orders']);
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }.
       // This nested-object case is checked before the direct-array fallbacks below
@@ -515,6 +517,35 @@ export class OdooBackupService {
       }
       if (Array.isArray(p['result'])) return this.normalizeOrderItems(p['result']);
       if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
+
+      // Generic fallback: scan all top-level keys for the first non-empty array.
+      // Covers custom Odoo REST modules that use non-standard envelope keys.
+      let firstEmpty: unknown[] | null = null;
+      for (const key of Object.keys(p)) {
+        const val = p[key];
+        if (Array.isArray(val)) {
+          if (val.length > 0) {
+            this.logger.debug(`extractOrderList: using fallback key "${key}" (${val.length} items)`);
+            return this.normalizeOrderItems(val);
+          }
+          if (!firstEmpty) firstEmpty = val;
+        }
+        // One level deeper
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          const nested = val as Record<string, unknown>;
+          for (const innerKey of Object.keys(nested)) {
+            const inner = nested[innerKey];
+            if (Array.isArray(inner)) {
+              if (inner.length > 0) {
+                this.logger.debug(`extractOrderList: using nested fallback "${key}.${innerKey}" (${inner.length} items)`);
+                return this.normalizeOrderItems(inner);
+              }
+              if (!firstEmpty) firstEmpty = inner;
+            }
+          }
+        }
+      }
+      if (firstEmpty) return this.normalizeOrderItems(firstEmpty);
     }
     return [];
   }
@@ -587,16 +618,41 @@ export class OdooBackupService {
     const partnerName = resolveName(order.partner_id);
     const dateOrder = order.date_order ? new Date(order.date_order) : null;
 
+    // ── Extra fields that match the old integration's BACKUP_VENDHQ_SALES mapping ──
+    // warehouse_id → OUTLET_NAME
+    const warehouseId = resolveId(order['warehouse_id'] as number | [number, string] | null | undefined);
+    const warehouseName = resolveName(order['warehouse_id'] as number | [number, string] | null | undefined);
+    // pos_config_id or session_id → REGISTER_NAME
+    const posConfigId = resolveId(order['pos_config_id'] as number | [number, string] | null | undefined);
+    const posConfigName =
+      resolveName(order['pos_config_id'] as number | [number, string] | null | undefined) ??
+      resolveName(order['session_id'] as number | [number, string] | null | undefined);
+    // amount_untaxed → TOTAL_PRICE (subtotal excl. tax)
+    const amountUntaxed = order['amount_untaxed'] != null ? Number(order['amount_untaxed']) : null;
+    // amount_discount → TOTAL_LOYALTY (discount/loyalty amount)
+    const amountDiscount = order['amount_discount'] != null ? Number(order['amount_discount']) : null;
+    // Customer type from tags or partner type
+    const customerType = typeof order['customer_type'] === 'string'
+      ? order['customer_type']
+      : null;
+
     const orderData = {
       orderName: order.name ?? null,
       branchId,
       branchName,
       dateOrder,
       amountTotal: order.amount_total != null ? Number(order.amount_total) : null,
+      amountUntaxed,
       amountTax: order.amount_tax != null ? Number(order.amount_tax) : null,
+      amountDiscount,
       state: typeof order.state === 'string' ? order.state : null,
       partnerId,
       partnerName,
+      warehouseId,
+      warehouseName,
+      posConfigId,
+      posConfigName,
+      customerType,
       timezone: typeof order.timezone === 'string' ? order.timezone : null,
       region: region ?? null,
       resolvedBranchCode: resolvedBranchCode ?? null,
@@ -643,16 +699,37 @@ export class OdooBackupService {
         const productName = resolveName(line.product_id);
         const lineId = typeof line.id === 'number' ? line.id : null;
 
+        // Product internal reference / SKU (default_code or product_code) → ITEM_NUMBER
+        const productCode =
+          typeof line['product_code'] === 'string' ? line['product_code'] :
+          typeof line['default_code'] === 'string' ? line['default_code'] :
+          null;
+
+        // Tax name from tax_id Many2many field — first entry's name → TAX_NAME
+        let taxName: string | null = null;
+        if (Array.isArray(line['tax_id']) && (line['tax_id'] as unknown[]).length > 0) {
+          const firstTax = (line['tax_id'] as unknown[])[0];
+          if (Array.isArray(firstTax) && firstTax.length > 1 && typeof firstTax[1] === 'string') {
+            taxName = firstTax[1];
+          } else if (typeof firstTax === 'string') {
+            taxName = firstTax;
+          }
+        } else if (typeof line['tax_id'] === 'string') {
+          taxName = line['tax_id'];
+        }
+
         const lineData = {
           orderId: order.id,
           lineId,
           productId,
           productName,
+          productCode,
           qty: resolveQty(line),
           priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
           priceSubtotal: line.price_subtotal != null ? Number(line.price_subtotal) : null,
           priceSubtotalIncl: line.price_subtotal_incl != null ? Number(line.price_subtotal_incl) : null,
           discount: line.discount != null ? Number(line.discount) : null,
+          taxName,
           parentOrderId: parentId,
         };
 
@@ -694,21 +771,40 @@ export class OdooBackupService {
       for (const pmt of rawPayments) {
         const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
 
+        // Payment method name — v15 uses `name`, v16+ uses payment_method_id Many2one,
+        // some variants use journal_id or payment_method_code.
+        const paymentName =
+          pmt.payment_method_code ??
+          (typeof pmt.name === 'string' ? pmt.name : null) ??
+          (Array.isArray(pmt.payment_method_id)
+            ? (typeof (pmt.payment_method_id as [number, unknown])[1] === 'string'
+                ? (pmt.payment_method_id as [number, string])[1]
+                : null)
+            : null) ??
+          (Array.isArray(pmt.journal_id)
+            ? (typeof (pmt.journal_id as [number, unknown])[1] === 'string'
+                ? (pmt.journal_id as [number, string])[1]
+                : null)
+            : null);
+
+        // Currency code from currency_id Many2one → CURRENCY
+        const currency = Array.isArray(pmt.currency_id)
+          ? (typeof (pmt.currency_id as [number, unknown])[1] === 'string'
+              ? (pmt.currency_id as [number, string])[1]
+              : null)
+          : null;
+
+        // Payment date → PAYMENT_DATE
+        const paymentDateRaw = pmt.date ?? pmt.payment_date;
+        const paymentDate = typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
+
         const pmtData = {
           orderId: order.id,
           paymentId: pmtId,
-          // Odoo v15 uses `name` (e.g. "Cash"), v16+ stores the method as a
-          // Many2one `payment_method_id: [id, "Cash"]`.  Fall back through
-          // both so payment method names are captured in all versions.
-          paymentName:
-            typeof pmt.name === 'string'
-              ? pmt.name
-              : Array.isArray(pmt.payment_method_id)
-                ? (typeof (pmt.payment_method_id as [number, unknown])[1] === 'string'
-                    ? (pmt.payment_method_id as [number, string])[1]
-                    : null)
-                : null,
+          paymentName,
           amount: pmt.amount != null ? Number(pmt.amount) : null,
+          currency,
+          paymentDate,
           parentOrderId: parentId,
         };
 

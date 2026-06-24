@@ -233,6 +233,29 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
     expect(result.orders).toHaveLength(1);
   });
+
+  it('✅ {orders:[...]} top-level envelope → orders extracted correctly (root cause of fetched:0)', async () => {
+    // Some IBQ / custom Odoo REST modules return { orders: [...] } directly at
+    // the top level without nesting in result/records/data.
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValue({ data: { orders: [makeOrder(), makeOrder({ id: 1002 })] } });
+
+    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(result.orders).toHaveLength(2);
+    expect(result.saved).toBe(2);
+  });
+
+  it('✅ generic fallback for unknown envelope key (e.g. Sale_detail) → orders extracted', async () => {
+    // Custom Odoo REST APIs sometimes use non-standard top-level keys.
+    // The generic array-scanning fallback should pick up the order array.
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValue({ data: { Sale_detail: [makeOrder()] } });
+
+    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(result.orders).toHaveLength(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -509,6 +532,194 @@ describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
 
     expect(mockAxiosGet).toHaveBeenCalledTimes(1);
     expect(result.orders).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertOrder — new field mapping (matching old integration's BACKUP_VENDHQ_SALES)
+// ---------------------------------------------------------------------------
+
+describe('OdooBackupService — new field mapping aligned with old integration', () => {
+  const mockAxiosGet = jest.spyOn(axios, 'get');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('stores amountUntaxed (TOTAL_PRICE) from amount_untaxed field', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ amount_untaxed: 190.0 });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountUntaxed: 190.0 }),
+      }),
+    );
+  });
+
+  it('stores amountDiscount (TOTAL_LOYALTY) from amount_discount field', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ amount_discount: 15.5 });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountDiscount: 15.5 }),
+      }),
+    );
+  });
+
+  it('stores warehouseName (OUTLET_NAME) from warehouse_id Many2one', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ warehouse_id: [5, 'Dubai Mall Store'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ warehouseId: 5, warehouseName: 'Dubai Mall Store' }),
+      }),
+    );
+  });
+
+  it('stores posConfigName (REGISTER_NAME) from pos_config_id Many2one', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ pos_config_id: [12, 'Register 01'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ posConfigId: 12, posConfigName: 'Register 01' }),
+      }),
+    );
+  });
+
+  it('falls back to session_id for posConfigName when pos_config_id is absent', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ session_id: [7, 'Session-Morning'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ posConfigName: 'Session-Morning' }),
+      }),
+    );
+  });
+
+  it('stores taxName (TAX_NAME) from tax_id Many2many on line items', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      lines: [
+        {
+          id: 501,
+          product_id: [10, 'Coffee'],
+          qty: 1,
+          price_unit: 25,
+          price_subtotal: 25,
+          price_subtotal_incl: 26.25,
+          discount: 0,
+          tax_id: [[3, 'VAT 5%']],
+        },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ taxName: 'VAT 5%' }),
+      }),
+    );
+  });
+
+  it('stores productCode (ITEM_NUMBER) from default_code on line items', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      lines: [
+        {
+          id: 502,
+          product_id: [11, 'Latte'],
+          qty: 2,
+          price_unit: 30,
+          price_subtotal: 60,
+          default_code: 'PROD-001',
+        },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productCode: 'PROD-001' }),
+      }),
+    );
+  });
+
+  it('stores currency (CURRENCY) from currency_id Many2one on payments', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      statement_ids: [
+        { id: 801, name: 'Cash', amount: 210.0, currency_id: [1, 'AED'] },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
+      }),
+    );
+  });
+
+  it('stores paymentDate (PAYMENT_DATE) from date field on payments', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      statement_ids: [
+        { id: 802, name: 'Card', amount: 50.0, date: '2024-05-17T10:30:00Z' },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentDate: new Date('2024-05-17T10:30:00Z') }),
+      }),
+    );
+  });
+
+  it('resolves payment method from journal_id when name and payment_method_id are absent', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      payment_ids: [
+        { id: 803, journal_id: [4, 'Bank Transfer'], amount: 100.0 },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentName: 'Bank Transfer' }),
+      }),
+    );
   });
 });
 

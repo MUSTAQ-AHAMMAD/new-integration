@@ -29,6 +29,17 @@ export interface OdooOrderPayment {
   id?: number;
   name?: string;
   amount?: number;
+  /** ISO currency code from currency_id Many2one field */
+  currency_id?: number | [number, string];
+  /** Payment method from payment_method_id Many2one (v16+) */
+  payment_method_id?: number | [number, string];
+  /** Journal name from journal_id Many2one */
+  journal_id?: number | [number, string];
+  /** Payment method code string (some IBQ variants) */
+  payment_method_code?: string;
+  /** Payment date */
+  date?: string;
+  payment_date?: string;
   [key: string]: unknown;
 }
 
@@ -305,6 +316,12 @@ export class OdooClient {
         return this.normalizeItems<T>(data);
       }
 
+      // Some Odoo/IBQ variants return { orders: [...] } at the top level
+      const orders = payload.orders;
+      if (Array.isArray(orders)) {
+        return this.normalizeItems<T>(orders);
+      }
+
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
       const result = payload.result;
@@ -326,6 +343,36 @@ export class OdooClient {
       if (Array.isArray(result)) {
         return this.normalizeItems<T>(result);
       }
+
+      // Generic fallback: scan all top-level keys for the first non-empty array.
+      // Covers custom Odoo REST modules that use non-standard envelope keys
+      // (e.g. "items", "rows", "Sale_detail", "orders_list", etc.).
+      let firstEmpty: unknown[] | null = null;
+      for (const key of Object.keys(payload)) {
+        const val = payload[key];
+        if (Array.isArray(val)) {
+          if (val.length > 0) {
+            this.logger.debug(`extractList: using fallback key "${key}" (${val.length} items)`);
+            return this.normalizeItems<T>(val);
+          }
+          if (!firstEmpty) firstEmpty = val;
+        }
+        // One level deeper — e.g. { response: { items: [...] } }
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          const nested = val as Record<string, unknown>;
+          for (const innerKey of Object.keys(nested)) {
+            const inner = nested[innerKey];
+            if (Array.isArray(inner)) {
+              if (inner.length > 0) {
+                this.logger.debug(`extractList: using nested fallback "${key}.${innerKey}" (${inner.length} items)`);
+                return this.normalizeItems<T>(inner);
+              }
+              if (!firstEmpty) firstEmpty = inner;
+            }
+          }
+        }
+      }
+      if (firstEmpty) return this.normalizeItems<T>(firstEmpty);
     }
 
     return [];

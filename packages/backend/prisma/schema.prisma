@@ -1559,12 +1559,27 @@ model BackupOdooOrder {
   branchId     Int?
   branchName   String?
   dateOrder    DateTime?
+  /// Grand total including tax (amount_total)
   amountTotal  Float?
+  /// Subtotal excluding tax (amount_untaxed) — maps to TOTAL_PRICE in old integration
+  amountUntaxed Float?
   amountTax    Float?
+  /// Discount / loyalty amount (amount_discount) — maps to TOTAL_LOYALTY in old integration
+  amountDiscount Float?
   /// Odoo order state: draft | sale | done | cancel | paid | posted etc.
   state        String?
   partnerId    Int?
   partnerName  String?
+  /// Warehouse id from warehouse_id Many2one field (outlet identifier)
+  warehouseId  Int?
+  /// Warehouse/outlet name from warehouse_id[1] — maps to OUTLET_NAME in old integration
+  warehouseName String?
+  /// POS config id from pos_config_id Many2one field (register identifier)
+  posConfigId  Int?
+  /// POS config/register name from pos_config_id[1] or session_id[1] — maps to REGISTER_NAME in old integration
+  posConfigName String?
+  /// Customer type derived from order tags or partner type (e.g. NORMAL, HUNGERSTATION, TALABAT)
+  customerType String?
   /// Timezone string carried on the order, e.g. "Asia/Dubai"
   timezone     String?
   /// Region identifier (e.g. "AE", "KW") from the OdooCredential that fetched this order.
@@ -1596,11 +1611,15 @@ model BackupOdooOrderLine {
   lineId            Int?
   productId         Int?
   productName       String?
+  /// Product internal reference / SKU (default_code or product_code) — maps to ITEM_NUMBER in old integration
+  productCode       String?
   qty               Float?
   priceUnit         Float?
   priceSubtotal     Float?
   priceSubtotalIncl Float?
   discount          Float?
+  /// Tax name / code from tax_id (e.g. "VAT 5%") — maps to TAX_NAME in old integration
+  taxName           String?
   createdAt         DateTime @default(now())
 
   /// FK to parent BackupOdooOrder
@@ -1613,15 +1632,19 @@ model BackupOdooOrderLine {
 
 /// Payment entries belonging to a BackupOdooOrder.
 model BackupOdooOrderPayment {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   /// Parent Odoo order id (denormalised for fast queries)
   orderId       Int
   /// Odoo integer id of this payment / statement line
   paymentId     Int?
-  /// Payment method name, e.g. "Cash", "Card"
+  /// Payment method name, e.g. "Cash", "Card" — maps to PAYMENT_TYPE in old integration
   paymentName   String?
   amount        Float?
-  createdAt     DateTime @default(now())
+  /// ISO currency code, e.g. "AED", "SAR" — maps to CURRENCY in old integration
+  currency      String?
+  /// Payment date — maps to PAYMENT_DATE in old integration
+  paymentDate   DateTime?
+  createdAt     DateTime  @default(now())
 
   /// FK to parent BackupOdooOrder
   parentOrderId String?
