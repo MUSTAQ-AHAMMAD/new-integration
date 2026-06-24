@@ -111,7 +111,8 @@ export class SyncService {
         skippedCount,
         status: finalStatus,
         startedAt: totalRecords > 0 ? new Date() : undefined,
-        completedAt: finalStatus === JobStatus.COMPLETED ? new Date() : undefined,
+        completedAt:
+          finalStatus === JobStatus.COMPLETED ? new Date() : undefined,
       },
     });
   }

@@ -291,9 +291,27 @@ describe('SyncService', () => {
 
       // Two paid orders (to be enqueued), one unpaid (to be skipped)
       mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([
-        { id: 'o1', odooOrderId: 'ORD-1', branchCode: 'DXB', isPaid: true, isCancelled: false },
-        { id: 'o2', odooOrderId: 'ORD-2', branchCode: 'DXB', isPaid: true, isCancelled: false },
-        { id: 'o3', odooOrderId: 'ORD-3', branchCode: 'DXB', isPaid: false, isCancelled: false },
+        {
+          id: 'o1',
+          odooOrderId: 'ORD-1',
+          branchCode: 'DXB',
+          isPaid: true,
+          isCancelled: false,
+        },
+        {
+          id: 'o2',
+          odooOrderId: 'ORD-2',
+          branchCode: 'DXB',
+          isPaid: true,
+          isCancelled: false,
+        },
+        {
+          id: 'o3',
+          odooOrderId: 'ORD-3',
+          branchCode: 'DXB',
+          isPaid: false,
+          isCancelled: false,
+        },
       ]);
       // Second call returns empty → pagination loop ends
       mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
@@ -311,9 +329,9 @@ describe('SyncService', () => {
       expect(mockPrisma.syncJob.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            totalRecords: 3,      // 2 enqueued + 1 skipped
-            processedRecords: 1,  // only the 1 skipped order is immediately "done"
-            successCount: 0,      // no Oracle syncs have run yet
+            totalRecords: 3, // 2 enqueued + 1 skipped
+            processedRecords: 1, // only the 1 skipped order is immediately "done"
+            successCount: 0, // no Oracle syncs have run yet
             skippedCount: 1,
             status: JobStatus.PENDING,
           }),
