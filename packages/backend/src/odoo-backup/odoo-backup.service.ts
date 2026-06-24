@@ -549,7 +549,12 @@ export class OdooBackupService {
       );
     }
 
-    // params.limit overrides the per-page fetch size (default: CREDENTIAL_PAGE_SIZE).
+    // params.limit sets the per-page fetch size sent to the Odoo API.
+    // When omitted the default CREDENTIAL_PAGE_SIZE (200) is used, which is
+    // also the value that controls whether another page is fetched.  Callers
+    // that want to cap the TOTAL records (not just the page size) should call
+    // this method without limit and slice the returned orders array themselves,
+    // or pass a large value such as the total record count.
     const effectivePageSize = params.limit ?? CREDENTIAL_PAGE_SIZE;
 
     /**

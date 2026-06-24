@@ -83,9 +83,13 @@ const STATUS_ENABLED = 'ENABLED';
 const STATUS_DISABLED = 'DISABLED';
 /** Maximum records per VendHQ API page (API cap is 200) */
 const VENDHQ_PAGE_SIZE = 200;
-/** Concurrency limit for parallel parent-sale upserts within one page */
+/** Concurrency limit for parallel parent-sale upserts within one page.
+ * Chosen to stay within the default PrismaClient connection pool size (10)
+ * while allowing meaningful parallelism — each upsert may open one connection. */
 const UPSERT_CONCURRENCY = 20;
-/** Concurrency limit for parallel SaleSyncStatus upserts within one page */
+/** Concurrency limit for parallel SaleSyncStatus upserts within one page.
+ * Higher than UPSERT_CONCURRENCY because SaleSyncStatus upserts are lighter
+ * (single-row, no child relations) and benefit more from I/O parallelism. */
 const SYNC_CONCURRENCY = 50;
 
 @Injectable()
@@ -443,7 +447,12 @@ export class VendHqSalesBackupService {
     for (const sale of salesToProcess) {
       const inv = sale.invoice_number ?? sale.id;
       const parentId = parentIdMap.get(inv);
-      if (!parentId) continue;
+      if (!parentId) {
+        this.logger.warn(
+          `VendHQ sale inv=${inv} region=${region}: parent upsert result not found — child rows skipped`,
+        );
+        continue;
+      }
       processedInvoiceNumbers.push(inv);
 
       const saleDate = sale.sale_date ? new Date(sale.sale_date) : new Date();

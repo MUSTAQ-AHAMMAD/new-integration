@@ -10,6 +10,15 @@
  *  2. lastSyncAt watermark filters out all records (start_date sent to Odoo
  *     is newer than any available order).
  *  3. Credential baseUrl / apiPath misconfiguration.
+ *
+ * Note: describe blocks that use jest.spyOn(axios, 'get') call
+ * jest.resetAllMocks() in beforeEach (not clearAllMocks) because Jest 30's
+ * clearAllMocks only resets _mockState (call history) and leaves
+ * _mockConfigRegistry intact.  Unconsumed mockResolvedValueOnce values from
+ * a failing test would bleed into the next test's axios.get calls, causing
+ * false successes/failures.  resetAllMocks also clears specificMockImpls,
+ * preventing cross-test contamination.  Each test re-creates its mocks via
+ * makeService() after beforeEach runs, so the reset has no side effects.
  */
 
 import axios, { AxiosError } from 'axios';
