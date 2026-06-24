@@ -676,29 +676,31 @@ export class OdooBackupService {
 
     // ── Pagination loop — fetch all pages ────────────────────────────────────
     // Strategy: pre-fetch the next page while upserting the current page so
-    // that network I/O and DB writes overlap.  Pages are processed immediately
-    // as they arrive instead of accumulating all records in memory first, which
-    // keeps memory usage bounded regardless of result-set size.
+    // that network I/O and DB writes overlap.
     //
-    // allOrders is still accumulated and returned so that runCredentialBackupJob
-    // can pass the records through the ingestion pipeline without a second DB
-    // round-trip.  For typical 15-minute incremental runs the set is small; for
-    // large initial loads the caller streams ingestion from the same slice.
+    // Two explicit offset variables are maintained to avoid any ambiguity:
+    //   currentOffset — starting offset of the page currently being processed.
+    //   nextOffset    — starting offset of the next page to be fetched.
+    //
+    // allOrders is accumulated and returned so runCredentialBackupJob can pass
+    // each page through the ingestion pipeline without a second DB round-trip.
+    // Incremental 15-minute cron runs fetch only new records, so the in-memory
+    // set remains small in normal operation.  Very large initial back-fills
+    // should be run in date-range slices via the manual fetch-odoo endpoint.
     const allOrders: OdooOrder[] = [];
     let saved = 0;
     let skipped = 0;
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
-    // `offset` always holds the starting offset of the NEXT page to fetch.
-    // The current page's offset is therefore `offset - CREDENTIAL_PAGE_SIZE`.
-    let offset = CREDENTIAL_PAGE_SIZE;
+    let currentOffset = 0;
+    let nextOffset = CREDENTIAL_PAGE_SIZE;
 
     while (true) {
       // Start fetching the next page in the background before we begin
       // upserting the current page — this hides network latency behind DB work.
       const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
         currentPageOrders.length === CREDENTIAL_PAGE_SIZE
-          ? tryFetch(resolvedPath, offset)
+          ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
       // Upsert every order in the current page.
@@ -720,9 +722,8 @@ export class OdooBackupService {
       // Last page reached — no more records to fetch.
       if (currentPageOrders.length < CREDENTIAL_PAGE_SIZE) break;
 
-      const currentPageOffset = offset - CREDENTIAL_PAGE_SIZE;
       this.logger.debug(
-        `OdooCredential region=${cred.region}: processed page at offset=${currentPageOffset}, ` +
+        `OdooCredential region=${cred.region}: processed page at offset=${currentOffset}, ` +
           `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
       );
 
@@ -732,13 +733,14 @@ export class OdooBackupService {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new BadGatewayException(
-          `Odoo API error for region ${cred.region} while fetching page at offset=${offset}: ${msg}`,
+          `Odoo API error for region ${cred.region} while fetching page at offset=${nextOffset}: ${msg}`,
         );
       }
 
       if (!nextResp) break; // guard against unexpected null on non-first pages
       currentPageOrders = this.extractOrderList(nextResp.data);
-      offset += CREDENTIAL_PAGE_SIZE;
+      currentOffset = nextOffset;
+      nextOffset += CREDENTIAL_PAGE_SIZE;
     }
 
     return { saved, skipped, orders: allOrders };
