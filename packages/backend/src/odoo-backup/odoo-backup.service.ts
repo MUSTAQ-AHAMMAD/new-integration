@@ -549,6 +549,14 @@ export class OdooBackupService {
       );
     }
 
+    // params.limit sets the per-page fetch size sent to the Odoo API.
+    // When omitted the default CREDENTIAL_PAGE_SIZE (200) is used.  Note that
+    // this controls only the page size — pagination continues until a page
+    // shorter than effectivePageSize is received, so the total records returned
+    // may exceed the value passed here.  Callers that need a hard cap on total
+    // records must slice the returned orders array after this method returns.
+    const effectivePageSize = params.limit ?? CREDENTIAL_PAGE_SIZE;
+
     /**
      * Attempt a single GET against the given path at the given page offset.
      * Returns the AxiosResponse on success.
@@ -573,7 +581,7 @@ export class OdooBackupService {
             ...(params.endDate && {
               end_date: toApiDatetime(params.endDate, { end: true }),
             }),
-            limit: CREDENTIAL_PAGE_SIZE,
+            limit: effectivePageSize,
             offset,
           },
           httpsAgent,
@@ -691,7 +699,7 @@ export class OdooBackupService {
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
     let currentOffset = 0;
-    let nextOffset = CREDENTIAL_PAGE_SIZE;
+    let nextOffset = effectivePageSize;
     let saved = 0;
     let skipped = 0;
 
@@ -699,7 +707,7 @@ export class OdooBackupService {
       // Start fetching the next page in the background before we begin
       // upserting the current page — this hides network latency behind DB work.
       const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
-        currentPageOrders.length === CREDENTIAL_PAGE_SIZE
+        currentPageOrders.length === effectivePageSize
           ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
@@ -723,7 +731,7 @@ export class OdooBackupService {
       allOrders.push(...currentPageOrders);
 
       // Last page reached — no more records to fetch.
-      if (currentPageOrders.length < CREDENTIAL_PAGE_SIZE) break;
+      if (currentPageOrders.length < effectivePageSize) break;
 
       this.logger.debug(
         `OdooCredential region=${cred.region}: processed page at offset=${currentOffset}, ` +
@@ -750,7 +758,7 @@ export class OdooBackupService {
       }
       currentPageOrders = this.extractOrderList(nextResp.data);
       currentOffset = nextOffset;
-      nextOffset += CREDENTIAL_PAGE_SIZE;
+      nextOffset += effectivePageSize;
     }
 
     return { saved, skipped, orders: allOrders };
@@ -963,28 +971,14 @@ export class OdooBackupService {
     );
 
     if (lines.length > 0) {
-      // Pre-fetch all existing lines for this order to avoid N+1 queries
-      const existingLines = await this.prisma.backupOdooOrderLine.findMany({
-        where: { orderId: order.id },
-        select: { id: true, lineId: true },
-      });
-      const existingLineMap = new Map(
-        existingLines
-          .filter(
-            (l: { id: string; lineId: number | null }) => l.lineId != null,
-          )
-          .map((l: { id: string; lineId: number | null }) => [
-            l.lineId as number,
-            l.id,
-          ]),
-      );
-
-      for (const line of lines) {
+      // Batch-replace: delete stale line rows then bulk-insert fresh ones.
+      // This replaces the old N+1 (findMany + sequential create/update per line)
+      // with two round-trips regardless of how many lines exist.
+      const lineDataItems = lines.map((line) => {
         const productId = resolveId(line.product_id);
         const productName = resolveName(line.product_id);
         const lineId = typeof line.id === 'number' ? line.id : null;
 
-        // Product internal reference / SKU (default_code or product_code) → ITEM_NUMBER
         const productCode =
           typeof line['product_code'] === 'string'
             ? line['product_code']
@@ -992,10 +986,9 @@ export class OdooBackupService {
               ? line['default_code']
               : null;
 
-        // Tax name from tax_id Many2many field — first entry's name → TAX_NAME
         const taxName = extractFirstTaxName(line['tax_id']);
 
-        const lineData = {
+        return {
           orderId: order.id,
           lineId,
           productId,
@@ -1013,18 +1006,14 @@ export class OdooBackupService {
           taxName,
           parentOrderId: parentId,
         };
+      });
 
-        const existingId =
-          lineId != null ? existingLineMap.get(lineId) : undefined;
-        if (existingId) {
-          await this.prisma.backupOdooOrderLine.update({
-            where: { id: existingId },
-            data: lineData,
-          });
-        } else {
-          await this.prisma.backupOdooOrderLine.create({ data: lineData });
-        }
-      }
+      await this.prisma.$transaction([
+        this.prisma.backupOdooOrderLine.deleteMany({
+          where: { orderId: order.id },
+        }),
+        this.prisma.backupOdooOrderLine.createMany({ data: lineDataItems }),
+      ]);
     }
 
     // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
@@ -1037,43 +1026,22 @@ export class OdooBackupService {
     );
 
     if (rawPayments.length > 0) {
-      // Pre-fetch all existing payments for this order to avoid N+1 queries
-      const existingPayments =
-        await this.prisma.backupOdooOrderPayment.findMany({
-          where: { orderId: order.id },
-          select: { id: true, paymentId: true },
-        });
-      const existingPaymentMap = new Map(
-        existingPayments
-          .filter(
-            (p: { id: string; paymentId: number | null }) =>
-              p.paymentId != null,
-          )
-          .map((p: { id: string; paymentId: number | null }) => [
-            p.paymentId as number,
-            p.id,
-          ]),
-      );
-
-      for (const pmt of rawPayments) {
+      // Batch-replace: delete stale payment rows then bulk-insert fresh ones.
+      const paymentDataItems = rawPayments.map((pmt) => {
         const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
-
-        // Payment method name — uses extractPaymentName() helper for clear resolution order
         const paymentName = extractPaymentName(pmt);
 
-        // Currency code from currency_id Many2one → CURRENCY
         const currency = Array.isArray(pmt.currency_id)
           ? typeof (pmt.currency_id as [number, unknown])[1] === 'string'
             ? pmt.currency_id[1]
             : null
           : null;
 
-        // Payment date → PAYMENT_DATE
         const paymentDateRaw = pmt.date ?? pmt.payment_date;
         const paymentDate =
           typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
 
-        const pmtData = {
+        return {
           orderId: order.id,
           paymentId: pmtId,
           paymentName,
@@ -1082,18 +1050,16 @@ export class OdooBackupService {
           paymentDate,
           parentOrderId: parentId,
         };
+      });
 
-        const existingId =
-          pmtId != null ? existingPaymentMap.get(pmtId) : undefined;
-        if (existingId) {
-          await this.prisma.backupOdooOrderPayment.update({
-            where: { id: existingId },
-            data: pmtData,
-          });
-        } else {
-          await this.prisma.backupOdooOrderPayment.create({ data: pmtData });
-        }
-      }
+      await this.prisma.$transaction([
+        this.prisma.backupOdooOrderPayment.deleteMany({
+          where: { orderId: order.id },
+        }),
+        this.prisma.backupOdooOrderPayment.createMany({
+          data: paymentDataItems,
+        }),
+      ]);
     }
   }
 }
