@@ -679,11 +679,18 @@ export class OdooBackupService {
     // that network I/O and DB writes overlap.  Pages are processed immediately
     // as they arrive instead of accumulating all records in memory first, which
     // keeps memory usage bounded regardless of result-set size.
+    //
+    // allOrders is still accumulated and returned so that runCredentialBackupJob
+    // can pass the records through the ingestion pipeline without a second DB
+    // round-trip.  For typical 15-minute incremental runs the set is small; for
+    // large initial loads the caller streams ingestion from the same slice.
     const allOrders: OdooOrder[] = [];
     let saved = 0;
     let skipped = 0;
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
+    // `offset` always holds the starting offset of the NEXT page to fetch.
+    // The current page's offset is therefore `offset - CREDENTIAL_PAGE_SIZE`.
     let offset = CREDENTIAL_PAGE_SIZE;
 
     while (true) {
@@ -713,12 +720,22 @@ export class OdooBackupService {
       // Last page reached — no more records to fetch.
       if (currentPageOrders.length < CREDENTIAL_PAGE_SIZE) break;
 
+      const currentPageOffset = offset - CREDENTIAL_PAGE_SIZE;
       this.logger.debug(
-        `OdooCredential region=${cred.region}: fetched page at offset=${offset - CREDENTIAL_PAGE_SIZE}, ` +
+        `OdooCredential region=${cred.region}: processed page at offset=${currentPageOffset}, ` +
           `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
       );
 
-      const nextResp = await nextPageFetch;
+      let nextResp: AxiosResponse<unknown> | null;
+      try {
+        nextResp = await nextPageFetch;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadGatewayException(
+          `Odoo API error for region ${cred.region} while fetching page at offset=${offset}: ${msg}`,
+        );
+      }
+
       if (!nextResp) break; // guard against unexpected null on non-first pages
       currentPageOrders = this.extractOrderList(nextResp.data);
       offset += CREDENTIAL_PAGE_SIZE;
