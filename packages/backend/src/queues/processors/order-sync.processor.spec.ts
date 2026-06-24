@@ -106,7 +106,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         }),
       } as unknown as PrismaService['syncJob'],
       backupVendHqSale: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'sale-001', region: 'AE' }),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'sale-001', region: 'AE' }),
       } as unknown as PrismaService['backupVendHqSale'],
     };
 
@@ -210,9 +212,10 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       status: SyncStatus.SYNCED,
     });
     (mockPrisma.failedTransaction!.create as jest.Mock).mockResolvedValue({});
-    (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(
-      { id: 'sale-001', region: 'AE' },
-    );
+    (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue({
+      id: 'sale-001',
+      region: 'AE',
+    });
     (mockPrisma.fusionInvoiceHeader!.create as jest.Mock).mockResolvedValue({
       id: 'hdr-1',
     });
@@ -423,7 +426,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         ...BASE_ORDER,
         odooBackupOrderId: null,
       });
-      (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(null);
+      (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(
+        null,
+      );
     });
 
     it('marks the order as FAILED when no backup data exists', async () => {
@@ -471,10 +476,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     it('does NOT record an idempotency SUCCESS when no backup data exists', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
-      const calls = (mockIdempotency.recordOperation as jest.Mock).mock.calls as Array<
-        [{ status: AuditStatus }]
-      >;
-      const successCall = calls.find((c) => c[0].status === AuditStatus.SUCCESS);
+      const calls = (mockIdempotency.recordOperation as jest.Mock).mock
+        .calls as Array<[{ status: AuditStatus }]>;
+      const successCall = calls.find(
+        (c) => c[0].status === AuditStatus.SUCCESS,
+      );
       expect(successCall).toBeUndefined();
     });
   });

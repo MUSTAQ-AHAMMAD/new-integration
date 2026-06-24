@@ -1,10 +1,13 @@
+import axios from 'axios';
 import { IbqBackupService } from './ibq-backup.service';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
 // ---------------------------------------------------------------------------
 
-function makeOrder(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeOrder(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id: 101,
     name: 'Order 00001-001-0001',
@@ -88,7 +91,7 @@ function makeService(
 
 describe('IbqBackupService', () => {
   describe('backupRegion', () => {
-    const mockAxios = jest.spyOn(require('axios'), 'get');
+    const mockAxios = jest.spyOn(axios, 'get');
 
     beforeEach(() => {
       jest.clearAllMocks();
@@ -114,7 +117,9 @@ describe('IbqBackupService', () => {
 
       await service.backupRegion(makeCred({ companyId: 3 }));
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params).toHaveProperty('company_id', 3);
     });
 
@@ -124,7 +129,9 @@ describe('IbqBackupService', () => {
 
       await service.backupRegion(makeCred({ companyId: null }));
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params).not.toHaveProperty('company_id');
     });
 
@@ -132,13 +139,19 @@ describe('IbqBackupService', () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
-      await service.backupRegion(makeCred({ lastSyncAt: new Date('2024-01-15T10:00:00Z') }));
+      await service.backupRegion(
+        makeCred({ lastSyncAt: new Date('2024-01-15T10:00:00Z') }),
+      );
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params).toHaveProperty('start_date');
       expect(typeof callParams.params['start_date']).toBe('string');
       // Must be YYYY-MM-DD HH:MM:SS (not the old MM/DD/YYYY format)
-      expect(callParams.params['start_date']).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(callParams.params['start_date']).toMatch(
+        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,
+      );
     });
 
     it('appends 00:00:00 to a date-only startDate override from the UI', async () => {
@@ -147,7 +160,9 @@ describe('IbqBackupService', () => {
 
       await service.backupRegion(makeCred(), { startDate: '2026-02-01' });
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params['start_date']).toBe('2026-02-01 00:00:00');
     });
 
@@ -157,7 +172,9 @@ describe('IbqBackupService', () => {
 
       await service.backupRegion(makeCred(), { endDate: '2026-02-01' });
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params['end_date']).toBe('2026-02-01 23:59:59');
     });
 
@@ -165,9 +182,13 @@ describe('IbqBackupService', () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
-      await service.backupRegion(makeCred(), { startDate: '2026-02-01 21:00:00' });
+      await service.backupRegion(makeCred(), {
+        startDate: '2026-02-01 21:00:00',
+      });
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params['start_date']).toBe('2026-02-01 21:00:00');
     });
 
@@ -177,7 +198,9 @@ describe('IbqBackupService', () => {
 
       await service.backupRegion(makeCred({ lastSyncAt: null }));
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params).not.toHaveProperty('start_date');
     });
 
@@ -211,8 +234,24 @@ describe('IbqBackupService', () => {
       const { service, prisma } = makeService();
       const order = makeOrder({
         lines: [
-          { id: 1, product_id: [789, 'Test Product'], qty: 2, price_unit: 50, price_subtotal: 100, price_subtotal_incl: 105, discount: 0 },
-          { id: 2, product_id: [790, 'Another Product'], qty: 1, price_unit: 5, price_subtotal: 5, price_subtotal_incl: 5, discount: 0 },
+          {
+            id: 1,
+            product_id: [789, 'Test Product'],
+            qty: 2,
+            price_unit: 50,
+            price_subtotal: 100,
+            price_subtotal_incl: 105,
+            discount: 0,
+          },
+          {
+            id: 2,
+            product_id: [790, 'Another Product'],
+            qty: 1,
+            price_unit: 5,
+            price_subtotal: 5,
+            price_subtotal_incl: 5,
+            discount: 0,
+          },
         ],
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
@@ -227,9 +266,7 @@ describe('IbqBackupService', () => {
     it('persists payments from statement_ids when present', async () => {
       const { service, prisma } = makeService();
       const order = makeOrder({
-        statement_ids: [
-          { id: 10, name: 'Cash', amount: 105.0 },
-        ],
+        statement_ids: [{ id: 10, name: 'Cash', amount: 105.0 }],
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
       prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
@@ -302,7 +339,9 @@ describe('IbqBackupService', () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
-      await service.backupRegion(makeCred({ baseUrl: 'https://ibq.example.com/' }));
+      await service.backupRegion(
+        makeCred({ baseUrl: 'https://ibq.example.com/' }),
+      );
 
       expect(mockAxios).toHaveBeenCalledWith(
         'https://ibq.example.com/api/pos/order',
@@ -312,8 +351,12 @@ describe('IbqBackupService', () => {
 
     it('increments skipped count when individual order persistence fails', async () => {
       const { service, prisma } = makeService();
-      mockAxios.mockResolvedValue({ data: { result: [makeOrder(), makeOrder({ id: 102 })] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('DB error'));
+      mockAxios.mockResolvedValue({
+        data: { result: [makeOrder(), makeOrder({ id: 102 })] },
+      });
+      prisma.backupIbqOrder.findUnique
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new Error('DB error'));
 
       const result = await service.backupRegion(makeCred());
 
@@ -322,7 +365,7 @@ describe('IbqBackupService', () => {
   });
 
   describe('runBackupJob', () => {
-    const mockAxios = jest.spyOn(require('axios'), 'get');
+    const mockAxios = jest.spyOn(axios, 'get');
 
     beforeEach(() => {
       jest.clearAllMocks();
@@ -330,7 +373,9 @@ describe('IbqBackupService', () => {
 
     it('skips a region when integration is DISABLED', async () => {
       const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.ibqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'SA' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
@@ -344,7 +389,9 @@ describe('IbqBackupService', () => {
 
     it('processes a region when integration is ENABLED', async () => {
       const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.ibqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'SA' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
@@ -359,7 +406,9 @@ describe('IbqBackupService', () => {
 
     it('processes a region when no status record exists (default ENABLED)', async () => {
       const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([makeCred({ region: 'AE' })]);
+      prisma.ibqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'AE' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
@@ -371,7 +420,12 @@ describe('IbqBackupService', () => {
     it('logs a warning and returns early when there are no active credentials', async () => {
       const { service, prisma } = makeService();
       prisma.ibqCredential.findMany.mockResolvedValue([]);
-      const logSpy = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn').mockImplementation(() => {});
+      const logSpy = jest
+        .spyOn(
+          (service as unknown as { logger: { warn: jest.Mock } }).logger,
+          'warn',
+        )
+        .mockImplementation(() => {});
 
       await service.runBackupJob();
 

@@ -161,8 +161,12 @@ export class OdooClient {
                 ...(params.branchId !== undefined && {
                   branch_id: params.branchId,
                 }),
-                ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
-                ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
+                ...(params.startDate && {
+                  start_date: toApiDatetime(params.startDate),
+                }),
+                ...(params.endDate && {
+                  end_date: toApiDatetime(params.endDate, { end: true }),
+                }),
                 limit: pageSize,
                 offset,
               },
@@ -188,7 +192,8 @@ export class OdooClient {
           if (pageOrders.length < pageSize) break;
 
           // Stop if the caller specified a hard limit
-          if (params.limit !== undefined && allOrders.length >= params.limit) break;
+          if (params.limit !== undefined && allOrders.length >= params.limit)
+            break;
 
           offset += pageSize;
         }
@@ -327,7 +332,11 @@ export class OdooClient {
       const result = payload.result;
       // Explicit typeof + !Array.isArray guards are used here to narrow `result`
       // to a plain object so we can safely access its nested array properties.
-      if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        !Array.isArray(result)
+      ) {
         const resultObj = result as Record<string, unknown>;
         if (Array.isArray(resultObj['records'])) {
           return this.normalizeItems<T>(resultObj['records']);
@@ -347,10 +356,12 @@ export class OdooClient {
       // Generic fallback: scan all top-level keys for the first non-empty array.
       // Covers custom Odoo REST modules that use non-standard envelope keys
       // (e.g. "items", "rows", "Sale_detail", "orders_list", etc.).
-      const found = findArrayInPayload(payload as Record<string, unknown>);
+      const found = findArrayInPayload(payload);
       if (found) {
         if (found.length > 0) {
-          this.logger.debug(`extractList: using generic fallback (${found.length} items)`);
+          this.logger.debug(
+            `extractList: using generic fallback (${found.length} items)`,
+          );
         }
         return this.normalizeItems<T>(found);
       }
@@ -379,7 +390,10 @@ export class OdooClient {
       if (normalised['id'] == null && normalised['order_id'] != null) {
         normalised['id'] = normalised['order_id'];
       }
-      if (normalised['amount_total'] == null && normalised['amount_paid'] != null) {
+      if (
+        normalised['amount_total'] == null &&
+        normalised['amount_paid'] != null
+      ) {
         normalised['amount_total'] = normalised['amount_paid'];
       }
 

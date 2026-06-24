@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { SaleStatus } from '@prisma/client';
 import { VendHqSalesBackupService } from './vendhq-backup.service';
 
@@ -5,7 +6,9 @@ import { VendHqSalesBackupService } from './vendhq-backup.service';
 // Minimal mock factories
 // ---------------------------------------------------------------------------
 
-function makeSale(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeSale(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id: 'sale-001',
     invoice_number: 'INV-001',
@@ -196,10 +199,7 @@ describe('VendHqSalesBackupService', () => {
   });
 
   describe('backupRegion', () => {
-    const mockAxios = jest.spyOn(
-      require('axios'),
-      'get',
-    );
+    const mockAxios = jest.spyOn(axios, 'get');
 
     beforeEach(() => {
       jest.clearAllMocks();
@@ -207,10 +207,15 @@ describe('VendHqSalesBackupService', () => {
 
     it('skips a sale when incoming version is not newer than stored version', async () => {
       const { service, prisma } = makeService();
-      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 3 })] } });
+      mockAxios.mockResolvedValue({
+        data: { data: [makeSale({ version: 3 })] },
+      });
 
       // DB already has version 5 — incoming 3 should be skipped
-      prisma.backupVendHqSale.findFirst.mockResolvedValue({ id: 'db-001', version: 5 });
+      prisma.backupVendHqSale.findFirst.mockResolvedValue({
+        id: 'db-001',
+        version: 5,
+      });
 
       const result = await service.backupRegion(makeCred());
       expect(result.skipped).toBe(1);
@@ -220,7 +225,9 @@ describe('VendHqSalesBackupService', () => {
 
     it('creates a new sale record when it does not exist yet', async () => {
       const { service, prisma } = makeService();
-      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 10 })] } });
+      mockAxios.mockResolvedValue({
+        data: { data: [makeSale({ version: 10 })] },
+      });
 
       // No existing record
       prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
@@ -233,10 +240,15 @@ describe('VendHqSalesBackupService', () => {
 
     it('updates an existing sale when incoming version is higher', async () => {
       const { service, prisma } = makeService();
-      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 10 })] } });
+      mockAxios.mockResolvedValue({
+        data: { data: [makeSale({ version: 10 })] },
+      });
 
       // DB has older version
-      prisma.backupVendHqSale.findFirst.mockResolvedValue({ id: 'db-001', version: 3 });
+      prisma.backupVendHqSale.findFirst.mockResolvedValue({
+        id: 'db-001',
+        version: 3,
+      });
 
       const result = await service.backupRegion(makeCred());
       expect(result.saved).toBe(1);
@@ -266,13 +278,17 @@ describe('VendHqSalesBackupService', () => {
 
       await service.backupRegion(makeCred({ lastSyncVersion: 0 }));
 
-      const callParams = mockAxios.mock.calls[0][1] as { params: Record<string, unknown> };
+      const callParams = mockAxios.mock.calls[0][1] as {
+        params: Record<string, unknown>;
+      };
       expect(callParams.params).not.toHaveProperty('after');
     });
 
     it('advances lastSyncVersion after a successful run', async () => {
       const { service, prisma } = makeService();
-      mockAxios.mockResolvedValue({ data: { data: [makeSale({ version: 55 })] } });
+      mockAxios.mockResolvedValue({
+        data: { data: [makeSale({ version: 55 })] },
+      });
       prisma.backupVendHqSale.findFirst.mockResolvedValue(null);
 
       await service.backupRegion(makeCred({ lastSyncVersion: 10 }));
@@ -304,7 +320,7 @@ describe('VendHqSalesBackupService', () => {
   });
 
   describe('runBackupJob', () => {
-    const mockAxios = jest.spyOn(require('axios'), 'get');
+    const mockAxios = jest.spyOn(axios, 'get');
 
     beforeEach(() => {
       jest.clearAllMocks();
@@ -312,7 +328,9 @@ describe('VendHqSalesBackupService', () => {
 
     it('skips a region when integration is DISABLED', async () => {
       const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'SA' })]);
+      prisma.vendHqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'SA' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
         region: 'SA',
         integMode: 'BACKUP',
@@ -327,7 +345,9 @@ describe('VendHqSalesBackupService', () => {
 
     it('processes a region when integration is ENABLED', async () => {
       const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'KW' })]);
+      prisma.vendHqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'KW' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
         region: 'KW',
         integMode: 'BACKUP',
@@ -342,7 +362,9 @@ describe('VendHqSalesBackupService', () => {
 
     it('processes a region when no status record exists (default ENABLED)', async () => {
       const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([makeCred({ region: 'AE' })]);
+      prisma.vendHqCredential.findMany.mockResolvedValue([
+        makeCred({ region: 'AE' }),
+      ]);
       prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
       mockAxios.mockResolvedValue({ data: { data: [] } });
 

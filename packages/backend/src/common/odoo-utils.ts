@@ -95,9 +95,7 @@ export function normalizeOrderForIngestion(
 
   return {
     odooOrderId: String(order.id),
-    odooOrderNumber: String(
-      order.name ?? order.pos_reference ?? order.id,
-    ),
+    odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
     branchCode,
     orderDate: order.date_order ? new Date(order.date_order) : new Date(),
     originalTimezone: resolvedTimezone,
@@ -140,8 +138,8 @@ export function findArrayInPayload(
     const val = payload[key];
 
     if (Array.isArray(val)) {
-      if (val.length > 0) return val;
-      if (!firstEmpty) firstEmpty = val;
+      if (val.length > 0) return val as unknown[];
+      if (!firstEmpty) firstEmpty = val as unknown[];
       continue;
     }
 
@@ -151,8 +149,8 @@ export function findArrayInPayload(
       for (const innerKey of Object.keys(nested)) {
         const inner = nested[innerKey];
         if (Array.isArray(inner)) {
-          if (inner.length > 0) return inner;
-          if (!firstEmpty) firstEmpty = inner;
+          if (inner.length > 0) return inner as unknown[];
+          if (!firstEmpty) firstEmpty = inner as unknown[];
         }
       }
     }

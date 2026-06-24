@@ -135,7 +135,9 @@ export class OdooTransformationService {
       const invLine: InvoiceLine = {
         lineNumber: invoiceHeader.invoiceLines.length + 1,
         // Prefer SKU/product_code (ITEM_NUMBER) over numeric product id
-        itemNumber: line.productCode ?? (line.productId != null ? String(line.productId) : undefined),
+        itemNumber:
+          line.productCode ??
+          (line.productId != null ? String(line.productId) : undefined),
         memoLineName: isDiscount ? 'Discount Item' : undefined,
         description: productName,
         quantity: isDiscount && total > 0 ? 1 : qty,
@@ -155,9 +157,10 @@ export class OdooTransformationService {
       this.logger.warn(
         `BackupOdooOrder id=${backupOrderId} has no line items — synthesising single line from amountTotal`,
       );
-      const syntheticAmount = backup.amountUntaxed != null
-        ? Number(backup.amountUntaxed)
-        : Number(backup.amountTotal);
+      const syntheticAmount =
+        backup.amountUntaxed != null
+          ? Number(backup.amountUntaxed)
+          : Number(backup.amountTotal);
       invoiceHeader.invoiceLines.push({
         lineNumber: 1,
         description: backup.orderName ?? 'Sale',
@@ -317,8 +320,18 @@ export class OdooTransformationService {
 
   private getPeriodName(d: Date): string {
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
   }

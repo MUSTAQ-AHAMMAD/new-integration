@@ -91,14 +91,18 @@ function toIbqDate(d: Date): string {
 }
 
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
-function resolveId(field: number | [number, string] | null | undefined): number | null {
+function resolveId(
+  field: number | [number, string] | null | undefined,
+): number | null {
   if (field == null) return null;
   if (Array.isArray(field)) return field[0] ?? null;
   return typeof field === 'number' ? field : null;
 }
 
 /** Extract the name string from an Odoo Many2one field */
-function resolveName(field: number | [number, string] | null | undefined): string | null {
+function resolveName(
+  field: number | [number, string] | null | undefined,
+): string | null {
   if (field == null) return null;
   if (Array.isArray(field)) return field[1] ?? null;
   return null;
@@ -107,14 +111,18 @@ function resolveName(field: number | [number, string] | null | undefined): strin
 /** Flatten an IBQ API response envelope into a plain order array */
 function extractOrders(raw: IbqApiResponse): IbqOrderRaw[] {
   if (Array.isArray(raw)) return raw as IbqOrderRaw[];
-  if (Array.isArray(raw.result)) return raw.result as IbqOrderRaw[];
-  if (raw.result && typeof raw.result === 'object' && !Array.isArray(raw.result)) {
-    const r = raw.result as { orders?: IbqOrderRaw[]; data?: IbqOrderRaw[] };
+  if (Array.isArray(raw.result)) return raw.result;
+  if (
+    raw.result &&
+    typeof raw.result === 'object' &&
+    !Array.isArray(raw.result)
+  ) {
+    const r = raw.result;
     if (Array.isArray(r.orders)) return r.orders;
     if (Array.isArray(r.data)) return r.data;
   }
-  if (Array.isArray(raw.data)) return raw.data as IbqOrderRaw[];
-  if (Array.isArray(raw.orders)) return raw.orders as IbqOrderRaw[];
+  if (Array.isArray(raw.data)) return raw.data;
+  if (Array.isArray(raw.orders)) return raw.orders;
   return [];
 }
 
@@ -148,7 +156,9 @@ export class IbqBackupService {
       try {
         const enabled = await this.isRegionEnabled(cred.region);
         if (!enabled) {
-          this.logger.log(`IBQ backup skipped for region=${cred.region} — integration is DISABLED`);
+          this.logger.log(
+            `IBQ backup skipped for region=${cred.region} — integration is DISABLED`,
+          );
           continue;
         }
 
@@ -191,7 +201,9 @@ export class IbqBackupService {
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`IBQ backup failed for region=${cred.region} url=${cred.baseUrl}: ${msg}`);
+        this.logger.error(
+          `IBQ backup failed for region=${cred.region} url=${cred.baseUrl}: ${msg}`,
+        );
       }
     }
   }
@@ -318,7 +330,9 @@ export class IbqBackupService {
     return !record || record.status !== STATUS_DISABLED;
   }
 
-  async enableRegion(region: string): Promise<{ region: string; status: string }> {
+  async enableRegion(
+    region: string,
+  ): Promise<{ region: string; status: string }> {
     const record = await this.prisma.salesIntegrationStatus.upsert({
       where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
       create: { region, integMode: IBQ_INTEG_MODE, status: STATUS_ENABLED },
@@ -328,7 +342,9 @@ export class IbqBackupService {
     return { region: record.region, status: record.status };
   }
 
-  async disableRegion(region: string): Promise<{ region: string; status: string }> {
+  async disableRegion(
+    region: string,
+  ): Promise<{ region: string; status: string }> {
     const record = await this.prisma.salesIntegrationStatus.upsert({
       where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
       create: { region, integMode: IBQ_INTEG_MODE, status: STATUS_DISABLED },
@@ -381,7 +397,10 @@ export class IbqBackupService {
    * Returns true when the record was new or updated, false when skipped.
    * Uses the @@unique([orderId, region]) constraint to prevent duplicates.
    */
-  private async upsertOrder(order: IbqOrderRaw, region: string): Promise<boolean> {
+  private async upsertOrder(
+    order: IbqOrderRaw,
+    region: string,
+  ): Promise<boolean> {
     const dateOrder = order.date_order ? new Date(order.date_order) : null;
 
     const companyId = resolveId(order.company_id);
@@ -427,12 +446,16 @@ export class IbqBackupService {
       });
       parentId = existing.id;
     } else {
-      const created = await this.prisma.backupIbqOrder.create({ data: orderData });
+      const created = await this.prisma.backupIbqOrder.create({
+        data: orderData,
+      });
       parentId = created.id;
     }
 
     // ── Order lines ──────────────────────────────────────────────────────────
-    const lines: IbqOrderLineRaw[] = Array.isArray(order.lines) ? order.lines : [];
+    const lines: IbqOrderLineRaw[] = Array.isArray(order.lines)
+      ? order.lines
+      : [];
 
     for (const line of lines) {
       const productId = resolveId(line.product_id);

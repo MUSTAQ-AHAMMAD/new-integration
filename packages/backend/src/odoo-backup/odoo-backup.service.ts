@@ -16,7 +16,13 @@
  * Per-region Odoo credentials can be stored in the OdooCredential table and
  * used by the manual fetch-odoo endpoint instead of the global env vars.
  */
-import { BadGatewayException, forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import {
@@ -25,7 +31,11 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
-import { normalizeOrderForIngestion, findArrayInPayload, toApiDatetime } from '../common/odoo-utils';
+import {
+  normalizeOrderForIngestion,
+  findArrayInPayload,
+  toApiDatetime,
+} from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -72,8 +82,12 @@ function extractFirstTaxName(taxId: unknown): string | null {
 
   if (!Array.isArray(taxId) || taxId.length === 0) return null;
 
-  const first = taxId[0];
-  if (Array.isArray(first) && first.length > 1 && typeof first[1] === 'string') {
+  const first: unknown = taxId[0];
+  if (
+    Array.isArray(first) &&
+    first.length > 1 &&
+    typeof first[1] === 'string'
+  ) {
     return first[1] || null;
   }
   if (typeof first === 'string') return first || null;
@@ -173,11 +187,16 @@ export class OdooBackupService {
           }
 
           // Resolve canonical branchCode from StoreConfiguration.odooBranchId
-          const odooBranchId = order.branch_id != null
-            ? (Array.isArray(order.branch_id) ? order.branch_id[0] : order.branch_id)
-            : null;
-          const storeEntry = odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
-          const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+          const odooBranchId =
+            order.branch_id != null
+              ? Array.isArray(order.branch_id)
+                ? order.branch_id[0]
+                : order.branch_id
+              : null;
+          const storeEntry =
+            odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+          const resolvedBranchCode =
+            storeEntry?.branchCode ?? payload.branchCode;
           const resolvedRegion = storeEntry?.region ?? null;
 
           const backupOrder = await this.prisma.backupOdooOrder.findUnique({
@@ -309,11 +328,16 @@ export class OdooBackupService {
             // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
             // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
             // the real branchCode so validation and Oracle transformation work correctly.
-            const odooBranchId = order.branch_id != null
-              ? (Array.isArray(order.branch_id) ? order.branch_id[0] : order.branch_id)
-              : null;
-            const storeEntry = odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
-            const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+            const odooBranchId =
+              order.branch_id != null
+                ? Array.isArray(order.branch_id)
+                  ? order.branch_id[0]
+                  : order.branch_id
+                : null;
+            const storeEntry =
+              odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+            const resolvedBranchCode =
+              storeEntry?.branchCode ?? payload.branchCode;
             // Prefer region from credential; fall back to StoreConfiguration.region
             const resolvedRegion = cred.region || storeEntry?.region || null;
 
@@ -369,7 +393,14 @@ export class OdooBackupService {
    * Does NOT advance the lastSyncAt watermark — callers decide that.
    */
   async backupOrdersForCredential(
-    cred: { id: string; baseUrl: string; apiKey: string; region: string; apiPath?: string | null; lastSyncAt?: Date | null },
+    cred: {
+      id: string;
+      baseUrl: string;
+      apiKey: string;
+      region: string;
+      apiPath?: string | null;
+      lastSyncAt?: Date | null;
+    },
     params: {
       branchId?: number;
       startDate?: string;
@@ -387,7 +418,9 @@ export class OdooBackupService {
           `Update the credential to include the full URL to avoid ambiguity.`,
       );
     }
-    const baseUrl = /^https?:\/\//i.test(rawBase) ? rawBase : `https://${rawBase}`;
+    const baseUrl = /^https?:\/\//i.test(rawBase)
+      ? rawBase
+      : `https://${rawBase}`;
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
@@ -402,14 +435,23 @@ export class OdooBackupService {
      * mode); otherwise throws BadGatewayException for all errors including 404.
      * Throws BadGatewayException for non-404 AxiosErrors in all cases.
      */
-    const tryFetch = async (apiPath: string, offset: number): Promise<AxiosResponse<unknown> | null> => {
+    const tryFetch = async (
+      apiPath: string,
+      offset: number,
+    ): Promise<AxiosResponse<unknown> | null> => {
       try {
         return await axios.get<unknown>(`${baseUrl}${apiPath}`, {
           headers: { 'x-api-key': cred.apiKey },
           params: {
-            ...(params.branchId !== undefined && { branch_id: params.branchId }),
-            ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
-            ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
+            ...(params.branchId !== undefined && {
+              branch_id: params.branchId,
+            }),
+            ...(params.startDate && {
+              start_date: toApiDatetime(params.startDate),
+            }),
+            ...(params.endDate && {
+              end_date: toApiDatetime(params.endDate, { end: true }),
+            }),
             limit: CREDENTIAL_PAGE_SIZE,
             offset,
           },
@@ -422,7 +464,7 @@ export class OdooBackupService {
           if (status === 404 && !explicitPath) {
             return null;
           }
-          const data = err.response?.data;
+          const data: unknown = err.response?.data;
           // Try to extract a human-readable message from the Odoo error body.
           // Odoo typically returns { error: { message: '...' } } or { message: '...' }.
           // Guard against empty strings by treating them the same as null so the
@@ -432,13 +474,22 @@ export class OdooBackupService {
             odooMessage = data;
           } else if (typeof data === 'object' && data !== null) {
             const d = data as Record<string, unknown>;
-            const nested = typeof d['error'] === 'object' && d['error'] !== null
-              ? (d['error'] as Record<string, unknown>)
-              : null;
+            const nested =
+              typeof d['error'] === 'object' && d['error'] !== null
+                ? (d['error'] as Record<string, unknown>)
+                : null;
             odooMessage =
-              (nested && typeof nested['message'] === 'string' && nested['message'] ? nested['message'] : null) ??
-              (typeof d['message'] === 'string' && d['message'] ? d['message'] : null) ??
-              (typeof d['error'] === 'string' && d['error'] ? d['error'] : null) ??
+              (nested &&
+              typeof nested['message'] === 'string' &&
+              nested['message']
+                ? nested['message']
+                : null) ??
+              (typeof d['message'] === 'string' && d['message']
+                ? d['message']
+                : null) ??
+              (typeof d['error'] === 'string' && d['error']
+                ? d['error']
+                : null) ??
               err.message;
           } else {
             odooMessage = err.message;
@@ -490,7 +541,8 @@ export class OdooBackupService {
           `OdooCredential region=${cred.region}: apiPath auto-set to "${fallbackPath}".`,
         );
       } catch (persistErr) {
-        const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+        const msg =
+          persistErr instanceof Error ? persistErr.message : String(persistErr);
         // Log at error level: if the persist fails, every subsequent cron run will
         // hit the discovery round-trip again instead of using the cached path.
         this.logger.error(
@@ -549,21 +601,32 @@ export class OdooBackupService {
     if (typeof payload === 'object' && payload !== null) {
       const p = payload as Record<string, unknown>;
       // IBQ unified API: { results: [{ order: { order_id, ... } }] }
-      if (Array.isArray(p['results'])) return this.normalizeOrderItems(p['results']);
-      if (Array.isArray(p['records'])) return this.normalizeOrderItems(p['records']);
+      if (Array.isArray(p['results']))
+        return this.normalizeOrderItems(p['results']);
+      if (Array.isArray(p['records']))
+        return this.normalizeOrderItems(p['records']);
       // Some Odoo/IBQ variants return { orders: [...] } at the top level
-      if (Array.isArray(p['orders'])) return this.normalizeOrderItems(p['orders']);
+      if (Array.isArray(p['orders']))
+        return this.normalizeOrderItems(p['orders']);
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }.
       // This nested-object case is checked before the direct-array fallbacks below
       // so the more specific envelope pattern takes precedence.
-      if (typeof p['result'] === 'object' && p['result'] !== null && !Array.isArray(p['result'])) {
+      if (
+        typeof p['result'] === 'object' &&
+        p['result'] !== null &&
+        !Array.isArray(p['result'])
+      ) {
         const inner = p['result'] as Record<string, unknown>;
-        if (Array.isArray(inner['records'])) return this.normalizeOrderItems(inner['records']);
-        if (Array.isArray(inner['data'])) return this.normalizeOrderItems(inner['data']);
-        if (Array.isArray(inner['orders'])) return this.normalizeOrderItems(inner['orders']);
+        if (Array.isArray(inner['records']))
+          return this.normalizeOrderItems(inner['records']);
+        if (Array.isArray(inner['data']))
+          return this.normalizeOrderItems(inner['data']);
+        if (Array.isArray(inner['orders']))
+          return this.normalizeOrderItems(inner['orders']);
       }
-      if (Array.isArray(p['result'])) return this.normalizeOrderItems(p['result']);
+      if (Array.isArray(p['result']))
+        return this.normalizeOrderItems(p['result']);
       if (Array.isArray(p['data'])) return this.normalizeOrderItems(p['data']);
 
       // Generic fallback: scan all top-level keys for the first non-empty array.
@@ -571,7 +634,9 @@ export class OdooBackupService {
       const found = findArrayInPayload(p);
       if (found) {
         if (found.length > 0) {
-          this.logger.debug(`extractOrderList: using generic fallback (${found.length} items)`);
+          this.logger.debug(
+            `extractOrderList: using generic fallback (${found.length} items)`,
+          );
         }
         return this.normalizeOrderItems(found);
       }
@@ -608,7 +673,10 @@ export class OdooBackupService {
         normalised['id'] = normalised['order_id'];
       }
       // `amount_paid` is the IBQ equivalent of Odoo's `amount_total`.
-      if (normalised['amount_total'] == null && normalised['amount_paid'] != null) {
+      if (
+        normalised['amount_total'] == null &&
+        normalised['amount_paid'] != null
+      ) {
         normalised['amount_total'] = normalised['amount_paid'];
       }
 
@@ -657,20 +725,26 @@ export class OdooBackupService {
       resolveName(order['pos_config_id'] as Many2OneField) ??
       resolveName(order['session_id'] as Many2OneField);
     // amount_untaxed → TOTAL_PRICE (subtotal excl. tax)
-    const amountUntaxed = order['amount_untaxed'] != null ? Number(order['amount_untaxed']) : null;
+    const amountUntaxed =
+      order['amount_untaxed'] != null ? Number(order['amount_untaxed']) : null;
     // amount_discount → TOTAL_LOYALTY (discount/loyalty amount)
-    const amountDiscount = order['amount_discount'] != null ? Number(order['amount_discount']) : null;
+    const amountDiscount =
+      order['amount_discount'] != null
+        ? Number(order['amount_discount'])
+        : null;
     // Customer type from tags or partner type
-    const customerType = typeof order['customer_type'] === 'string'
-      ? order['customer_type']
-      : null;
+    const customerType =
+      typeof order['customer_type'] === 'string'
+        ? order['customer_type']
+        : null;
 
     const orderData = {
       orderName: order.name ?? null,
       branchId,
       branchName,
       dateOrder,
-      amountTotal: order.amount_total != null ? Number(order.amount_total) : null,
+      amountTotal:
+        order.amount_total != null ? Number(order.amount_total) : null,
       amountUntaxed,
       amountTax: order.amount_tax != null ? Number(order.amount_tax) : null,
       amountDiscount,
@@ -719,8 +793,13 @@ export class OdooBackupService {
       });
       const existingLineMap = new Map(
         existingLines
-          .filter((l: { id: string; lineId: number | null }) => l.lineId != null)
-          .map((l: { id: string; lineId: number | null }) => [l.lineId as number, l.id]),
+          .filter(
+            (l: { id: string; lineId: number | null }) => l.lineId != null,
+          )
+          .map((l: { id: string; lineId: number | null }) => [
+            l.lineId as number,
+            l.id,
+          ]),
       );
 
       for (const line of lines) {
@@ -730,9 +809,11 @@ export class OdooBackupService {
 
         // Product internal reference / SKU (default_code or product_code) → ITEM_NUMBER
         const productCode =
-          typeof line['product_code'] === 'string' ? line['product_code'] :
-          typeof line['default_code'] === 'string' ? line['default_code'] :
-          null;
+          typeof line['product_code'] === 'string'
+            ? line['product_code']
+            : typeof line['default_code'] === 'string'
+              ? line['default_code']
+              : null;
 
         // Tax name from tax_id Many2many field — first entry's name → TAX_NAME
         const taxName = extractFirstTaxName(line['tax_id']);
@@ -745,14 +826,19 @@ export class OdooBackupService {
           productCode,
           qty: resolveQty(line),
           priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
-          priceSubtotal: line.price_subtotal != null ? Number(line.price_subtotal) : null,
-          priceSubtotalIncl: line.price_subtotal_incl != null ? Number(line.price_subtotal_incl) : null,
+          priceSubtotal:
+            line.price_subtotal != null ? Number(line.price_subtotal) : null,
+          priceSubtotalIncl:
+            line.price_subtotal_incl != null
+              ? Number(line.price_subtotal_incl)
+              : null,
           discount: line.discount != null ? Number(line.discount) : null,
           taxName,
           parentOrderId: parentId,
         };
 
-        const existingId = lineId != null ? existingLineMap.get(lineId) : undefined;
+        const existingId =
+          lineId != null ? existingLineMap.get(lineId) : undefined;
         if (existingId) {
           await this.prisma.backupOdooOrderLine.update({
             where: { id: existingId },
@@ -783,14 +869,21 @@ export class OdooBackupService {
 
     if (rawPayments.length > 0) {
       // Pre-fetch all existing payments for this order to avoid N+1 queries
-      const existingPayments = await this.prisma.backupOdooOrderPayment.findMany({
-        where: { orderId: order.id },
-        select: { id: true, paymentId: true },
-      });
+      const existingPayments =
+        await this.prisma.backupOdooOrderPayment.findMany({
+          where: { orderId: order.id },
+          select: { id: true, paymentId: true },
+        });
       const existingPaymentMap = new Map(
         existingPayments
-          .filter((p: { id: string; paymentId: number | null }) => p.paymentId != null)
-          .map((p: { id: string; paymentId: number | null }) => [p.paymentId as number, p.id]),
+          .filter(
+            (p: { id: string; paymentId: number | null }) =>
+              p.paymentId != null,
+          )
+          .map((p: { id: string; paymentId: number | null }) => [
+            p.paymentId as number,
+            p.id,
+          ]),
       );
 
       for (const pmt of rawPayments) {
@@ -801,14 +894,15 @@ export class OdooBackupService {
 
         // Currency code from currency_id Many2one → CURRENCY
         const currency = Array.isArray(pmt.currency_id)
-          ? (typeof (pmt.currency_id as [number, unknown])[1] === 'string'
-              ? (pmt.currency_id as [number, string])[1]
-              : null)
+          ? typeof (pmt.currency_id as [number, unknown])[1] === 'string'
+            ? pmt.currency_id[1]
+            : null
           : null;
 
         // Payment date → PAYMENT_DATE
         const paymentDateRaw = pmt.date ?? pmt.payment_date;
-        const paymentDate = typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
+        const paymentDate =
+          typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
 
         const pmtData = {
           orderId: order.id,
@@ -820,7 +914,8 @@ export class OdooBackupService {
           parentOrderId: parentId,
         };
 
-        const existingId = pmtId != null ? existingPaymentMap.get(pmtId) : undefined;
+        const existingId =
+          pmtId != null ? existingPaymentMap.get(pmtId) : undefined;
         if (existingId) {
           await this.prisma.backupOdooOrderPayment.update({
             where: { id: existingId },
@@ -833,4 +928,3 @@ export class OdooBackupService {
     }
   }
 }
-

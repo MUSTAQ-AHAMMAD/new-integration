@@ -9,12 +9,15 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
+import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import {
-  ApiOperation,
-  ApiProperty,
-  ApiTags,
-} from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { PrismaService } from '../prisma/prisma.service';
 import { IbqBackupService } from './ibq-backup.service';
@@ -24,7 +27,10 @@ import { IbqBackupService } from './ibq-backup.service';
 // ---------------------------------------------------------------------------
 
 export class CreateIbqCredentialDto {
-  @ApiProperty({ description: 'Base URL of the IBQ Odoo instance, e.g. https://ibraqperfumes.odoo.com' })
+  @ApiProperty({
+    description:
+      'Base URL of the IBQ Odoo instance, e.g. https://ibraqperfumes.odoo.com',
+  })
   @IsUrl({ require_tld: false })
   baseUrl!: string;
 
@@ -97,10 +103,15 @@ export class IbqBackupController {
    */
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Manually trigger IBQ POS backup for all active credentials' })
+  @ApiOperation({
+    summary: 'Manually trigger IBQ POS backup for all active credentials',
+  })
   async triggerAll() {
     await this.backupService.runBackupJob();
-    return { ok: true, message: 'IBQ backup triggered for all active credentials' };
+    return {
+      ok: true,
+      message: 'IBQ backup triggered for all active credentials',
+    };
   }
 
   /**
@@ -114,7 +125,10 @@ export class IbqBackupController {
       where: { id: credentialId },
     });
     if (!cred || !cred.active) {
-      return { ok: false, message: `Credential ${credentialId} not found or inactive` };
+      return {
+        ok: false,
+        message: `Credential ${credentialId} not found or inactive`,
+      };
     }
     const result = await this.backupService.backupRegion(cred);
     return { ok: true, ...result };
@@ -125,13 +139,18 @@ export class IbqBackupController {
    */
   @Post('trigger-region/:region')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Trigger IBQ backup for all credentials in a region' })
+  @ApiOperation({
+    summary: 'Trigger IBQ backup for all credentials in a region',
+  })
   async triggerByRegion(@Param('region') region: string) {
     const creds = await this.prisma.ibqCredential.findMany({
       where: { region, active: true },
     });
     if (creds.length === 0) {
-      return { ok: false, message: `No active IBQ credentials found for region: ${region}` };
+      return {
+        ok: false,
+        message: `No active IBQ credentials found for region: ${region}`,
+      };
     }
     const results = await Promise.all(
       creds.map(async (cred) => {
@@ -158,7 +177,13 @@ export class IbqBackupController {
   async listRegions() {
     return this.prisma.ibqCredential.findMany({
       where: { active: true },
-      select: { id: true, region: true, baseUrl: true, companyId: true, lastSyncAt: true },
+      select: {
+        id: true,
+        region: true,
+        baseUrl: true,
+        companyId: true,
+        lastSyncAt: true,
+      },
       orderBy: { region: 'asc' },
     });
   }
@@ -167,7 +192,9 @@ export class IbqBackupController {
    * Get the current integration status and last-sync metadata for a region.
    */
   @Get('region/:region/status')
-  @ApiOperation({ summary: 'Get IBQ integration status and last-sync info for a region' })
+  @ApiOperation({
+    summary: 'Get IBQ integration status and last-sync info for a region',
+  })
   async getRegionStatus(@Param('region') region: string) {
     return this.backupService.getRegionStatus(region);
   }

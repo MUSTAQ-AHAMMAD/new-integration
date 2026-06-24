@@ -10,11 +10,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import {
-  ApiOperation,
-  ApiProperty,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString, IsUrl } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { OdooBackupService } from './odoo-backup.service';
@@ -24,7 +20,10 @@ import { OdooBackupService } from './odoo-backup.service';
 // ---------------------------------------------------------------------------
 
 export class CreateOdooCredentialDto {
-  @ApiProperty({ description: 'Base URL of the Odoo instance, e.g. https://mycompany.odoo.com' })
+  @ApiProperty({
+    description:
+      'Base URL of the Odoo instance, e.g. https://mycompany.odoo.com',
+  })
   @IsUrl({ require_tld: false })
   baseUrl!: string;
 
@@ -141,7 +140,9 @@ export class OdooBackupController {
    * Get a single backed-up Odoo order with its lines and payments.
    */
   @Get('orders/:id')
-  @ApiOperation({ summary: 'Get a backed-up Odoo order with lines and payments' })
+  @ApiOperation({
+    summary: 'Get a backed-up Odoo order with lines and payments',
+  })
   async getOrder(@Param('id') id: string) {
     return this.prisma.backupOdooOrder.findUnique({
       where: { id },

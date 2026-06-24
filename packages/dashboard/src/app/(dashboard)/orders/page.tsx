@@ -33,9 +33,7 @@ interface SyncJobRecord extends SyncJob {
   skippedCount?: number;
 }
 
-interface FailedTransactionRecord extends FailedTransaction {
-  // FailedTransaction already includes originalPayload; no extra fields needed.
-}
+type FailedTransactionRecord = FailedTransaction;
 
 const PAGE_SIZE = 50;
 const TIMEZONES = ['UTC', 'Asia/Dubai', 'America/New_York', 'Europe/London'] as const;
