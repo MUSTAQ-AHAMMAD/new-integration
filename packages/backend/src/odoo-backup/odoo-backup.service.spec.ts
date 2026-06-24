@@ -468,6 +468,104 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
 });
 
 // ---------------------------------------------------------------------------
+// probeCredential — auto-fallback behaviour
+// ---------------------------------------------------------------------------
+
+describe('OdooBackupService.probeCredential', () => {
+  const mockAxiosGet = jest.spyOn(axios, 'get');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns ok:true when the primary path succeeds', async () => {
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValueOnce({
+      status: 200,
+      data: [makeOrder()],
+    });
+
+    const result = await service.probeCredential(makeCredential());
+
+    expect(result.ok).toBe(true);
+    expect(result.url).toContain('/api/pos/order');
+    expect(result.parsedCount).toBe(1);
+    expect(result.error).toBeNull();
+  });
+
+  it('falls back to /api/sale.order when /api/pos/order returns 404 and no explicit apiPath', async () => {
+    const { service, prisma } = makeService();
+    const notFound = new AxiosError('Not Found');
+    notFound.response = { status: 404 } as never;
+
+    mockAxiosGet
+      .mockRejectedValueOnce(notFound) // first call: 404 on /api/pos/order
+      .mockResolvedValueOnce({ status: 200, data: [makeOrder()] }); // fallback succeeds
+
+    const result = await service.probeCredential(makeCredential({ apiPath: null }));
+
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+    expect(mockAxiosGet.mock.calls[1][0]).toContain('/api/sale.order');
+    expect(result.ok).toBe(true);
+    expect(result.url).toContain('/api/sale.order');
+    // The discovered path should be persisted
+    expect(prisma.odooCredential.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ apiPath: '/api/sale.order' }),
+      }),
+    );
+  });
+
+  it('does NOT fall back when an explicit apiPath is configured and it returns 404', async () => {
+    const { service } = makeService();
+    const notFound = new AxiosError('Not Found');
+    notFound.response = { status: 404 } as never;
+
+    mockAxiosGet.mockRejectedValueOnce(notFound);
+
+    const result = await service.probeCredential(
+      makeCredential({ apiPath: '/api/pos/order' }),
+    );
+
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(404);
+  });
+
+  it('returns ok:false with both paths failing when neither path exists', async () => {
+    const { service } = makeService();
+    const notFound = new AxiosError('Not Found');
+    notFound.response = { status: 404 } as never;
+
+    mockAxiosGet
+      .mockRejectedValueOnce(notFound) // /api/pos/order → 404
+      .mockRejectedValueOnce(notFound); // /api/sale.order → 404
+
+    const result = await service.probeCredential(makeCredential({ apiPath: null }));
+
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    expect(result.url).toContain('/api/sale.order');
+  });
+
+  it('does not persist discovered path when cred.id is absent', async () => {
+    const { service, prisma } = makeService();
+    const notFound = new AxiosError('Not Found');
+    notFound.response = { status: 404 } as never;
+
+    mockAxiosGet
+      .mockRejectedValueOnce(notFound)
+      .mockResolvedValueOnce({ status: 200, data: [makeOrder()] });
+
+    const credWithoutId = { ...makeCredential({ apiPath: null }), id: undefined };
+    const result = await service.probeCredential(credWithoutId);
+
+    expect(result.ok).toBe(true);
+    expect(prisma.odooCredential.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // backupOrdersForCredential — branch name extraction
 // ---------------------------------------------------------------------------
 

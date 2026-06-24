@@ -169,8 +169,8 @@ export class OdooBackupService {
         where: { isActive: true },
         select: { branchCode: true, odooBranchId: true, region: true },
       });
-      const branchIdMap = new Map(
-        storeConfigs.map((sc) => [
+      const branchIdMap = new Map<number | null, { branchCode: string; region: string | null }>(
+        storeConfigs.map((sc: { branchCode: string; odooBranchId: number | null; region: string | null }) => [
           sc.odooBranchId,
           { branchCode: sc.branchCode, region: sc.region ?? null },
         ]),
@@ -306,8 +306,8 @@ export class OdooBackupService {
       select: { branchCode: true, odooBranchId: true, region: true },
     });
     // Map odooBranchId → { branchCode, region } for fast lookup
-    const branchIdMap = new Map(
-      storeConfigs.map((sc) => [
+    const branchIdMap = new Map<number | null, { branchCode: string; region: string | null }>(
+      storeConfigs.map((sc: { branchCode: string; odooBranchId: number | null; region: string | null }) => [
         sc.odooBranchId,
         { branchCode: sc.branchCode, region: sc.region ?? null },
       ]),
@@ -409,6 +409,7 @@ export class OdooBackupService {
    * the caller (controller) can always return a 200 response with diagnostics.
    */
   async probeCredential(cred: {
+    id?: string;
     baseUrl: string;
     apiKey: string;
     region: string;
@@ -427,65 +428,120 @@ export class OdooBackupService {
       ? rawBase
       : `https://${rawBase}`;
 
-    const apiPath = normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const explicitPath = normalizeApiPath(cred.apiPath);
+    const primaryPath = explicitPath ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const fallbackPath = '/api/sale.order';
 
-    const url = `${baseUrl}${apiPath}`;
     const sslVerify = cred.rejectUnauthorizedSsl !== false;
     const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
 
-    try {
-      const response = await axios.get<unknown>(url, {
-        headers: { 'x-api-key': cred.apiKey },
-        params: { limit: 1, offset: 0 },
-        httpsAgent,
-        timeout: 15_000,
-      });
+    const tryProbe = async (
+      apiPath: string,
+    ): Promise<{
+      ok: boolean;
+      url: string;
+      status: number | null;
+      parsedCount: number;
+      bodySnippet: string;
+      error: string | null;
+      is404: boolean;
+    }> => {
+      const url = `${baseUrl}${apiPath}`;
+      try {
+        const response = await axios.get<unknown>(url, {
+          headers: { 'x-api-key': cred.apiKey },
+          params: { limit: 1, offset: 0 },
+          httpsAgent,
+          timeout: 15_000,
+        });
 
-      const body = response.data;
-      const bodySnippet =
-        typeof body === 'string'
-          ? body.slice(0, 500)
-          : JSON.stringify(body).slice(0, 500);
-
-      const orders = this.extractOrderList(body);
-
-      return {
-        ok: true,
-        url,
-        status: response.status,
-        parsedCount: orders.length,
-        bodySnippet,
-        error: null,
-      };
-    } catch (err: unknown) {
-      if (err instanceof AxiosError) {
-        const status = err.response?.status ?? null;
-        const body = err.response?.data;
+        const body = response.data;
         const bodySnippet =
           typeof body === 'string'
             ? body.slice(0, 500)
-            : body != null
-              ? JSON.stringify(body).slice(0, 500)
-              : '';
+            : JSON.stringify(body).slice(0, 500);
+
+        const orders = this.extractOrderList(body);
+
+        return {
+          ok: true,
+          url,
+          status: response.status,
+          parsedCount: orders.length,
+          bodySnippet,
+          error: null,
+          is404: false,
+        };
+      } catch (err: unknown) {
+        if (err instanceof AxiosError) {
+          const status = err.response?.status ?? null;
+          const body = err.response?.data;
+          const bodySnippet =
+            typeof body === 'string'
+              ? body.slice(0, 500)
+              : body != null
+                ? JSON.stringify(body).slice(0, 500)
+                : '';
+          return {
+            ok: false,
+            url,
+            status,
+            parsedCount: 0,
+            bodySnippet,
+            error: `HTTP ${status ?? 'unknown'}: ${err.message}`,
+            is404: status === 404,
+          };
+        }
+        const message = err instanceof Error ? err.message : String(err);
         return {
           ok: false,
           url,
-          status,
+          status: null,
           parsedCount: 0,
-          bodySnippet,
-          error: `HTTP ${status ?? 'unknown'}: ${err.message}`,
+          bodySnippet: '',
+          error: message,
+          is404: false,
         };
       }
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        url,
-        status: null,
-        parsedCount: 0,
-        bodySnippet: '',
-        error: message,
-      };
+    };
+
+    const primaryResult = await tryProbe(primaryPath);
+
+    // When no explicit apiPath is configured and the primary path returns 404,
+    // auto-fall back to /api/sale.order (mirrors backup service auto-discovery).
+    if (!primaryResult.ok && primaryResult.is404 && !explicitPath) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region}: probe "${baseUrl}${primaryPath}" returned 404, ` +
+          `retrying with "${fallbackPath}" (auto-discovery).`,
+      );
+      const fallbackResult = await tryProbe(fallbackPath);
+
+      if (fallbackResult.ok && cred.id) {
+        // Persist the discovered path so future cron runs (and re-probes) skip
+        // the discovery round-trip, exactly as backupOrdersForCredential does.
+        try {
+          await this.prisma.odooCredential.update({
+            where: { id: cred.id },
+            data: { apiPath: fallbackPath },
+          });
+          this.logger.log(
+            `OdooCredential region=${cred.region}: probe auto-set apiPath to "${fallbackPath}".`,
+          );
+        } catch (persistErr) {
+          const msg =
+            persistErr instanceof Error ? persistErr.message : String(persistErr);
+          this.logger.error(
+            `OdooCredential region=${cred.region}: probe failed to persist discovered apiPath "${fallbackPath}": ${msg}`,
+          );
+        }
+      }
+
+      const { is404: _is404, ...rest } = fallbackResult;
+      return rest;
     }
+
+    const { is404: _is404, ...rest } = primaryResult;
+    return rest;
   }
 
   /**
