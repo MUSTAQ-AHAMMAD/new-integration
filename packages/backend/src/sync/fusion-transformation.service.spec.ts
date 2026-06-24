@@ -45,8 +45,8 @@ function makeOutlet(overrides: Record<string, unknown> = {}) {
 function makeRegister(overrides: Record<string, unknown> = {}) {
   return {
     registerName: '',
-    cashAccountId: 201,
-    bankAccountId: 202,
+    cashAccountId: 201n,
+    bankAccountId: 202n,
     cashAccount: 'Cash Account',
     bankAccount: 'Bank Account',
     outletId: 'outlet-1',
@@ -457,13 +457,13 @@ describe('FusionTransformationService', () => {
         ],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
-        makeReceiptMethod('Credit Card', false, { bankAccountId: 202 }),
+        makeReceiptMethod('Credit Card', false, { bankAccountId: 202n }),
       );
       mockPrisma.vendHqRegister.findMany.mockResolvedValue([
         makeRegister({
           registerName: '',
-          cashAccountId: 201,
-          bankAccountId: 202,
+          cashAccountId: 201n,
+          bankAccountId: 202n,
           cashAccount: 'Cash Acc',
           bankAccount: 'Bank Acc',
         }),
@@ -488,7 +488,7 @@ describe('FusionTransformationService', () => {
         makeReceiptMethod('Debit Card', false, {
           receiptBankCharge: 0.02,
           receiptMethodTax: 0.05,
-          bankAccountId: 202,
+          bankAccountId: 202n,
         }),
       );
       mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(
@@ -497,8 +497,8 @@ describe('FusionTransformationService', () => {
       mockPrisma.vendHqRegister.findMany.mockResolvedValue([
         makeRegister({
           registerName: '',
-          cashAccountId: 201,
-          bankAccountId: 202,
+          cashAccountId: 201n,
+          bankAccountId: 202n,
           cashAccount: 'Cash',
           bankAccount: 'Bank',
         }),

@@ -54,6 +54,25 @@ function optNum(row: Record<string, unknown>, name: string): number | null {
   return s.trim() !== '' ? Number(v) : null;
 }
 
+function optBigInt(row: Record<string, unknown>, name: string): bigint | null {
+  const v = col(row, name);
+  if (v == null) return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  const s = String(v).trim();
+  if (s === '') return null;
+  if (
+    typeof v !== 'string' &&
+    typeof v !== 'number' &&
+    typeof v !== 'bigint'
+  )
+    return null;
+  try {
+    return BigInt(s.split('.')[0]);
+  } catch {
+    return null;
+  }
+}
+
 function bigint(row: Record<string, unknown>, name: string): bigint {
   const v = col(row, name);
   if (v == null) return 0n;
@@ -233,11 +252,11 @@ const MAPPINGS: OracleTableMapping[] = [
       outletId: str(r, 'OUTLET_ID'),
       registerName: str(r, 'REGISTER_NAME'),
       cashAccount: optStr(r, 'CASH_ACCOUNT'),
-      cashAccountId: optNum(r, 'CASH_ACCOUNT_ID'),
+      cashAccountId: optBigInt(r, 'CASH_ACCOUNT_ID'),
       bankAccount: optStr(r, 'BANK_ACCOUNT'),
-      bankAccountId: optNum(r, 'BANK_ACCOUNT_ID'),
+      bankAccountId: optBigInt(r, 'BANK_ACCOUNT_ID'),
       giftAccount: optStr(r, 'GIFT_ACCOUNT'),
-      giftAccountId: optNum(r, 'GIFT_ACCOUNT_ID'),
+      giftAccountId: optBigInt(r, 'GIFT_ACCOUNT_ID'),
       version: num(r, 'VERSION') ?? 1,
       region: str(r, 'REGION'),
     }),

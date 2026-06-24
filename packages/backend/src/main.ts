@@ -13,6 +13,15 @@ import { json } from 'express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
+// Ensure BigInt values (e.g. from Prisma BigInt fields) can be serialised to
+// JSON without throwing "Do not know how to serialize a BigInt".  All BigInt
+// account IDs used here fit within Number.MAX_SAFE_INTEGER so converting to
+// number preserves precision.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 // Bootstrap-time logger (used before the Pino logger is attached to the app).
 const bootstrapLogger = new NestLogger('Bootstrap');
 
