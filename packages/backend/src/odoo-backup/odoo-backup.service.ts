@@ -25,6 +25,7 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios, { AxiosError, AxiosResponse } from 'axios';
+import * as https from 'https';
 import {
   OdooClient,
   OdooOrder,
@@ -400,6 +401,7 @@ export class OdooBackupService {
       region: string;
       apiPath?: string | null;
       lastSyncAt?: Date | null;
+      rejectUnauthorizedSsl?: boolean | null;
     },
     params: {
       branchId?: number;
@@ -428,6 +430,20 @@ export class OdooBackupService {
     const primaryPath = explicitPath ?? DEFAULT_ODOO_ORDERS_API_PATH;
     const fallbackPath = '/api/sale.order';
 
+    // Build a custom https agent that skips SSL certificate verification when
+    // rejectUnauthorizedSsl is explicitly set to false.  This is necessary for
+    // Odoo dev/staging instances whose hostname (e.g. *.dev.odoo.com) does not
+    // match the server certificate (e.g. *.odoo.com).  Defaults to true (verify).
+    const sslVerify = cred.rejectUnauthorizedSsl !== false;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
+
+    if (!sslVerify) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region}: SSL certificate verification is DISABLED. ` +
+          `Set rejectUnauthorizedSsl=true once the server certificate covers this hostname.`,
+      );
+    }
+
     /**
      * Attempt a single GET against the given path at the given page offset.
      * Returns the AxiosResponse on success.
@@ -455,6 +471,7 @@ export class OdooBackupService {
             limit: CREDENTIAL_PAGE_SIZE,
             offset,
           },
+          httpsAgent,
           timeout: 30_000,
         });
       } catch (err: unknown) {
