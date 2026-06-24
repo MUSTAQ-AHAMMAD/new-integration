@@ -107,3 +107,47 @@ export function normalizeOrderForIngestion(
     isRefund: amountTotal < 0,
   };
 }
+
+/**
+ * Generic fallback: scans a plain-object payload for the first non-empty array
+ * value.  This covers custom Odoo REST modules that use non-standard envelope
+ * keys (e.g. "items", "rows", "Sale_detail", "orders_list").
+ *
+ * Searches at two levels of depth:
+ *   1. Top-level keys of `payload`
+ *   2. One level of nested objects (e.g. `{ response: { items: [...] } }`)
+ *
+ * Returns the first non-empty array found, or the first empty array if all
+ * discovered arrays are empty, or `null` when no array is found at all.
+ *
+ * @param payload  A plain object extracted from an HTTP response body.
+ */
+export function findArrayInPayload(
+  payload: Record<string, unknown>,
+): unknown[] | null {
+  let firstEmpty: unknown[] | null = null;
+
+  for (const key of Object.keys(payload)) {
+    const val = payload[key];
+
+    if (Array.isArray(val)) {
+      if (val.length > 0) return val;
+      if (!firstEmpty) firstEmpty = val;
+      continue;
+    }
+
+    // One level deeper — e.g. { response: { items: [...] } }
+    if (typeof val === 'object' && val !== null) {
+      const nested = val as Record<string, unknown>;
+      for (const innerKey of Object.keys(nested)) {
+        const inner = nested[innerKey];
+        if (Array.isArray(inner)) {
+          if (inner.length > 0) return inner;
+          if (!firstEmpty) firstEmpty = inner;
+        }
+      }
+    }
+  }
+
+  return firstEmpty;
+}

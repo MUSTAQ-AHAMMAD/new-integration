@@ -25,7 +25,7 @@ import {
   OdooOrderLine,
   OdooOrderPayment,
 } from '../clients/odoo/odoo.client';
-import { normalizeOrderForIngestion, toApiDatetime } from '../common/odoo-utils';
+import { normalizeOrderForIngestion, findArrayInPayload, toApiDatetime } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
 
@@ -520,32 +520,13 @@ export class OdooBackupService {
 
       // Generic fallback: scan all top-level keys for the first non-empty array.
       // Covers custom Odoo REST modules that use non-standard envelope keys.
-      let firstEmpty: unknown[] | null = null;
-      for (const key of Object.keys(p)) {
-        const val = p[key];
-        if (Array.isArray(val)) {
-          if (val.length > 0) {
-            this.logger.debug(`extractOrderList: using fallback key "${key}" (${val.length} items)`);
-            return this.normalizeOrderItems(val);
-          }
-          if (!firstEmpty) firstEmpty = val;
+      const found = findArrayInPayload(p);
+      if (found) {
+        if (found.length > 0) {
+          this.logger.debug(`extractOrderList: using generic fallback (${found.length} items)`);
         }
-        // One level deeper
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-          const nested = val as Record<string, unknown>;
-          for (const innerKey of Object.keys(nested)) {
-            const inner = nested[innerKey];
-            if (Array.isArray(inner)) {
-              if (inner.length > 0) {
-                this.logger.debug(`extractOrderList: using nested fallback "${key}.${innerKey}" (${inner.length} items)`);
-                return this.normalizeOrderItems(inner);
-              }
-              if (!firstEmpty) firstEmpty = inner;
-            }
-          }
-        }
+        return this.normalizeOrderItems(found);
       }
-      if (firstEmpty) return this.normalizeOrderItems(firstEmpty);
     }
     return [];
   }

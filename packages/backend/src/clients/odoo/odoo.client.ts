@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
-import { toApiDatetime } from '../../common/odoo-utils';
+import { findArrayInPayload, toApiDatetime } from '../../common/odoo-utils';
 
 export interface OdooOrderLine {
   id?: number;
@@ -347,32 +347,13 @@ export class OdooClient {
       // Generic fallback: scan all top-level keys for the first non-empty array.
       // Covers custom Odoo REST modules that use non-standard envelope keys
       // (e.g. "items", "rows", "Sale_detail", "orders_list", etc.).
-      let firstEmpty: unknown[] | null = null;
-      for (const key of Object.keys(payload)) {
-        const val = payload[key];
-        if (Array.isArray(val)) {
-          if (val.length > 0) {
-            this.logger.debug(`extractList: using fallback key "${key}" (${val.length} items)`);
-            return this.normalizeItems<T>(val);
-          }
-          if (!firstEmpty) firstEmpty = val;
+      const found = findArrayInPayload(payload as Record<string, unknown>);
+      if (found) {
+        if (found.length > 0) {
+          this.logger.debug(`extractList: using generic fallback (${found.length} items)`);
         }
-        // One level deeper — e.g. { response: { items: [...] } }
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-          const nested = val as Record<string, unknown>;
-          for (const innerKey of Object.keys(nested)) {
-            const inner = nested[innerKey];
-            if (Array.isArray(inner)) {
-              if (inner.length > 0) {
-                this.logger.debug(`extractList: using nested fallback "${key}.${innerKey}" (${inner.length} items)`);
-                return this.normalizeItems<T>(inner);
-              }
-              if (!firstEmpty) firstEmpty = inner;
-            }
-          }
-        }
+        return this.normalizeItems<T>(found);
       }
-      if (firstEmpty) return this.normalizeItems<T>(firstEmpty);
     }
 
     return [];
