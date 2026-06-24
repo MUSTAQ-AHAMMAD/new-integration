@@ -30,7 +30,6 @@ interface OrderRow {
 
 interface SyncJobRecord extends SyncJob {
   scopeValue: Record<string, unknown>;
-  skippedCount?: number;
 }
 
 type FailedTransactionRecord = FailedTransaction;
