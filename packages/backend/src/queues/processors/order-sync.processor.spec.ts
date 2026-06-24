@@ -78,7 +78,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         create: jest.fn().mockResolvedValue({ id: 'hdr-1' }),
       } as unknown as PrismaService['fusionInvoiceHeader'],
       fusionInvoiceLine: {
-        createMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
       } as unknown as PrismaService['fusionInvoiceLine'],
       fusionStandardReceipt: {
         create: jest.fn().mockResolvedValue({}),

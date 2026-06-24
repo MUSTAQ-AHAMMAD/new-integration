@@ -471,8 +471,8 @@ export class OrderSyncProcessor {
           // re-process the order.
           throw new Error(
             `No backup data found for order ${odooOrderId} (orderNumber=${order.odooOrderNumber ?? odooOrderId}): ` +
-              `odooBackupOrderId=${order.odooBackupOrderId ?? 'null'} and no matching BackupVendHqSale. ` +
-              `Configure credentials, run the backup job, then retry.`,
+              `odooBackupOrderId=${order.odooBackupOrderId ?? 'null'} and no matching BackupOdooOrder or BackupVendHqSale. ` +
+              `Configure OdooCredential or VendHqCredential, run the backup job, then retry.`,
           );
         }
       }
