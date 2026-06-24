@@ -26,6 +26,7 @@ const mockPrisma = {
   orderSyncQueue: {
     findMany: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   failedTransaction: {
     findMany: jest.fn(),
@@ -249,6 +250,75 @@ describe('SyncService', () => {
 
       expect(result).toEqual(stats);
       expect(mockQueues.getQueueStats).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('createSyncJob — counter correctness', () => {
+    it('sets status to COMPLETED and completedAt when no orders match the scope', async () => {
+      mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-empty' });
+      // findMany returns empty → no orders in scope
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      mockPrisma.syncJob.update.mockResolvedValueOnce({
+        id: 'job-empty',
+        status: JobStatus.COMPLETED,
+      });
+
+      await service.createSyncJob({
+        jobType: 'ORDER_SYNC',
+        scopeType: 'ALL',
+      });
+
+      expect(mockPrisma.syncJob.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            totalRecords: 0,
+            processedRecords: 0,
+            successCount: 0,
+            skippedCount: 0,
+            status: JobStatus.COMPLETED,
+            completedAt: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it('sets processedRecords=skippedCount and successCount=0 when orders are enqueued', async () => {
+      mockPrisma.syncJob.create.mockResolvedValueOnce({ id: 'job-enqueue' });
+      const mockQueuesService = mockQueues as unknown as {
+        enqueueOrderSyncBulk?: jest.Mock;
+      };
+      mockQueuesService.enqueueOrderSyncBulk = jest.fn().mockResolvedValue([]);
+
+      // Two paid orders (to be enqueued), one unpaid (to be skipped)
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([
+        { id: 'o1', odooOrderId: 'ORD-1', branchCode: 'DXB', isPaid: true, isCancelled: false },
+        { id: 'o2', odooOrderId: 'ORD-2', branchCode: 'DXB', isPaid: true, isCancelled: false },
+        { id: 'o3', odooOrderId: 'ORD-3', branchCode: 'DXB', isPaid: false, isCancelled: false },
+      ]);
+      // Second call returns empty → pagination loop ends
+      mockPrisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      mockPrisma.orderSyncQueue.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.syncJob.update.mockResolvedValueOnce({
+        id: 'job-enqueue',
+        status: JobStatus.PENDING,
+      });
+
+      await service.createSyncJob({
+        jobType: 'ORDER_SYNC',
+        scopeType: 'ALL',
+      });
+
+      expect(mockPrisma.syncJob.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            totalRecords: 3,      // 2 enqueued + 1 skipped
+            processedRecords: 1,  // only the 1 skipped order is immediately "done"
+            successCount: 0,      // no Oracle syncs have run yet
+            skippedCount: 1,
+            status: JobStatus.PENDING,
+          }),
+        }),
+      );
     });
   });
 });
