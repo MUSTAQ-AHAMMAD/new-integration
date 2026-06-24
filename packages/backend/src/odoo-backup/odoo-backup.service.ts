@@ -35,19 +35,18 @@ const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 /** Number of records fetched per page during paginated credential backup. */
 const CREDENTIAL_PAGE_SIZE = 100;
 
+/** Odoo Many2one field: either a plain integer id or a [id, name] tuple. */
+type Many2OneField = number | [number, string] | null | undefined;
+
 /** Extract the integer id from an Odoo Many2one field ([id, name] or plain id) */
-function resolveId(
-  field: number | [number, string] | null | undefined,
-): number | null {
+function resolveId(field: Many2OneField): number | null {
   if (field == null) return null;
   if (Array.isArray(field)) return field[0] ?? null;
   return typeof field === 'number' ? field : null;
 }
 
 /** Extract the name string from an Odoo Many2one field */
-function resolveName(
-  field: number | [number, string] | null | undefined,
-): string | null {
+function resolveName(field: Many2OneField): string | null {
   if (field == null) return null;
   if (Array.isArray(field)) return field[1] ?? null;
   return null;
@@ -57,6 +56,55 @@ function resolveName(
 function resolveQty(line: OdooOrderLine): number | null {
   if (line.qty != null) return Number(line.qty);
   if (line.product_uom_qty != null) return Number(line.product_uom_qty);
+  return null;
+}
+
+/**
+ * Extract the first tax name from an Odoo Many2many tax_id field.
+ *
+ * Handles three common formats:
+ *   - `[[id, "VAT 5%"], ...]`  — tuple array (most common in POS)
+ *   - `["VAT 5%", ...]`        — plain string array
+ *   - `"VAT 5%"`               — plain string (non-standard)
+ */
+function extractFirstTaxName(taxId: unknown): string | null {
+  if (typeof taxId === 'string') return taxId || null;
+
+  if (!Array.isArray(taxId) || taxId.length === 0) return null;
+
+  const first = taxId[0];
+  if (Array.isArray(first) && first.length > 1 && typeof first[1] === 'string') {
+    return first[1] || null;
+  }
+  if (typeof first === 'string') return first || null;
+
+  return null;
+}
+
+/**
+ * Extract the payment method name from an Odoo payment/statement record.
+ *
+ * Resolution order (matching the old integration's PAYMENT_TYPE logic):
+ *   1. payment_method_code  — code string (some IBQ variants)
+ *   2. name                 — plain string (Odoo v15 statement lines)
+ *   3. payment_method_id[1] — Many2one name (Odoo v16+)
+ *   4. journal_id[1]        — journal name fallback
+ */
+function extractPaymentName(pmt: OdooOrderPayment): string | null {
+  if (typeof pmt.payment_method_code === 'string' && pmt.payment_method_code) {
+    return pmt.payment_method_code;
+  }
+  if (typeof pmt.name === 'string' && pmt.name) {
+    return pmt.name;
+  }
+  if (Array.isArray(pmt.payment_method_id)) {
+    const name = (pmt.payment_method_id as [number, unknown])[1];
+    if (typeof name === 'string' && name) return name;
+  }
+  if (Array.isArray(pmt.journal_id)) {
+    const name = (pmt.journal_id as [number, unknown])[1];
+    if (typeof name === 'string' && name) return name;
+  }
   return null;
 }
 
@@ -601,13 +649,13 @@ export class OdooBackupService {
 
     // ── Extra fields that match the old integration's BACKUP_VENDHQ_SALES mapping ──
     // warehouse_id → OUTLET_NAME
-    const warehouseId = resolveId(order['warehouse_id'] as number | [number, string] | null | undefined);
-    const warehouseName = resolveName(order['warehouse_id'] as number | [number, string] | null | undefined);
+    const warehouseId = resolveId(order['warehouse_id'] as Many2OneField);
+    const warehouseName = resolveName(order['warehouse_id'] as Many2OneField);
     // pos_config_id or session_id → REGISTER_NAME
-    const posConfigId = resolveId(order['pos_config_id'] as number | [number, string] | null | undefined);
+    const posConfigId = resolveId(order['pos_config_id'] as Many2OneField);
     const posConfigName =
-      resolveName(order['pos_config_id'] as number | [number, string] | null | undefined) ??
-      resolveName(order['session_id'] as number | [number, string] | null | undefined);
+      resolveName(order['pos_config_id'] as Many2OneField) ??
+      resolveName(order['session_id'] as Many2OneField);
     // amount_untaxed → TOTAL_PRICE (subtotal excl. tax)
     const amountUntaxed = order['amount_untaxed'] != null ? Number(order['amount_untaxed']) : null;
     // amount_discount → TOTAL_LOYALTY (discount/loyalty amount)
@@ -687,17 +735,7 @@ export class OdooBackupService {
           null;
 
         // Tax name from tax_id Many2many field — first entry's name → TAX_NAME
-        let taxName: string | null = null;
-        if (Array.isArray(line['tax_id']) && (line['tax_id'] as unknown[]).length > 0) {
-          const firstTax = (line['tax_id'] as unknown[])[0];
-          if (Array.isArray(firstTax) && firstTax.length > 1 && typeof firstTax[1] === 'string') {
-            taxName = firstTax[1];
-          } else if (typeof firstTax === 'string') {
-            taxName = firstTax;
-          }
-        } else if (typeof line['tax_id'] === 'string') {
-          taxName = line['tax_id'];
-        }
+        const taxName = extractFirstTaxName(line['tax_id']);
 
         const lineData = {
           orderId: order.id,
@@ -752,21 +790,8 @@ export class OdooBackupService {
       for (const pmt of rawPayments) {
         const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
 
-        // Payment method name — v15 uses `name`, v16+ uses payment_method_id Many2one,
-        // some variants use journal_id or payment_method_code.
-        const paymentName =
-          pmt.payment_method_code ??
-          (typeof pmt.name === 'string' ? pmt.name : null) ??
-          (Array.isArray(pmt.payment_method_id)
-            ? (typeof (pmt.payment_method_id as [number, unknown])[1] === 'string'
-                ? (pmt.payment_method_id as [number, string])[1]
-                : null)
-            : null) ??
-          (Array.isArray(pmt.journal_id)
-            ? (typeof (pmt.journal_id as [number, unknown])[1] === 'string'
-                ? (pmt.journal_id as [number, string])[1]
-                : null)
-            : null);
+        // Payment method name — uses extractPaymentName() helper for clear resolution order
+        const paymentName = extractPaymentName(pmt);
 
         // Currency code from currency_id Many2one → CURRENCY
         const currency = Array.isArray(pmt.currency_id)

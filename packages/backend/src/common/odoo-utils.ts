@@ -117,10 +117,19 @@ export function normalizeOrderForIngestion(
  *   1. Top-level keys of `payload`
  *   2. One level of nested objects (e.g. `{ response: { items: [...] } }`)
  *
- * Returns the first non-empty array found, or the first empty array if all
- * discovered arrays are empty, or `null` when no array is found at all.
+ * Return values:
+ *   - Non-empty array: the first array with at least one element found.
+ *   - Empty array `[]`: all discovered arrays were empty — caller receives `[]`
+ *     to indicate no records exist (not an absence of an array key).
+ *   - `null`: no array value found at all — the payload uses a completely
+ *     unrecognised structure and the caller should fall back to `[]` itself.
  *
  * @param payload  A plain object extracted from an HTTP response body.
+ *
+ * @example
+ *   findArrayInPayload({ Sale_detail: [{...}] }) // → [{...}]
+ *   findArrayInPayload({ orders: [] })           // → []  (empty — no records)
+ *   findArrayInPayload({ count: 0 })             // → null (no array key found)
  */
 export function findArrayInPayload(
   payload: Record<string, unknown>,
