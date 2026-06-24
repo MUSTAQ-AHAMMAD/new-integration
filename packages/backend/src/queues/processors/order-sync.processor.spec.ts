@@ -78,7 +78,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         create: jest.fn().mockResolvedValue({ id: 'hdr-1' }),
       } as unknown as PrismaService['fusionInvoiceHeader'],
       fusionInvoiceLine: {
-        create: jest.fn().mockResolvedValue({}),
+        createMany: jest.fn().mockResolvedValue({ count: 0 }),
       } as unknown as PrismaService['fusionInvoiceLine'],
       fusionStandardReceipt: {
         create: jest.fn().mockResolvedValue({}),
@@ -106,7 +106,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         }),
       } as unknown as PrismaService['syncJob'],
       backupVendHqSale: {
-        findFirst: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue({ id: 'sale-001', region: 'AE' }),
       } as unknown as PrismaService['backupVendHqSale'],
     };
 
@@ -211,7 +211,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     });
     (mockPrisma.failedTransaction!.create as jest.Mock).mockResolvedValue({});
     (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(
-      null,
+      { id: 'sale-001', region: 'AE' },
     );
     (mockPrisma.fusionInvoiceHeader!.create as jest.Mock).mockResolvedValue({
       id: 'hdr-1',
@@ -413,6 +413,69 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(mockIdempotency.recordOperation).toHaveBeenCalledWith(
         expect.objectContaining({ status: AuditStatus.DUPLICATE }),
       );
+    });
+  });
+
+  describe('no backup source (Path C)', () => {
+    beforeEach(() => {
+      // No odooBackupOrderId and no VendHQ sale → Path C
+      (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue({
+        ...BASE_ORDER,
+        odooBackupOrderId: null,
+      });
+      (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(null);
+    });
+
+    it('marks the order as FAILED when no backup data exists', async () => {
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow(
+        'No backup data found',
+      );
+
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const failedUpdate = updateCalls.find(
+        (c) => c[0].data?.status === SyncStatus.FAILED,
+      );
+      expect(failedUpdate).toBeDefined();
+    });
+
+    it('does NOT mark the order as SYNCED when no backup data exists', async () => {
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
+
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const syncedUpdate = updateCalls.find(
+        (c) => c[0].data?.status === SyncStatus.SYNCED,
+      );
+      expect(syncedUpdate).toBeUndefined();
+    });
+
+    it('does NOT call Oracle when no backup data exists', async () => {
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
+
+      expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
+    });
+
+    it('creates a FailedTransaction record when no backup data exists', async () => {
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
+
+      expect(mockPrisma.failedTransaction!.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            errorMessage: expect.stringContaining('No backup data found'),
+          }),
+        }),
+      );
+    });
+
+    it('does NOT record an idempotency SUCCESS when no backup data exists', async () => {
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
+
+      const calls = (mockIdempotency.recordOperation as jest.Mock).mock.calls as Array<
+        [{ status: AuditStatus }]
+      >;
+      const successCall = calls.find((c) => c[0].status === AuditStatus.SUCCESS);
+      expect(successCall).toBeUndefined();
     });
   });
 });

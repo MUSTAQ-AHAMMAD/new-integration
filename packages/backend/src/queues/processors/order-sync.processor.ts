@@ -453,14 +453,17 @@ export class OrderSyncProcessor {
             oracleInvoiceNumber = txnNumber;
           }
         } else {
-          // ── Path C: No backup found ───────────────────────────────
-          this.logger.warn(
-            `Order ${odooOrderId}: no BackupOdooOrder (odooBackupOrderId=${order.odooBackupOrderId ?? 'null'}) ` +
-              `and no BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. ` +
-              `Oracle SOAP calls skipped — set up OdooCredential and re-run the backup to populate.`,
+          // ── Path C: No backup source available ───────────────────────────────
+          // Without backup data we cannot build the Oracle SOAP payload.
+          // Throw so the order is marked FAILED and remains retryable — the
+          // operator should configure OdooCredential or VendHqCredential, run
+          // the relevant backup job, and then use POST /sync/retry-failed to
+          // re-process the order.
+          throw new Error(
+            `No backup data found for order ${odooOrderId} (orderNumber=${order.odooOrderNumber ?? odooOrderId}): ` +
+              `odooBackupOrderId=${order.odooBackupOrderId ?? 'null'} and no matching BackupVendHqSale. ` +
+              `Configure credentials, run the backup job, then retry.`,
           );
-          oracleInvoiceNumber = order.isRefund ? null : `INV-${order.odooOrderNumber}`;
-          oracleCreditMemoNumber = order.isRefund ? `CM-${order.odooOrderNumber}` : null;
         }
       }
 
