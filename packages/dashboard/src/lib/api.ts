@@ -310,6 +310,7 @@ export interface SyncJob {
   processedRecords: number;
   successCount: number;
   failedCount: number;
+  skippedCount: number;
   createdAt: string;
   createdBy: string;
   errorMessage: string | null;
@@ -394,6 +395,7 @@ export interface CreateSyncJobDto {
   branchCode?: string;
   startDate?: string;
   endDate?: string;
+  timezone?: string;
   createdBy?: string;
 }
 
