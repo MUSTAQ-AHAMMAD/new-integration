@@ -196,6 +196,13 @@ export const api = {
   listOdooCredentials: () =>
     apiRequest<OdooCredential[]>('/odoo-backup/credentials'),
 
+  /** Probe an Odoo credential (limit=1 test request) — returns diagnostic info */
+  probeOdooCredential: (id: string) =>
+    apiRequest<{ ok: boolean; url: string; status: number | null; parsedCount: number; bodySnippet: string; error: string | null }>(
+      `/odoo-backup/credentials/${id}/probe`,
+      { method: 'POST' },
+    ),
+
   /** List all IBQ credentials (API keys are masked) */
   listIbqCredentials: () =>
     apiRequest<IbqCredential[]>('/ibq-backup/credentials'),

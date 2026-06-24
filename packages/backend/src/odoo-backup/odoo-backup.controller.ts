@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Post,
   Put,
@@ -256,6 +257,27 @@ export class OdooBackupController {
   async deleteCredential(@Param('id') id: string) {
     await this.prisma.odooCredential.delete({ where: { id } });
     return { ok: true, id };
+  }
+
+  /**
+   * Probe a credential by making a lightweight request (limit=1) to the
+   * configured endpoint.  Returns diagnostic info — status code, body snippet,
+   * and how many orders were parsed — so operators can verify their configuration
+   * without running a full backup.  Always returns HTTP 200; the inner `ok`
+   * field indicates whether the Odoo request itself succeeded.
+   */
+  @Post('credentials/:id/probe')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Test an Odoo credential by probing its configured endpoint (limit=1)',
+  })
+  async probeCredential(@Param('id') id: string) {
+    const cred = await this.prisma.odooCredential.findUnique({ where: { id } });
+    if (!cred) {
+      throw new NotFoundException(`Odoo credential not found: ${id}`);
+    }
+    return this.backupService.probeCredential(cred);
   }
 
   // ---------------------------------------------------------------------------

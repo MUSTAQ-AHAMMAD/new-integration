@@ -388,6 +388,100 @@ export class OdooBackupService {
   }
 
   /**
+   * Probes a specific OdooCredential by making a lightweight GET request to the
+   * configured endpoint (limit=1).  Returns diagnostic information that lets
+   * operators verify the credential is correctly configured without running a
+   * full backup.
+   *
+   * Never throws — all outcomes are returned as a structured result object so
+   * the caller (controller) can always return a 200 response with diagnostics.
+   */
+  async probeCredential(cred: {
+    baseUrl: string;
+    apiKey: string;
+    region: string;
+    apiPath?: string | null;
+    rejectUnauthorizedSsl?: boolean | null;
+  }): Promise<{
+    ok: boolean;
+    url: string;
+    status: number | null;
+    parsedCount: number;
+    bodySnippet: string;
+    error: string | null;
+  }> {
+    const rawBase = cred.baseUrl.replace(/\/$/, '');
+    const baseUrl = /^https?:\/\//i.test(rawBase)
+      ? rawBase
+      : `https://${rawBase}`;
+
+    const rawPath = cred.apiPath?.trim() || null;
+    const apiPath = rawPath
+      ? rawPath.startsWith('/')
+        ? rawPath
+        : `/${rawPath}`
+      : DEFAULT_ODOO_ORDERS_API_PATH;
+
+    const url = `${baseUrl}${apiPath}`;
+    const sslVerify = cred.rejectUnauthorizedSsl !== false;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
+
+    try {
+      const response = await axios.get<unknown>(url, {
+        headers: { 'x-api-key': cred.apiKey },
+        params: { limit: 1, offset: 0 },
+        httpsAgent,
+        timeout: 15_000,
+      });
+
+      const body = response.data;
+      const bodySnippet =
+        typeof body === 'string'
+          ? body.slice(0, 500)
+          : JSON.stringify(body).slice(0, 500);
+
+      const orders = this.extractOrderList(body);
+
+      return {
+        ok: true,
+        url,
+        status: response.status,
+        parsedCount: orders.length,
+        bodySnippet,
+        error: null,
+      };
+    } catch (err: unknown) {
+      if (err instanceof AxiosError) {
+        const status = err.response?.status ?? null;
+        const body = err.response?.data;
+        const bodySnippet =
+          typeof body === 'string'
+            ? body.slice(0, 500)
+            : body != null
+              ? JSON.stringify(body).slice(0, 500)
+              : '';
+        return {
+          ok: false,
+          url,
+          status,
+          parsedCount: 0,
+          bodySnippet,
+          error: `HTTP ${status ?? 'unknown'}: ${err.message}`,
+        };
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        url,
+        status: null,
+        parsedCount: 0,
+        bodySnippet: '',
+        error: message,
+      };
+    }
+  }
+
+  /**
    * Fetches orders from a specific OdooCredential (per-region DB credential)
    * and persists them to backup tables.
    * Uses a temporary axios instance scoped to the credential's baseUrl/apiKey.
@@ -426,7 +520,14 @@ export class OdooBackupService {
 
     // Use the per-credential apiPath when configured; fall back to the POS REST
     // endpoint which is the default for Odoo instances that expose it.
-    const explicitPath = cred.apiPath?.trim() || null;
+    // Normalise: ensure the path always starts with "/" so the URL is well-formed
+    // even when the operator entered "api/sales/order" without the leading slash.
+    const rawPath = cred.apiPath?.trim() || null;
+    const explicitPath = rawPath
+      ? rawPath.startsWith('/')
+        ? rawPath
+        : `/${rawPath}`
+      : null;
     const primaryPath = explicitPath ?? DEFAULT_ODOO_ORDERS_API_PATH;
     const fallbackPath = '/api/sale.order';
 
@@ -513,7 +614,7 @@ export class OdooBackupService {
           }
           const hint =
             status === 404
-              ? ` — endpoint "${apiPath}" not found; update the credential's apiPath to match the server (e.g. /api/sale.order)`
+              ? ` — endpoint not found at ${baseUrl}${apiPath}; update the credential's apiPath (e.g. /api/sale.order or /api/pos/order)`
               : '';
           throw new BadGatewayException(
             `Odoo API error for region ${cred.region}${status ? ` (HTTP ${status})` : ''}: ${odooMessage}${hint}`,
@@ -531,7 +632,7 @@ export class OdooBackupService {
       // primaryPath returned 404 and no explicit path is configured — try the
       // sale-order REST endpoint as an automatic fallback.
       this.logger.warn(
-        `OdooCredential region=${cred.region}: "${primaryPath}" returned 404, ` +
+        `OdooCredential region=${cred.region}: "${baseUrl}${primaryPath}" returned 404, ` +
           `retrying with "${fallbackPath}" (auto-discovery).`,
       );
       const fallbackResp = await tryFetch(fallbackPath, 0);
@@ -541,7 +642,7 @@ export class OdooBackupService {
         // knows they must configure apiPath explicitly.
         throw new BadGatewayException(
           `Odoo API error for region ${cred.region} (HTTP 404): ` +
-            `neither "${primaryPath}" nor "${fallbackPath}" were found on the server. ` +
+            `neither "${baseUrl}${primaryPath}" nor "${baseUrl}${fallbackPath}" were found on the server. ` +
             `Set the credential's apiPath to the correct endpoint to resolve this.`,
         );
       }
