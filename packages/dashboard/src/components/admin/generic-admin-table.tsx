@@ -20,6 +20,8 @@ export interface FieldDef {
   hidden?: boolean;     // never shown in form
   tableHidden?: boolean; // not shown in table
   required?: boolean;
+  /** Optional help text rendered below the input in forms. */
+  description?: string;
 }
 
 interface GenericAdminTableProps {
@@ -91,6 +93,9 @@ function RecordForm({
                 }
                 className="mt-1.5"
               />
+            )}
+            {f.description && (
+              <p className="mt-1 text-xs text-slate-400">{f.description}</p>
             )}
           </div>
         ))}

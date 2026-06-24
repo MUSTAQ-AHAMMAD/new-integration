@@ -46,6 +46,15 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'baseUrl', label: 'Base URL', required: true },
       { key: 'apiKey', label: 'API Key', required: true },
       { key: 'region', label: 'Region', required: true },
+      {
+        key: 'apiPath',
+        label: 'API Path',
+        description:
+          'REST endpoint path used to fetch orders from this Odoo instance. ' +
+          'Leave blank to auto-detect (tries /api/pos/order then /api/sale.order). ' +
+          'Set explicitly if auto-detection fails — e.g. /api/pos/order for POS orders ' +
+          'or /api/sale.order for sale orders.',
+      },
       { key: 'active', label: 'Active', type: 'boolean' },
       {
         key: 'rejectUnauthorizedSsl',
