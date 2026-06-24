@@ -505,6 +505,23 @@ export class OdooBackupService {
       }
     };
 
+    const toResult = (r: {
+      ok: boolean;
+      url: string;
+      status: number | null;
+      parsedCount: number;
+      bodySnippet: string;
+      error: string | null;
+      is404: boolean;
+    }) => ({
+      ok: r.ok,
+      url: r.url,
+      status: r.status,
+      parsedCount: r.parsedCount,
+      bodySnippet: r.bodySnippet,
+      error: r.error,
+    });
+
     const primaryResult = await tryProbe(primaryPath);
 
     // When no explicit apiPath is configured and the primary path returns 404,
@@ -536,12 +553,10 @@ export class OdooBackupService {
         }
       }
 
-      const { is404: _is404, ...rest } = fallbackResult;
-      return rest;
+      return toResult(fallbackResult);
     }
 
-    const { is404: _is404, ...rest } = primaryResult;
-    return rest;
+    return toResult(primaryResult);
   }
 
   /**
