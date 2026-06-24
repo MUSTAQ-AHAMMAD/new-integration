@@ -143,7 +143,10 @@ export class VendHqSalesBackupService {
           'Content-Type': 'application/json',
         },
         // `after` tells VendHQ to return only sales with version > afterVersion
-        params: { page_size: 200, ...(afterVersion > 0 ? { after: afterVersion } : {}) },
+        params: {
+          page_size: 200,
+          ...(afterVersion > 0 ? { after: afterVersion } : {}),
+        },
         timeout: 30_000,
       },
     );

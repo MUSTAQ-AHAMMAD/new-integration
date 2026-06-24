@@ -57,6 +57,15 @@ function optNum(row: Record<string, unknown>, name: string): number | null {
 function bigint(row: Record<string, unknown>, name: string): bigint {
   const v = col(row, name);
   if (v == null) return 0n;
+  // Guard against object/array/symbol types that BigInt() cannot convert
+  // and that would produce a misleading string (e.g. "[object Object]")
+  // before the try-catch below could normalise the error into 0n.
+  if (
+    typeof v !== 'string' &&
+    typeof v !== 'number' &&
+    typeof v !== 'bigint'
+  )
+    return 0n;
   try {
     // Strip any decimal part (Oracle may return numeric types as floats).
     // Falls back to 0n so a single bad row does not abort the whole import;

@@ -99,7 +99,13 @@ export class VendHqBackupController {
   async listRegions() {
     const creds = await this.prisma.vendHqCredential.findMany({
       where: { active: true },
-      select: { id: true, region: true, domainName: true, lastSyncAt: true, lastSyncVersion: true },
+      select: {
+        id: true,
+        region: true,
+        domainName: true,
+        lastSyncAt: true,
+        lastSyncVersion: true,
+      },
       orderBy: { region: 'asc' },
     });
     return creds;
@@ -162,7 +168,8 @@ export class VendHqBackupController {
   @Post('sync-to-oracle/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Push pending VendHQ backup sales for a specific region to Oracle Fusion',
+    summary:
+      'Push pending VendHQ backup sales for a specific region to Oracle Fusion',
   })
   async syncToOracleByRegion(@Param('region') region: string) {
     const result = await this.oracleSyncService.runSyncJob(region);

@@ -30,12 +30,9 @@ interface OrderRow {
 
 interface SyncJobRecord extends SyncJob {
   scopeValue: Record<string, unknown>;
-  skippedCount?: number;
 }
 
-interface FailedTransactionRecord extends FailedTransaction {
-  errorDetails?: unknown;
-}
+type FailedTransactionRecord = FailedTransaction;
 
 const PAGE_SIZE = 50;
 const TIMEZONES = ['UTC', 'Asia/Dubai', 'America/New_York', 'Europe/London'] as const;
@@ -171,7 +168,7 @@ export default function OrdersPage() {
             id: transaction.id,
             errorType: transaction.errorType,
             errorMessage: transaction.errorMessage,
-            errorDetails: transaction.errorDetails ?? null,
+            errorDetails: transaction.originalPayload ?? null,
             retryCount: transaction.retryCount,
             createdAt: transaction.createdAt,
           }))

@@ -95,9 +95,7 @@ export function normalizeOrderForIngestion(
 
   return {
     odooOrderId: String(order.id),
-    odooOrderNumber: String(
-      order.name ?? order.pos_reference ?? order.id,
-    ),
+    odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
     branchCode,
     orderDate: order.date_order ? new Date(order.date_order) : new Date(),
     originalTimezone: resolvedTimezone,
@@ -106,4 +104,58 @@ export function normalizeOrderForIngestion(
     isCancelled: state === 'cancel',
     isRefund: amountTotal < 0,
   };
+}
+
+/**
+ * Generic fallback: scans a plain-object payload for the first non-empty array
+ * value.  This covers custom Odoo REST modules that use non-standard envelope
+ * keys (e.g. "items", "rows", "Sale_detail", "orders_list").
+ *
+ * Searches at two levels of depth:
+ *   1. Top-level keys of `payload`
+ *   2. One level of nested objects (e.g. `{ response: { items: [...] } }`)
+ *
+ * Return values:
+ *   - Non-empty array: the first array with at least one element found.
+ *   - Empty array `[]`: all discovered arrays were empty — caller receives `[]`
+ *     to indicate no records exist (not an absence of an array key).
+ *   - `null`: no array value found at all — the payload uses a completely
+ *     unrecognised structure and the caller should fall back to `[]` itself.
+ *
+ * @param payload  A plain object extracted from an HTTP response body.
+ *
+ * @example
+ *   findArrayInPayload({ Sale_detail: [{...}] }) // → [{...}]
+ *   findArrayInPayload({ orders: [] })           // → []  (empty — no records)
+ *   findArrayInPayload({ count: 0 })             // → null (no array key found)
+ */
+export function findArrayInPayload(
+  payload: Record<string, unknown>,
+): unknown[] | null {
+  let firstEmpty: unknown[] | null = null;
+
+  for (const key of Object.keys(payload)) {
+    const val = payload[key];
+
+    if (Array.isArray(val)) {
+      if (val.length > 0) return val as unknown[];
+      if (!firstEmpty) firstEmpty = val as unknown[];
+      continue;
+    }
+
+    // One level deeper — e.g. { response: { items: [...] } }
+    if (typeof val === 'object' && val !== null) {
+      const nested = val as Record<string, unknown>;
+      for (const innerKey of Object.keys(nested)) {
+        const inner = nested[innerKey];
+        if (Array.isArray(inner)) {
+          if (inner.length > 0) return inner as unknown[];
+          if (!firstEmpty) firstEmpty = inner as unknown[];
+        }
+      }
+    }
+  }
+
+  // No array key found anywhere in the payload — caller should fall back to [] when null is returned.
+  return firstEmpty;
 }

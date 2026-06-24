@@ -120,7 +120,10 @@ describe('OdooBackupService.backupOrders (global env-var client)', () => {
 
   it('returns correct counts when OdooClient returns orders', async () => {
     const { service, odooClient } = makeService();
-    odooClient.getOrders.mockResolvedValue([makeOrder(), makeOrder({ id: 1002 })]);
+    odooClient.getOrders.mockResolvedValue([
+      makeOrder(),
+      makeOrder({ id: 1002 }),
+    ]);
 
     const result = await service.backupOrders({ limit: 100 });
 
@@ -132,7 +135,10 @@ describe('OdooBackupService.backupOrders (global env-var client)', () => {
     const { service, odooClient } = makeService();
     odooClient.getOrders.mockResolvedValue([]);
 
-    await service.backupOrders({ startDate: '2024-01-01T00:00:00Z', limit: 100 });
+    await service.backupOrders({
+      startDate: '2024-01-01T00:00:00Z',
+      limit: 100,
+    });
 
     expect(odooClient.getOrders).toHaveBeenCalledWith(
       expect.objectContaining({ startDate: '2024-01-01T00:00:00Z' }),
@@ -145,7 +151,10 @@ describe('OdooBackupService.backupOrders (global env-var client)', () => {
 
     await service.backupOrders({ limit: 100 });
 
-    const call = odooClient.getOrders.mock.calls[0][0] as Record<string, unknown>;
+    const call = odooClient.getOrders.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
     expect(call.startDate).toBeUndefined();
   });
 });
@@ -162,10 +171,12 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
   });
 
   it('✅ plain array response → orders extracted correctly', async () => {
-    const { service, prisma } = makeService();
+    const { service } = makeService();
     mockAxiosGet.mockResolvedValue({ data: [makeOrder()] });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(1);
     expect(result.saved).toBe(1);
@@ -173,9 +184,13 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
 
   it('✅ {records:[...]} envelope (Odoo 16+ REST) → orders extracted correctly', async () => {
     const { service } = makeService();
-    mockAxiosGet.mockResolvedValue({ data: { records: [makeOrder(), makeOrder({ id: 1002 })] } });
+    mockAxiosGet.mockResolvedValue({
+      data: { records: [makeOrder(), makeOrder({ id: 1002 })] },
+    });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(2);
   });
@@ -184,7 +199,9 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({ data: { result: [makeOrder()] } });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(1);
   });
@@ -193,7 +210,9 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({ data: { data: [makeOrder()] } });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(1);
   });
@@ -204,10 +223,14 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
     // Odoo 17/18 often wraps results as { result: { records: [...], length: N } }.
     const { service } = makeService();
     mockAxiosGet.mockResolvedValue({
-      data: { result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 } },
+      data: {
+        result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 },
+      },
     });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(2);
   });
@@ -218,7 +241,9 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
       data: { result: { data: [makeOrder()], count: 1 } },
     });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(1);
   });
@@ -229,7 +254,38 @@ describe('OdooBackupService.backupOrdersForCredential — response envelope pars
       data: { result: { orders: [makeOrder()] } },
     });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
+
+    expect(result.orders).toHaveLength(1);
+  });
+
+  it('✅ {orders:[...]} top-level envelope → orders extracted correctly (root cause of fetched:0)', async () => {
+    // Some IBQ / custom Odoo REST modules return { orders: [...] } directly at
+    // the top level without nesting in result/records/data.
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValue({
+      data: { orders: [makeOrder(), makeOrder({ id: 1002 })] },
+    });
+
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
+
+    expect(result.orders).toHaveLength(2);
+    expect(result.saved).toBe(2);
+  });
+
+  it('✅ generic fallback for unknown envelope key (e.g. Sale_detail) → orders extracted', async () => {
+    // Custom Odoo REST APIs sometimes use non-standard top-level keys.
+    // The generic array-scanning fallback should pick up the order array.
+    const { service } = makeService();
+    mockAxiosGet.mockResolvedValue({ data: { Sale_detail: [makeOrder()] } });
+
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(result.orders).toHaveLength(1);
   });
@@ -251,15 +307,17 @@ describe('OdooBackupService.backupOrdersForCredential — watermark filter', () 
     const { service } = makeService();
     const lastSyncAt = new Date('2024-06-01T00:00:00Z');
 
-    await service.backupOrdersForCredential(
-      makeCredential({ lastSyncAt }),
-      { startDate: lastSyncAt.toISOString(), limit: 100 },
-    );
+    await service.backupOrdersForCredential(makeCredential({ lastSyncAt }), {
+      startDate: lastSyncAt.toISOString(),
+      limit: 100,
+    });
 
     expect(mockAxiosGet).toHaveBeenCalledWith(
       expect.stringContaining('/api/pos/order'),
       expect.objectContaining({
-        params: expect.objectContaining({ start_date: lastSyncAt.toISOString() }),
+        params: expect.objectContaining({
+          start_date: lastSyncAt.toISOString(),
+        }),
       }),
     );
   });
@@ -267,9 +325,14 @@ describe('OdooBackupService.backupOrdersForCredential — watermark filter', () 
   it('does NOT send start_date when no startDate param is passed (first run)', async () => {
     const { service } = makeService();
 
-    await service.backupOrdersForCredential(makeCredential({ lastSyncAt: null }), { limit: 100 });
+    await service.backupOrdersForCredential(
+      makeCredential({ lastSyncAt: null }),
+      { limit: 100 },
+    );
 
-    const call = mockAxiosGet.mock.calls[0][1] as { params: Record<string, unknown> };
+    const call = mockAxiosGet.mock.calls[0][1] as {
+      params: Record<string, unknown>;
+    };
     expect(call.params).not.toHaveProperty('start_date');
   });
 
@@ -337,7 +400,10 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
     const { service } = makeService();
 
     await service.backupOrdersForCredential(
-      makeCredential({ baseUrl: 'https://myodoo.example.com', apiPath: '/api/sale.order' }),
+      makeCredential({
+        baseUrl: 'https://myodoo.example.com',
+        apiPath: '/api/sale.order',
+      }),
       { limit: 100 },
     );
 
@@ -378,10 +444,10 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
   it('auto-falls back to /api/sale.order when /api/pos/order returns 404', async () => {
     const { service, prisma } = makeService();
     const notFound = new AxiosError('Not Found');
-    (notFound as AxiosError).response = { status: 404 } as never;
+    notFound.response = { status: 404 } as never;
 
     mockAxiosGet
-      .mockRejectedValueOnce(notFound)   // first call: 404 on /api/pos/order
+      .mockRejectedValueOnce(notFound) // first call: 404 on /api/pos/order
       .mockResolvedValueOnce({ data: [makeOrder()] }); // second call: /api/sale.order succeeds
 
     const result = await service.backupOrdersForCredential(
@@ -394,7 +460,9 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
     expect(result.orders).toHaveLength(1);
     // The discovered path should be persisted so future runs skip discovery
     expect(prisma.odooCredential.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ apiPath: '/api/sale.order' }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({ apiPath: '/api/sale.order' }),
+      }),
     );
   });
 });
@@ -428,7 +496,10 @@ describe('OdooBackupService.backupOrdersForCredential — branch name extraction
 
   it('uses the Many2one branch name when the API returns [id, name]', async () => {
     const { service, prisma } = makeService();
-    const order = makeOrder({ branch_id: [246, 'Bahrain Branch'], name: 'CCNTRBHR/2139' });
+    const order = makeOrder({
+      branch_id: [246, 'Bahrain Branch'],
+      name: 'CCNTRBHR/2139',
+    });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
@@ -469,14 +540,18 @@ describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
   it('fetches a second page when the first page is exactly CREDENTIAL_PAGE_SIZE (100) records', async () => {
     const { service } = makeService();
     // Build 100 distinct orders for page 1 and 2 orders for page 2.
-    const page1 = Array.from({ length: 100 }, (_, i) => makeOrder({ id: 1000 + i }));
+    const page1 = Array.from({ length: 100 }, (_, i) =>
+      makeOrder({ id: 1000 + i }),
+    );
     const page2 = [makeOrder({ id: 2000 }), makeOrder({ id: 2001 })];
 
     mockAxiosGet
       .mockResolvedValueOnce({ data: page1 }) // page 1 (offset=0)
       .mockResolvedValueOnce({ data: page2 }); // page 2 (offset=100)
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(mockAxiosGet).toHaveBeenCalledTimes(2);
     expect(result.orders).toHaveLength(102);
@@ -485,30 +560,241 @@ describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
 
   it('sends correct offset param for each page', async () => {
     const { service } = makeService();
-    const page1 = Array.from({ length: 100 }, (_, i) => makeOrder({ id: 1000 + i }));
+    const page1 = Array.from({ length: 100 }, (_, i) =>
+      makeOrder({ id: 1000 + i }),
+    );
     mockAxiosGet
       .mockResolvedValueOnce({ data: page1 })
       .mockResolvedValueOnce({ data: [] }); // empty page 2 → stop
 
     await service.backupOrdersForCredential(
-      makeCredential({ baseUrl: 'https://odoo.example.com', apiPath: '/api/pos/order' }),
+      makeCredential({
+        baseUrl: 'https://odoo.example.com',
+        apiPath: '/api/pos/order',
+      }),
       { limit: 100 },
     );
 
-    const [, firstCallConfig] = mockAxiosGet.mock.calls[0] as [string, { params: Record<string, unknown> }];
-    const [, secondCallConfig] = mockAxiosGet.mock.calls[1] as [string, { params: Record<string, unknown> }];
+    const [, firstCallConfig] = mockAxiosGet.mock.calls[0] as [
+      string,
+      { params: Record<string, unknown> },
+    ];
+    const [, secondCallConfig] = mockAxiosGet.mock.calls[1] as [
+      string,
+      { params: Record<string, unknown> },
+    ];
     expect(firstCallConfig.params).toMatchObject({ limit: 100, offset: 0 });
     expect(secondCallConfig.params).toMatchObject({ limit: 100, offset: 100 });
   });
 
   it('stops after one page when page returns fewer than PAGE_SIZE records', async () => {
     const { service } = makeService();
-    mockAxiosGet.mockResolvedValueOnce({ data: [makeOrder(), makeOrder({ id: 1002 })] });
+    mockAxiosGet.mockResolvedValueOnce({
+      data: [makeOrder(), makeOrder({ id: 1002 })],
+    });
 
-    const result = await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
 
     expect(mockAxiosGet).toHaveBeenCalledTimes(1);
     expect(result.orders).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertOrder — new field mapping (matching old integration's BACKUP_VENDHQ_SALES)
+// ---------------------------------------------------------------------------
+
+describe('OdooBackupService — new field mapping aligned with old integration', () => {
+  const mockAxiosGet = jest.spyOn(axios, 'get');
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('stores amountUntaxed (TOTAL_PRICE) from amount_untaxed field', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ amount_untaxed: 190.0 });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountUntaxed: 190.0 }),
+      }),
+    );
+  });
+
+  it('stores amountDiscount (TOTAL_LOYALTY) from amount_discount field', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ amount_discount: 15.5 });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ amountDiscount: 15.5 }),
+      }),
+    );
+  });
+
+  it('stores warehouseName (OUTLET_NAME) from warehouse_id Many2one', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ warehouse_id: [5, 'Dubai Mall Store'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          warehouseId: 5,
+          warehouseName: 'Dubai Mall Store',
+        }),
+      }),
+    );
+  });
+
+  it('stores posConfigName (REGISTER_NAME) from pos_config_id Many2one', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ pos_config_id: [12, 'Register 01'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          posConfigId: 12,
+          posConfigName: 'Register 01',
+        }),
+      }),
+    );
+  });
+
+  it('falls back to session_id for posConfigName when pos_config_id is absent', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({ session_id: [7, 'Session-Morning'] });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ posConfigName: 'Session-Morning' }),
+      }),
+    );
+  });
+
+  it('stores taxName (TAX_NAME) from tax_id Many2many on line items', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      lines: [
+        {
+          id: 501,
+          product_id: [10, 'Coffee'],
+          qty: 1,
+          price_unit: 25,
+          price_subtotal: 25,
+          price_subtotal_incl: 26.25,
+          discount: 0,
+          tax_id: [[3, 'VAT 5%']],
+        },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ taxName: 'VAT 5%' }),
+      }),
+    );
+  });
+
+  it('stores productCode (ITEM_NUMBER) from default_code on line items', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      lines: [
+        {
+          id: 502,
+          product_id: [11, 'Latte'],
+          qty: 2,
+          price_unit: 30,
+          price_subtotal: 60,
+          default_code: 'PROD-001',
+        },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderLine.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ productCode: 'PROD-001' }),
+      }),
+    );
+  });
+
+  it('stores currency (CURRENCY) from currency_id Many2one on payments', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      statement_ids: [
+        { id: 801, name: 'Cash', amount: 210.0, currency_id: [1, 'AED'] },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
+      }),
+    );
+  });
+
+  it('stores paymentDate (PAYMENT_DATE) from date field on payments', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      statement_ids: [
+        { id: 802, name: 'Card', amount: 50.0, date: '2024-05-17T10:30:00Z' },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentDate: new Date('2024-05-17T10:30:00Z'),
+        }),
+      }),
+    );
+  });
+
+  it('resolves payment method from journal_id when name and payment_method_id are absent', async () => {
+    const { service, prisma } = makeService();
+    const order = makeOrder({
+      payment_ids: [
+        { id: 803, journal_id: [4, 'Bank Transfer'], amount: 100.0 },
+      ],
+    });
+    mockAxiosGet.mockResolvedValue({ data: [order] });
+
+    await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
+
+    expect(prisma.backupOdooOrderPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentName: 'Bank Transfer' }),
+      }),
+    );
   });
 });
 

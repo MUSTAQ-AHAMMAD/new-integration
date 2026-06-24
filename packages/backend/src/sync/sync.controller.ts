@@ -1,6 +1,17 @@
-import { Body, Controller, Get, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { extractBranchCode, normalizeOrderForIngestion } from '../common/odoo-utils';
+import {
+  extractBranchCode,
+  normalizeOrderForIngestion,
+} from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
@@ -92,7 +103,8 @@ export class SyncController {
 
   @Post('fetch-odoo')
   @ApiOperation({
-    summary: 'Manually pull orders from Odoo, persist raw backup, and ingest them into the sync queue',
+    summary:
+      'Manually pull orders from Odoo, persist raw backup, and ingest them into the sync queue',
   })
   async fetchOdooOrders(
     @Body()
@@ -114,24 +126,32 @@ export class SyncController {
         where: { id: body.credentialId },
       });
       if (!cred) {
-        throw new NotFoundException(`Odoo credential not found: ${body.credentialId}`);
+        throw new NotFoundException(
+          `Odoo credential not found: ${body.credentialId}`,
+        );
       }
-      ({ orders, saved: backedUp, skipped: backupSkipped } =
-        await this.odooBackupService.backupOrdersForCredential(cred, {
-          branchId: body.branchId,
-          startDate: body.startDate,
-          endDate: body.endDate,
-          limit: body.limit,
-        }));
+      ({
+        orders,
+        saved: backedUp,
+        skipped: backupSkipped,
+      } = await this.odooBackupService.backupOrdersForCredential(cred, {
+        branchId: body.branchId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        limit: body.limit,
+      }));
     } else {
       // Legacy path: use the global ODOO_BASE_URL / ODOO_API_KEY env vars.
-      ({ orders, saved: backedUp, skipped: backupSkipped } =
-        await this.odooBackupService.backupOrders({
-          branchId: body.branchId,
-          startDate: body.startDate,
-          endDate: body.endDate,
-          limit: body.limit,
-        }));
+      ({
+        orders,
+        saved: backedUp,
+        skipped: backupSkipped,
+      } = await this.odooBackupService.backupOrders({
+        branchId: body.branchId,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        limit: body.limit,
+      }));
     }
 
     // Step 2: ingest each backed-up order into the sync queue.
@@ -147,7 +167,9 @@ export class SyncController {
         // mapped to a store configuration or routed to Oracle correctly.
         if (!branchCode) {
           skipped++;
-          errors.push(`Order ${String(order.name ?? order.id)} skipped: missing branch_id`);
+          errors.push(
+            `Order ${String(order.name ?? order.id)} skipped: missing branch_id`,
+          );
           continue;
         }
 
@@ -165,9 +187,7 @@ export class SyncController {
           odooOrderId: String(order.id),
           odooOrderNumber: String(order.name ?? order.id),
           branchCode,
-          orderDate: order.date_order
-            ? new Date(order.date_order)
-            : new Date(),
+          orderDate: order.date_order ? new Date(order.date_order) : new Date(),
           originalTimezone: orderTimezone,
           totalAmount: amountTotal,
           isPaid: ['paid', 'done', 'posted'].includes(state),
@@ -194,7 +214,8 @@ export class SyncController {
 
   @Post('fetch-ibq')
   @ApiOperation({
-    summary: 'Manually pull orders from IBQ, persist raw backup, and ingest them into the sync queue',
+    summary:
+      'Manually pull orders from IBQ, persist raw backup, and ingest them into the sync queue',
   })
   async fetchIbqOrders(
     @Body()
@@ -208,14 +229,17 @@ export class SyncController {
     },
   ) {
     // Step 1: fetch from IBQ and persist raw data to backup tables.
-    const { orders, saved: backedUp, skipped: backupSkipped } =
-      await this.ibqBackupService.backupOrders(body.credentialId, {
-        startDate: body.startDate,
-        endDate: body.endDate,
-        branchId: body.branchId,
-        companyId: body.companyId,
-        limit: body.limit ?? 100,
-      });
+    const {
+      orders,
+      saved: backedUp,
+      skipped: backupSkipped,
+    } = await this.ibqBackupService.backupOrders(body.credentialId, {
+      startDate: body.startDate,
+      endDate: body.endDate,
+      branchId: body.branchId,
+      companyId: body.companyId,
+      limit: body.limit ?? 100,
+    });
 
     // Step 2: ingest each backed-up order into the sync queue.
     let ingested = 0;

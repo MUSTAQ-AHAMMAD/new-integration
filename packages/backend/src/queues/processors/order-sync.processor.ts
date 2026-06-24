@@ -273,12 +273,21 @@ export class OrderSyncProcessor {
         applyReceipts: import('../../clients/oracle/oracle-soap.client').ApplyReceiptRequest[];
         journalHeaders: import('../../clients/oracle/oracle-soap.client').JournalHeader[];
       }): Promise<string> => {
-        const { invoiceHeader, standardReceipts, miscReceipts, applyReceipts, journalHeaders } = payloads;
+        const {
+          invoiceHeader,
+          standardReceipts,
+          miscReceipts,
+          applyReceipts,
+          journalHeaders,
+        } = payloads;
 
         // ── 8. Push Invoice ───────────────────────────────────────
-        const invoiceResult = await this.soapClient.createSimpleInvoice(invoiceHeader);
+        const invoiceResult =
+          await this.soapClient.createSimpleInvoice(invoiceHeader);
         const txnNumber = String(
-          invoiceResult.customerTrxId ?? invoiceResult.transactionNumber ?? odooOrderId,
+          invoiceResult.customerTrxId ??
+            invoiceResult.transactionNumber ??
+            odooOrderId,
         );
 
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
@@ -416,11 +425,12 @@ export class OrderSyncProcessor {
         this.logger.log(
           `Order ${odooOrderId}: using Odoo backup path (backupOrderId=${order.odooBackupOrderId})`,
         );
-        const payloads = await this.odooTransformationService.buildOrderPayloads(
-          order.odooBackupOrderId,
-          branchCode,
-          effectiveRegion,
-        );
+        const payloads =
+          await this.odooTransformationService.buildOrderPayloads(
+            order.odooBackupOrderId,
+            branchCode,
+            effectiveRegion,
+          );
         const txnNumber = await pushToOracle(payloads);
         if (order.isRefund) {
           oracleCreditMemoNumber = txnNumber;
@@ -453,14 +463,19 @@ export class OrderSyncProcessor {
             oracleInvoiceNumber = txnNumber;
           }
         } else {
-          // ── Path C: No backup found ───────────────────────────────
-          this.logger.warn(
-            `Order ${odooOrderId}: no BackupOdooOrder (odooBackupOrderId=${order.odooBackupOrderId ?? 'null'}) ` +
-              `and no BackupVendHqSale found for orderNumber=${order.odooOrderNumber ?? odooOrderId}. ` +
-              `Oracle SOAP calls skipped — set up OdooCredential and re-run the backup to populate.`,
+          // ── Path C: No backup source available ───────────────────────────────
+          // Without backup data we cannot build the Oracle SOAP payload.
+          // Throw so the order is marked FAILED and remains retryable — the
+          // operator should configure OdooCredential or VendHqCredential, run
+          // the relevant backup job, and then use POST /sync/retry-failed to
+          // re-process the order.
+          throw new Error(
+            `No backup data found for order ${odooOrderId} (orderNumber=${order.odooOrderNumber ?? odooOrderId}): ` +
+              `odooBackupOrderId=${order.odooBackupOrderId ?? 'null'} and no matching BackupOdooOrder or BackupVendHqSale. ` +
+              `Ensure credentials are configured (POST /odoo-backup/credentials or POST /admin/vendhq-credentials), ` +
+              `run the relevant backup job (POST /odoo-backup/trigger or POST /vendhq-backup/trigger), ` +
+              `then retry this order via POST /sync/retry-failed.`,
           );
-          oracleInvoiceNumber = order.isRefund ? null : `INV-${order.odooOrderNumber}`;
-          oracleCreditMemoNumber = order.isRefund ? `CM-${order.odooOrderNumber}` : null;
         }
       }
 

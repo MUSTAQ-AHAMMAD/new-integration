@@ -12,9 +12,7 @@ function makeSignature(body: Buffer, secret: string): string {
   return createHmac('sha256', secret).update(body).digest('hex');
 }
 
-function makeService(
-  secret: string | null = WEBHOOK_SECRET,
-): {
+function makeService(secret: string | null = WEBHOOK_SECRET): {
   service: WebhookService;
   mockPrisma: jest.Mocked<Partial<PrismaService>>;
   mockOrderSync: jest.Mocked<Partial<OrderSyncService>>;
@@ -44,8 +42,8 @@ function makeService(
 
   return {
     service,
-    mockPrisma: mockPrisma as jest.Mocked<Partial<PrismaService>>,
-    mockOrderSync: mockOrderSync as jest.Mocked<Partial<OrderSyncService>>,
+    mockPrisma: mockPrisma,
+    mockOrderSync: mockOrderSync,
   };
 }
 
@@ -99,9 +97,9 @@ describe('WebhookService — HMAC signature verification', () => {
     const raw = Buffer.from(JSON.stringify(payload));
     const sig = makeSignature(raw, 'wrong-secret');
 
-    await expect(
-      service.processOdooEvent(payload, raw, sig),
-    ).rejects.toThrow(UnauthorizedException);
+    await expect(service.processOdooEvent(payload, raw, sig)).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('rejects when signature header is missing and secret is configured', async () => {
@@ -148,9 +146,7 @@ describe('WebhookService — event persistence', () => {
 
     await service.processOdooEvent(payload, raw);
 
-    expect(
-      (mockPrisma.webhookEvent!.create as jest.Mock),
-    ).toHaveBeenCalledWith(
+    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           eventType: 'order.paid',
@@ -168,9 +164,7 @@ describe('WebhookService — event persistence', () => {
 
     await service.processOdooEvent(payload, raw);
 
-    expect(
-      (mockPrisma.webhookEvent!.update as jest.Mock),
-    ).toHaveBeenCalledWith(
+    expect(mockPrisma.webhookEvent!.update as jest.Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           processingStatus: SyncStatus.SYNCED,
@@ -189,10 +183,11 @@ describe('WebhookService — event persistence', () => {
 
     const result = await service.processOdooEvent(payload, raw);
 
-    expect(result).toMatchObject({ received: true, processingError: expect.any(String) });
-    expect(
-      (mockPrisma.webhookEvent!.update as jest.Mock),
-    ).toHaveBeenCalledWith(
+    expect(result).toMatchObject({
+      received: true,
+      processingError: expect.any(String),
+    });
+    expect(mockPrisma.webhookEvent!.update as jest.Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           processingStatus: SyncStatus.FAILED,
@@ -203,14 +198,15 @@ describe('WebhookService — event persistence', () => {
 
   it('stores the event_type from the payload', async () => {
     const { service, mockPrisma } = makeService(null);
-    const payload = { event_type: 'order.refund', order: { id: 'R-001', state: 'posted', amount_total: -50 } };
+    const payload = {
+      event_type: 'order.refund',
+      order: { id: 'R-001', state: 'posted', amount_total: -50 },
+    };
     const raw = Buffer.from(JSON.stringify(payload));
 
     await service.processOdooEvent(payload, raw);
 
-    expect(
-      (mockPrisma.webhookEvent!.create as jest.Mock),
-    ).toHaveBeenCalledWith(
+    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ eventType: 'order.refund' }),
       }),
@@ -224,9 +220,7 @@ describe('WebhookService — event persistence', () => {
 
     await service.processOdooEvent(payload, raw);
 
-    expect(
-      (mockPrisma.webhookEvent!.create as jest.Mock),
-    ).toHaveBeenCalledWith(
+    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ eventType: 'unknown' }),
       }),
@@ -247,7 +241,10 @@ describe('WebhookService — order event routing', () => {
   for (const eventType of orderEventTypes) {
     it(`calls ingestOrder for "${eventType}" events`, async () => {
       const { service, mockOrderSync } = makeService(null);
-      const p = { event_type: eventType, order: { ...makePaidOrderPayload().order } };
+      const p = {
+        event_type: eventType,
+        order: { ...makePaidOrderPayload().order },
+      };
       const raw = Buffer.from(JSON.stringify(p));
 
       await service.processOdooEvent(p, raw);
@@ -323,7 +320,10 @@ describe('WebhookService — order event routing', () => {
 
   it('sets isPaid=false for state "draft"', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const p = { event_type: 'order.created', order: { id: 'D-1', state: 'draft', amount_total: 100 } };
+    const p = {
+      event_type: 'order.created',
+      order: { id: 'D-1', state: 'draft', amount_total: 100 },
+    };
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);
@@ -335,7 +335,10 @@ describe('WebhookService — order event routing', () => {
 
   it('sets isCancelled=true for state "cancel"', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const p = { event_type: 'order.updated', order: { id: 'C-1', state: 'cancel', amount_total: 100 } };
+    const p = {
+      event_type: 'order.updated',
+      order: { id: 'C-1', state: 'cancel', amount_total: 100 },
+    };
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);
@@ -347,7 +350,10 @@ describe('WebhookService — order event routing', () => {
 
   it('auto-detects refund from negative amount_total', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const p = { event_type: 'order.refund', order: { id: 'R-1', state: 'posted', amount_total: -75 } };
+    const p = {
+      event_type: 'order.refund',
+      order: { id: 'R-1', state: 'posted', amount_total: -75 },
+    };
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);
@@ -359,7 +365,10 @@ describe('WebhookService — order event routing', () => {
 
   it('defaults branchCode to "UNKNOWN" when branch_code is absent', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const p = { event_type: 'order.paid', order: { id: 'X-1', state: 'posted', amount_total: 100 } };
+    const p = {
+      event_type: 'order.paid',
+      order: { id: 'X-1', state: 'posted', amount_total: 100 },
+    };
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);
@@ -371,7 +380,10 @@ describe('WebhookService — order event routing', () => {
 
   it('defaults currency to "AED" when absent', async () => {
     const { service, mockOrderSync } = makeService(null);
-    const p = { event_type: 'order.paid', order: { id: 'X-2', state: 'posted', amount_total: 100 } };
+    const p = {
+      event_type: 'order.paid',
+      order: { id: 'X-2', state: 'posted', amount_total: 100 },
+    };
     const raw = Buffer.from(JSON.stringify(p));
 
     await service.processOdooEvent(p, raw);

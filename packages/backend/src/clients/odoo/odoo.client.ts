@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
-import { toApiDatetime } from '../../common/odoo-utils';
+import { findArrayInPayload, toApiDatetime } from '../../common/odoo-utils';
 
 export interface OdooOrderLine {
   id?: number;
@@ -29,6 +29,17 @@ export interface OdooOrderPayment {
   id?: number;
   name?: string;
   amount?: number;
+  /** ISO currency code from currency_id Many2one field */
+  currency_id?: number | [number, string];
+  /** Payment method from payment_method_id Many2one (v16+) */
+  payment_method_id?: number | [number, string];
+  /** Journal name from journal_id Many2one */
+  journal_id?: number | [number, string];
+  /** Payment method code string (some IBQ variants) */
+  payment_method_code?: string;
+  /** Payment date */
+  date?: string;
+  payment_date?: string;
   [key: string]: unknown;
 }
 
@@ -150,8 +161,12 @@ export class OdooClient {
                 ...(params.branchId !== undefined && {
                   branch_id: params.branchId,
                 }),
-                ...(params.startDate && { start_date: toApiDatetime(params.startDate) }),
-                ...(params.endDate && { end_date: toApiDatetime(params.endDate, { end: true }) }),
+                ...(params.startDate && {
+                  start_date: toApiDatetime(params.startDate),
+                }),
+                ...(params.endDate && {
+                  end_date: toApiDatetime(params.endDate, { end: true }),
+                }),
                 limit: pageSize,
                 offset,
               },
@@ -177,7 +192,8 @@ export class OdooClient {
           if (pageOrders.length < pageSize) break;
 
           // Stop if the caller specified a hard limit
-          if (params.limit !== undefined && allOrders.length >= params.limit) break;
+          if (params.limit !== undefined && allOrders.length >= params.limit)
+            break;
 
           offset += pageSize;
         }
@@ -305,12 +321,22 @@ export class OdooClient {
         return this.normalizeItems<T>(data);
       }
 
+      // Some Odoo/IBQ variants return { orders: [...] } at the top level
+      const orders = payload.orders;
+      if (Array.isArray(orders)) {
+        return this.normalizeItems<T>(orders);
+      }
+
       // Odoo 17/18 REST API: { result: { records: [...], length: N } }
       // or { result: { data: [...], count: N } } or { result: { orders: [...] } }
       const result = payload.result;
       // Explicit typeof + !Array.isArray guards are used here to narrow `result`
       // to a plain object so we can safely access its nested array properties.
-      if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+      if (
+        typeof result === 'object' &&
+        result !== null &&
+        !Array.isArray(result)
+      ) {
         const resultObj = result as Record<string, unknown>;
         if (Array.isArray(resultObj['records'])) {
           return this.normalizeItems<T>(resultObj['records']);
@@ -325,6 +351,19 @@ export class OdooClient {
 
       if (Array.isArray(result)) {
         return this.normalizeItems<T>(result);
+      }
+
+      // Generic fallback: scan all top-level keys for the first non-empty array.
+      // Covers custom Odoo REST modules that use non-standard envelope keys
+      // (e.g. "items", "rows", "Sale_detail", "orders_list", etc.).
+      const found = findArrayInPayload(payload);
+      if (found) {
+        if (found.length > 0) {
+          this.logger.debug(
+            `extractList: using generic fallback (${found.length} items)`,
+          );
+        }
+        return this.normalizeItems<T>(found);
       }
     }
 
@@ -351,7 +390,10 @@ export class OdooClient {
       if (normalised['id'] == null && normalised['order_id'] != null) {
         normalised['id'] = normalised['order_id'];
       }
-      if (normalised['amount_total'] == null && normalised['amount_paid'] != null) {
+      if (
+        normalised['amount_total'] == null &&
+        normalised['amount_paid'] != null
+      ) {
         normalised['amount_total'] = normalised['amount_paid'];
       }
 

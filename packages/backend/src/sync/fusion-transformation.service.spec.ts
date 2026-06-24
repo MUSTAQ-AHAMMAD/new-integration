@@ -137,9 +137,7 @@ function setupDefaultMocks(
   mockPrisma: ReturnType<typeof buildMockPrisma>,
   salePatch: Record<string, unknown> = {},
 ) {
-  mockPrisma.backupVendHqSale.findUnique.mockResolvedValue(
-    makeSale(salePatch),
-  );
+  mockPrisma.backupVendHqSale.findUnique.mockResolvedValue(makeSale(salePatch));
   mockPrisma.vendHqOutlet.findFirst.mockResolvedValue(makeOutlet());
   mockPrisma.vendHqRegister.findMany.mockResolvedValue(makeRegisters());
   mockPrisma.fusionSalesMetadata.findFirst.mockResolvedValue(makeSalesMeta());
@@ -426,7 +424,9 @@ describe('FusionTransformationService', () => {
 
     it('throws when bank account is not configured for non-cash payment', async () => {
       setupDefaultMocks(mockPrisma, {
-        backupPayments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 50 }],
+        backupPayments: [
+          { id: 'pmt-2', paymentMethod: 'Credit Card', amount: 50 },
+        ],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false),
@@ -452,7 +452,9 @@ describe('FusionTransformationService', () => {
   describe('MiscReceipts', () => {
     it('creates a misc receipt for non-cash payment (bank charges)', async () => {
       setupDefaultMocks(mockPrisma, {
-        backupPayments: [{ id: 'pmt-2', paymentMethod: 'Credit Card', amount: 100 }],
+        backupPayments: [
+          { id: 'pmt-2', paymentMethod: 'Credit Card', amount: 100 },
+        ],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Credit Card', false, { bankAccountId: 202 }),
@@ -478,7 +480,9 @@ describe('FusionTransformationService', () => {
 
     it('caps misc receipt at 10 for Debit Card in OM region', async () => {
       setupDefaultMocks(mockPrisma, {
-        backupPayments: [{ id: 'pmt-3', paymentMethod: 'Debit Card', amount: 1000 }],
+        backupPayments: [
+          { id: 'pmt-3', paymentMethod: 'Debit Card', amount: 1000 },
+        ],
       });
       mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
         makeReceiptMethod('Debit Card', false, {

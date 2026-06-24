@@ -34,7 +34,9 @@ function makeConfig(overrides: Record<string, string | undefined> = {}) {
     ODOO_API_KEY: 'test-api-key',
     ...overrides,
   };
-  return { get: jest.fn((key: string) => values[key]) } as unknown as ConfigService;
+  return {
+    get: jest.fn((key: string) => values[key]),
+  } as unknown as ConfigService;
 }
 
 /**
@@ -44,9 +46,9 @@ function makeConfig(overrides: Record<string, string | undefined> = {}) {
  */
 function makeClient(config = makeConfig()) {
   const client = new OdooClient(config);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const httpGet = jest.spyOn((client as any).http, 'get');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const httpPost = jest.spyOn((client as any).http, 'post');
   return { client, httpGet, httpPost };
 }
@@ -99,7 +101,9 @@ describe('OdooClient.getOrders — response envelope parsing', () => {
     // extractList() unwraps the nested object and returns the records array.
     const { client, httpGet } = makeClient();
     httpGet.mockResolvedValue({
-      data: { result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 } },
+      data: {
+        result: { records: [makeOrder(), makeOrder({ id: 1002 })], length: 2 },
+      },
     });
 
     const orders = await client.getOrders({ limit: 100 });
@@ -109,7 +113,9 @@ describe('OdooClient.getOrders — response envelope parsing', () => {
 
   it('✅ {result:{data:[...]}} nested envelope → orders extracted correctly', async () => {
     const { client, httpGet } = makeClient();
-    httpGet.mockResolvedValue({ data: { result: { data: [makeOrder()], count: 1 } } });
+    httpGet.mockResolvedValue({
+      data: { result: { data: [makeOrder()], count: 1 } },
+    });
 
     const orders = await client.getOrders({ limit: 100 });
 
@@ -132,16 +138,20 @@ describe('OdooClient.getOrders — response envelope parsing', () => {
 
 describe('OdooClient.getOrders — HTTP parameters', () => {
   it('calls /api/pos/order when ODOO_API_KEY is configured', async () => {
-    const { client, httpGet } = makeClient(makeConfig({ ODOO_API_KEY: 'my-key' }));
+    const { client, httpGet } = makeClient(
+      makeConfig({ ODOO_API_KEY: 'my-key' }),
+    );
     httpGet.mockResolvedValue({ data: [] });
 
+    // The caller's `limit` is a stop condition, not the HTTP page size.
+    // The client always sends pageSize=100 to the API.
     await client.getOrders({ limit: 50 });
 
     expect(httpGet).toHaveBeenCalledWith(
       '/api/pos/order',
       expect.objectContaining({
         headers: expect.objectContaining({ 'x-api-key': 'my-key' }),
-        params: expect.objectContaining({ limit: 50 }),
+        params: expect.objectContaining({ limit: 100 }),
       }),
     );
   });
@@ -166,7 +176,9 @@ describe('OdooClient.getOrders — HTTP parameters', () => {
 
     await client.getOrders({ limit: 100 });
 
-    const call = httpGet.mock.calls[0][1] as { params: Record<string, unknown> };
+    const call = httpGet.mock.calls[0][1] as {
+      params: Record<string, unknown>;
+    };
     expect(call.params).not.toHaveProperty('start_date');
   });
 
@@ -190,7 +202,9 @@ describe('OdooClient.getOrders — HTTP parameters', () => {
 
     await client.getOrders({ limit: 100 });
 
-    const call = httpGet.mock.calls[0][1] as { params: Record<string, unknown> };
+    const call = httpGet.mock.calls[0][1] as {
+      params: Record<string, unknown>;
+    };
     expect(call.params).not.toHaveProperty('branch_id');
   });
 

@@ -42,10 +42,7 @@ describe('AuthService', () => {
         }),
       } as unknown as ConfigService;
       const jwtSpy = { sign: jest.fn().mockReturnValue('tok') };
-      const service = new AuthService(
-        jwtSpy as unknown as JwtService,
-        config,
-      );
+      const service = new AuthService(jwtSpy as unknown as JwtService, config);
 
       service.login(ADMIN_EMAIL, ADMIN_PASSWORD);
 

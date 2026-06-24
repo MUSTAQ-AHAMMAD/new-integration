@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { JobStatus, Prisma, ScopeType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
@@ -30,7 +34,7 @@ export class SyncService {
       },
     });
 
-    let successCount = 0;
+    let enqueuedCount = 0;
     let skippedCount = 0;
     const BATCH_SIZE = 5000;
     let cursorId: string | undefined;
@@ -60,7 +64,7 @@ export class SyncService {
             branchCode: order.branchCode,
             syncJobId: job.id,
           });
-          successCount += 1;
+          enqueuedCount += 1;
         }
       }
 
@@ -79,21 +83,36 @@ export class SyncService {
       if (batch.length < BATCH_SIZE) break;
     }
 
-    const totalRecords = successCount + skippedCount;
-    const finalStatus =
-      successCount === 0 && skippedCount > 0
-        ? JobStatus.PARTIAL
-        : JobStatus.PENDING;
+    const totalRecords = enqueuedCount + skippedCount;
 
+    // Determine the correct initial status:
+    // - COMPLETED: no records at all (nothing to do)
+    // - PARTIAL: all records were immediately skipped (no Oracle pushes queued)
+    // - PENDING: at least one order was enqueued for Oracle processing
+    let finalStatus: JobStatus;
+    if (totalRecords === 0) {
+      finalStatus = JobStatus.COMPLETED;
+    } else if (enqueuedCount === 0) {
+      finalStatus = JobStatus.PARTIAL;
+    } else {
+      finalStatus = JobStatus.PENDING;
+    }
+
+    // processedRecords starts at skippedCount — the orders that were immediately
+    // handled (marked SKIPPED) without going through the queue.
+    // successCount starts at 0 — Oracle-synced counts are incremented by the
+    // queue processor as each order is actually submitted to Oracle.
     return this.prisma.syncJob.update({
       where: { id: job.id },
       data: {
         totalRecords,
-        processedRecords: totalRecords,
-        successCount,
+        processedRecords: skippedCount,
+        successCount: 0,
         skippedCount,
         status: finalStatus,
         startedAt: totalRecords > 0 ? new Date() : undefined,
+        completedAt:
+          finalStatus === JobStatus.COMPLETED ? new Date() : undefined,
       },
     });
   }
@@ -118,7 +137,9 @@ export class SyncService {
       job.status !== JobStatus.PENDING &&
       job.status !== JobStatus.PROCESSING
     ) {
-      throw new BadRequestException(`Cannot cancel job in status: ${job.status}`);
+      throw new BadRequestException(
+        `Cannot cancel job in status: ${job.status}`,
+      );
     }
 
     return this.prisma.syncJob.update({
@@ -222,9 +243,7 @@ export class SyncService {
       take !== undefined
         ? {
             take,
-            ...(cursorId
-              ? { cursor: { id: cursorId }, skip: 1 }
-              : {}),
+            ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
           }
         : {};
 

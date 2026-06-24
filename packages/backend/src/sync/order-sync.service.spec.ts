@@ -387,9 +387,7 @@ describe('OrderSyncService', () => {
       await service.retryFailedOrders();
 
       expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ isRetry: true }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ isRetry: true })]),
       );
     });
 
@@ -497,9 +495,7 @@ describe('OrderSyncService', () => {
       await service.retryNegativeInventoryOrders();
 
       expect(mockQueues.enqueueOrderSyncBulk).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ isRetry: true }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ isRetry: true })]),
       );
     });
 

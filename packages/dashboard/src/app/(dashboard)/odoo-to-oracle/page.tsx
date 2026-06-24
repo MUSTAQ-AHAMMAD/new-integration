@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDate, getStatusColor } from '@/lib/utils';
 
-const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'PARTIAL']);
 
 const SCOPE_OPTIONS = [
   { value: 'ALL', label: 'All pending orders' },
@@ -145,6 +145,10 @@ function SyncJobCard({ job }: { job: SyncJob }) {
             <dd className="font-medium text-red-700">{job.failedCount}</dd>
           </div>
           <div className="flex justify-between">
+            <dt className="text-gray-500">Skipped</dt>
+            <dd className="font-medium text-yellow-700">{job.skippedCount}</dd>
+          </div>
+          <div className="flex justify-between">
             <dt className="text-gray-500">Created at</dt>
             <dd className="text-gray-400">{formatDate(job.createdAt)}</dd>
           </div>
@@ -172,6 +176,7 @@ export default function OdooToOraclePage() {
   const qc = useQueryClient();
 
   // ── Fetch (Step 1) params ─────────────────────────────────────────
+  const [credentialId, setCredentialId] = useState('');
   const [branchId, setBranchId] = useState('');
   const [fetchStart, setFetchStart] = useState('');
   const [fetchEnd, setFetchEnd] = useState('');
@@ -197,6 +202,12 @@ export default function OdooToOraclePage() {
   const needsBranch = scopeType === 'BRANCH' || scopeType === 'BRANCH_DATE_RANGE';
   const needsDates = scopeType === 'DATE_RANGE' || scopeType === 'BRANCH_DATE_RANGE';
 
+  // ── Load available Odoo credentials ──────────────────────────────
+  const { data: credentials = [], isLoading: loadingCreds } = useQuery({
+    queryKey: ['odoo-credentials'],
+    queryFn: () => api.listOdooCredentials(),
+  });
+
   // ── Step 2 — Oracle sync job mutation ─────────────────────────────
   const syncMutation = useMutation({
     mutationFn: () =>
@@ -221,6 +232,7 @@ export default function OdooToOraclePage() {
   const fetchMutation = useMutation({
     mutationFn: () =>
       api.fetchOdooOrders({
+        credentialId: credentialId || undefined,
         branchId: branchId ? Number(branchId) : undefined,
         startDate: fetchStart || undefined,
         endDate: fetchEnd || undefined,
@@ -328,6 +340,37 @@ export default function OdooToOraclePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Credential selector */}
+            <div>
+              <Label htmlFor="credentialId">Region / Credential</Label>
+              <select
+                id="credentialId"
+                value={credentialId}
+                onChange={(e) => setCredentialId(e.target.value)}
+                className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+                disabled={isPipelineRunning}
+              >
+                <option value="">
+                  {loadingCreds ? 'Loading credentials…' : '— Global (env var) —'}
+                </option>
+                {credentials.map((cred) => (
+                  <option key={cred.id} value={cred.id}>
+                    {cred.region} — {cred.baseUrl}
+                    {!cred.active ? ' [inactive]' : ''}
+                  </option>
+                ))}
+              </select>
+              {credentials.length === 0 && !loadingCreds && (
+                <p className="mt-1 text-xs text-slate-400">
+                  No per-region credentials configured. Uses global Odoo env vars. Add via{' '}
+                  <a href="/admin/odoo-credentials" className="underline">
+                    Admin → Odoo Credentials
+                  </a>
+                  .
+                </p>
+              )}
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label htmlFor="branchId">Branch ID (Odoo)</Label>
