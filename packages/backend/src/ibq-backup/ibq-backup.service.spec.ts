@@ -50,6 +50,9 @@ function makePrisma() {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    $transaction: jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops)),
   };
 }
 

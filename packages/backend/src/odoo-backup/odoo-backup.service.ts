@@ -1008,10 +1008,12 @@ export class OdooBackupService {
         };
       });
 
-      await this.prisma.backupOdooOrderLine.deleteMany({
-        where: { orderId: order.id },
-      });
-      await this.prisma.backupOdooOrderLine.createMany({ data: lineDataItems });
+      await this.prisma.$transaction([
+        this.prisma.backupOdooOrderLine.deleteMany({
+          where: { orderId: order.id },
+        }),
+        this.prisma.backupOdooOrderLine.createMany({ data: lineDataItems }),
+      ]);
     }
 
     // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
@@ -1050,12 +1052,14 @@ export class OdooBackupService {
         };
       });
 
-      await this.prisma.backupOdooOrderPayment.deleteMany({
-        where: { orderId: order.id },
-      });
-      await this.prisma.backupOdooOrderPayment.createMany({
-        data: paymentDataItems,
-      });
+      await this.prisma.$transaction([
+        this.prisma.backupOdooOrderPayment.deleteMany({
+          where: { orderId: order.id },
+        }),
+        this.prisma.backupOdooOrderPayment.createMany({
+          data: paymentDataItems,
+        }),
+      ]);
     }
   }
 }

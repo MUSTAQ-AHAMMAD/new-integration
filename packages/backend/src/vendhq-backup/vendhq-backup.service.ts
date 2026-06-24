@@ -84,9 +84,9 @@ const STATUS_DISABLED = 'DISABLED';
 /** Maximum records per VendHQ API page (API cap is 200) */
 const VENDHQ_PAGE_SIZE = 200;
 /** Concurrency limit for parallel parent-sale upserts within one page.
- * Chosen to stay within the default PrismaClient connection pool size (10)
- * while allowing meaningful parallelism — each upsert may open one connection. */
-const UPSERT_CONCURRENCY = 20;
+ * Matches the default PrismaClient connection pool size (10) so each
+ * concurrent upsert can acquire a connection without contention. */
+const UPSERT_CONCURRENCY = 10;
 /** Concurrency limit for parallel SaleSyncStatus upserts within one page.
  * Higher than UPSERT_CONCURRENCY because SaleSyncStatus upserts are lighter
  * (single-row, no child relations) and benefit more from I/O parallelism. */
@@ -500,22 +500,23 @@ export class VendHqSalesBackupService {
       }
     }
 
-    // 5. Batch-replace child tables: delete stale rows then bulk-insert fresh ones.
+    // 5. Batch-replace child tables inside a transaction so that a failed
+    //    createMany never leaves stale-free rows (atomicity guarantee).
     //    Two round-trips for the whole page replaces the old N×M per-record pattern.
-    await this.prisma.backupVendHqLineItem.deleteMany({
-      where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
-    });
-    if (allLineItems.length > 0) {
-      await this.prisma.backupVendHqLineItem.createMany({
-        data: allLineItems,
-      });
-    }
-    await this.prisma.backupVendHqPayment.deleteMany({
-      where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
-    });
-    if (allPayments.length > 0) {
-      await this.prisma.backupVendHqPayment.createMany({ data: allPayments });
-    }
+    await this.prisma.$transaction([
+      this.prisma.backupVendHqLineItem.deleteMany({
+        where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
+      }),
+      ...(allLineItems.length > 0
+        ? [this.prisma.backupVendHqLineItem.createMany({ data: allLineItems })]
+        : []),
+      this.prisma.backupVendHqPayment.deleteMany({
+        where: { invoiceNumber: { in: processedInvoiceNumbers }, region },
+      }),
+      ...(allPayments.length > 0
+        ? [this.prisma.backupVendHqPayment.createMany({ data: allPayments })]
+        : []),
+    ]);
 
     // 6. Upsert SaleSyncStatus rows concurrently (chunked)
     for (let i = 0; i < salesToProcess.length; i += SYNC_CONCURRENCY) {

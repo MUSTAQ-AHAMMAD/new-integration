@@ -54,6 +54,9 @@ function makePrisma() {
     saleSyncStatus: {
       upsert: jest.fn().mockResolvedValue({}),
     },
+    $transaction: jest
+      .fn()
+      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops)),
   };
 }
 

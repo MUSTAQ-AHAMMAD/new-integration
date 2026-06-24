@@ -489,26 +489,28 @@ export class IbqBackupService {
       ? order.lines
       : [];
 
-    await this.prisma.backupIbqOrderLine.deleteMany({
-      where: { orderId: order.id, region },
-    });
-    if (lines.length > 0) {
-      await this.prisma.backupIbqOrderLine.createMany({
-        data: lines.map((line) => ({
-          orderId: order.id,
-          lineId: typeof line.id === 'number' ? line.id : null,
-          productId: resolveId(line.product_id),
-          productName: resolveName(line.product_id),
-          qty: line.qty ?? null,
-          priceUnit: line.price_unit ?? null,
-          priceSubtotal: line.price_subtotal ?? null,
-          priceSubtotalIncl: line.price_subtotal_incl ?? null,
-          discount: line.discount ?? null,
-          region,
-          parentOrderId: parentId,
-        })),
-      });
-    }
+    const lineData = lines.map((line) => ({
+      orderId: order.id,
+      lineId: typeof line.id === 'number' ? line.id : null,
+      productId: resolveId(line.product_id),
+      productName: resolveName(line.product_id),
+      qty: line.qty ?? null,
+      priceUnit: line.price_unit ?? null,
+      priceSubtotal: line.price_subtotal ?? null,
+      priceSubtotalIncl: line.price_subtotal_incl ?? null,
+      discount: line.discount ?? null,
+      region,
+      parentOrderId: parentId,
+    }));
+
+    await this.prisma.$transaction([
+      this.prisma.backupIbqOrderLine.deleteMany({
+        where: { orderId: order.id, region },
+      }),
+      ...(lineData.length > 0
+        ? [this.prisma.backupIbqOrderLine.createMany({ data: lineData })]
+        : []),
+    ]);
 
     // ── Payments: Odoo v15 uses statement_ids, v18 may use payment_ids ────────
     const rawPayments: IbqOrderPaymentRaw[] = Array.isArray(order.statement_ids)
@@ -517,21 +519,27 @@ export class IbqBackupService {
         ? order.payment_ids
         : [];
 
-    await this.prisma.backupIbqOrderPayment.deleteMany({
-      where: { orderId: order.id, region },
-    });
-    if (rawPayments.length > 0) {
-      await this.prisma.backupIbqOrderPayment.createMany({
-        data: rawPayments.map((pmt) => ({
-          orderId: order.id,
-          paymentId: typeof pmt.id === 'number' ? pmt.id : null,
-          paymentName: pmt.name ?? null,
-          amount: pmt.amount ?? null,
-          region,
-          parentOrderId: parentId,
-        })),
-      });
-    }
+    const paymentData = rawPayments.map((pmt) => ({
+      orderId: order.id,
+      paymentId: typeof pmt.id === 'number' ? pmt.id : null,
+      paymentName: pmt.name ?? null,
+      amount: pmt.amount ?? null,
+      region,
+      parentOrderId: parentId,
+    }));
+
+    await this.prisma.$transaction([
+      this.prisma.backupIbqOrderPayment.deleteMany({
+        where: { orderId: order.id, region },
+      }),
+      ...(paymentData.length > 0
+        ? [
+            this.prisma.backupIbqOrderPayment.createMany({
+              data: paymentData,
+            }),
+          ]
+        : []),
+    ]);
 
     return !existing;
   }
