@@ -88,9 +88,10 @@ const VENDHQ_PAGE_SIZE = 200;
  * concurrent upsert can acquire a connection without contention. */
 const UPSERT_CONCURRENCY = 10;
 /** Concurrency limit for parallel SaleSyncStatus upserts within one page.
- * Higher than UPSERT_CONCURRENCY because SaleSyncStatus upserts are lighter
- * (single-row, no child relations) and benefit more from I/O parallelism. */
-const SYNC_CONCURRENCY = 50;
+ * These are lightweight single-row upserts with no child relations, so a
+ * higher concurrency than UPSERT_CONCURRENCY is acceptable.  Capped at 10
+ * to stay within the default PrismaClient connection pool size. */
+const SYNC_CONCURRENCY = 10;
 
 @Injectable()
 export class VendHqSalesBackupService {
@@ -501,7 +502,7 @@ export class VendHqSalesBackupService {
     }
 
     // 5. Batch-replace child tables inside a transaction so that a failed
-    //    createMany never leaves stale-free rows (atomicity guarantee).
+    //    createMany never leaves stale-freed rows (atomicity guarantee).
     //    Two round-trips for the whole page replaces the old N×M per-record pattern.
     await this.prisma.$transaction([
       this.prisma.backupVendHqLineItem.deleteMany({

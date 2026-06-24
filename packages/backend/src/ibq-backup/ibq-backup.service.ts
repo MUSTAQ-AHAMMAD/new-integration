@@ -250,8 +250,9 @@ export class IbqBackupService {
 
     // Use a fixed limit override when provided; otherwise paginate with IBQ_PAGE_SIZE.
     // When overrides.limit is set (manual endpoint call), pagination is disabled and
-    // the request always starts at offset=0 — callers wanting to page through results
-    // should omit overrides.limit and rely on the automatic pagination loop instead.
+    // no offset parameter is sent — the API defaults to offset=0, so the call always
+    // fetches the first N records.  Callers wanting to page through results should
+    // omit overrides.limit and rely on the automatic pagination loop instead.
     const pageSize = overrides?.limit ?? IBQ_PAGE_SIZE;
     const shouldPaginate = !overrides?.limit;
     let offset = 0;
