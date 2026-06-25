@@ -5,10 +5,11 @@
  * All SOAP operations send raw XML envelopes over HTTP Basic Auth, mirroring the
  * Java JAX-WS stubs that were generated from the Oracle Fusion WSDLs.
  */
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
+import { FusionCredentialResolver } from './fusion-credential.resolver';
 
 // ──────────────────────────────────────────────────────────────
 // Domain models (mirrors Java fusion/soap/model/*.java)
@@ -387,16 +388,21 @@ function extractTag(xml: string, tag: string): string {
 // ──────────────────────────────────────────────────────────────
 
 @Injectable()
-export class OracleSoapClient {
+export class OracleSoapClient implements OnModuleInit {
   private readonly logger = new Logger(OracleSoapClient.name);
-  private readonly http: AxiosInstance;
+  private http: AxiosInstance;
   private readonly circuitBreaker: CircuitBreakerService;
 
   constructor(
     private readonly configService: ConfigService,
     @Optional() circuitBreaker?: CircuitBreakerService,
+    @Optional() private readonly credentialResolver?: FusionCredentialResolver,
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
+    // Initialise with environment-variable credentials synchronously so that
+    // the client is usable immediately (e.g. in tests that never call
+    // onModuleInit).  If a FusionCredentialResolver is present, onModuleInit
+    // will attempt to override these with DB-sourced credentials.
     const baseURL = this.configService.get<string>('ORACLE_SOAP_BASE_URL');
     const username = this.configService.get<string>('ORACLE_USERNAME', '');
     const password = this.configService.get<string>('ORACLE_PASSWORD', '');
@@ -410,6 +416,39 @@ export class OracleSoapClient {
         Authorization: `Basic ${basicAuth}`,
       },
     });
+  }
+
+  /**
+   * Called by NestJS after all dependencies are resolved.
+   * When a {@link FusionCredentialResolver} is injected, this method
+   * attempts to re-initialise the HTTP client using credentials stored
+   * in the `FusionCredential` database table, overriding the env-var
+   * defaults set in the constructor.
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.credentialResolver) return;
+    try {
+      const settings =
+        await this.credentialResolver.resolveOracleConnectionSettings();
+      if (!settings || settings.source === 'environment') return;
+
+      this.http = axios.create({
+        baseURL: settings.soapBaseUrl,
+        timeout: 60_000,
+        headers: {
+          'Content-Type': 'text/xml;charset=UTF-8',
+          Authorization: settings.authorizationHeader,
+        },
+      });
+      this.logger.log(
+        `Oracle SOAP client re-initialised with database credentials (${settings.soapBaseUrl})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `onModuleInit: failed to load DB credentials for Oracle SOAP client — ` +
+          `continuing with env-var credentials: ${(err as Error).message}`,
+      );
+    }
   }
 
   // ── Invoice Service ────────────────────────────────────────

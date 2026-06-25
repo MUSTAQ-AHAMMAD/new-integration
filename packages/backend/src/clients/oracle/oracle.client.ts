@@ -1,12 +1,14 @@
 import {
   Injectable,
   Logger,
+  OnModuleInit,
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
+import { FusionCredentialResolver } from './fusion-credential.resolver';
 
 export interface OracleInvoiceData {
   customerTransactionId?: string;
@@ -65,16 +67,18 @@ export interface OracleOnHandQuantity {
 }
 
 @Injectable()
-export class OracleClient {
+export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
-  private readonly http: AxiosInstance;
+  private http: AxiosInstance;
   private readonly circuitBreaker: CircuitBreakerService;
 
   constructor(
     private readonly configService: ConfigService,
     @Optional() circuitBreaker?: CircuitBreakerService,
+    @Optional() private readonly credentialResolver?: FusionCredentialResolver,
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
+    // Synchronous env-var initialisation — same pattern as OracleSoapClient.
     this.http = axios.create({
       baseURL: this.configService.get<string>('ORACLE_REST_BASE_URL'),
       timeout: 30_000,
@@ -83,6 +87,37 @@ export class OracleClient {
         password: this.configService.get<string>('ORACLE_PASSWORD', ''),
       },
     });
+  }
+
+  /**
+   * When a {@link FusionCredentialResolver} is injected, re-initialises
+   * the HTTP client with connection settings from the `FusionCredential`
+   * database table (hostname + server → URL, username/password → auth).
+   */
+  async onModuleInit(): Promise<void> {
+    if (!this.credentialResolver) return;
+    try {
+      const settings =
+        await this.credentialResolver.resolveOracleConnectionSettings();
+      if (!settings || settings.source === 'environment') return;
+
+      this.http = axios.create({
+        baseURL: settings.restBaseUrl,
+        timeout: 30_000,
+        auth: {
+          username: settings.username,
+          password: settings.password,
+        },
+      });
+      this.logger.log(
+        `Oracle REST client re-initialised with database credentials (${settings.restBaseUrl})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `onModuleInit: failed to load DB credentials for Oracle REST client — ` +
+          `continuing with env-var credentials: ${(err as Error).message}`,
+      );
+    }
   }
 
   async createInvoice(data: OracleInvoiceData): Promise<OracleInvoiceResult> {
