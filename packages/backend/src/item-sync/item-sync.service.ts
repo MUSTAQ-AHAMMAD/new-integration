@@ -62,6 +62,7 @@ export class ItemSyncService {
 
       if (credentials.length === 0) {
         this.logger.warn('No active VendHQ credentials — item sync skipped');
+        await this.syncControl.markStopped('item-sync', 'success');
         return;
       }
 
