@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { JobStatus, Prisma, ScopeType, SyncStatus } from '@prisma/client';
@@ -11,6 +12,8 @@ import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 
 @Injectable()
 export class SyncService {
+  private readonly logger = new Logger(SyncService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly queues: QueuesService,
