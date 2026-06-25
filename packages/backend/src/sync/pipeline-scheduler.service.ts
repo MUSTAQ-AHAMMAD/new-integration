@@ -86,7 +86,6 @@ export class PipelineSchedulerService {
 
       if (pendingCount === 0) {
         this.logger.debug('No pending orders to process');
-        await this.syncControl.markStopped('pipeline-scheduler', 'success');
         return;
       }
 
@@ -95,7 +94,6 @@ export class PipelineSchedulerService {
         this.logger.debug(
           `Pending orders (${pendingCount}) below minimum batch size (${this.minBatchSize})`,
         );
-        await this.syncControl.markStopped('pipeline-scheduler', 'success');
         return;
       }
 
@@ -113,9 +111,11 @@ export class PipelineSchedulerService {
       this.logger.log(
         `✅ Automatic sync job created: ${job.id} (${job.totalRecords} orders)`,
       );
+      await this.syncControl.markStopped('pipeline-scheduler', 'success');
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`❌ Automatic pipeline failed: ${msg}`);
+      await this.syncControl.markStopped('pipeline-scheduler', 'error');
     } finally {
       this.isRunning = false;
     }

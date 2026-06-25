@@ -18,7 +18,7 @@
  *  5. Updates lastSyncVersion and lastSyncAt on the credential so the
  *     next run only fetches newer records (no duplicates).
  */
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SaleStatus } from '@prisma/client';
 import axios from 'axios';
@@ -100,7 +100,6 @@ export class VendHqSalesBackupService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(forwardRef(() => SyncControlService))
     private readonly syncControl: SyncControlService,
   ) {}
 

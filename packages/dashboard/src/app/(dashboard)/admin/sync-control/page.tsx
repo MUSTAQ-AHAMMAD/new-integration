@@ -235,10 +235,7 @@ export default function SyncControlPage() {
                         size="sm"
                         variant={control.enabled ? 'destructive' : 'default'}
                         onClick={() => handleToggle(control.serviceName)}
-                        disabled={
-                          toggleInProgress === control.serviceName ||
-                          control.isRunning
-                        }
+                        disabled={toggleInProgress === control.serviceName}
                       >
                         {control.enabled ? (
                           <>
