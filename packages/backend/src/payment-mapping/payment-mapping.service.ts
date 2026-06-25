@@ -36,7 +36,7 @@ export class PaymentMappingService {
         create: {
           sourceSystem,
           sourcePaymentName,
-          oracleReceiptMethodId: 0,
+          oracleReceiptMethodId: 0n,
           oracleReceiptMethodName: 'PENDING_MAPPING',
           isActive: false,
           requiresApproval: true,
@@ -93,7 +93,12 @@ export class PaymentMappingService {
     oracleBankAccountId?: number;
   }) {
     return this.prisma.paymentMethodMapping.create({
-      data: { ...data, isActive: true },
+      data: {
+        ...data,
+        isActive: true,
+        oracleReceiptMethodId: BigInt(data.oracleReceiptMethodId),
+        oracleBankAccountId: data.oracleBankAccountId != null ? BigInt(data.oracleBankAccountId) : null,
+      },
     });
   }
 }

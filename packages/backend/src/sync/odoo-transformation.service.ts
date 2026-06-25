@@ -218,7 +218,7 @@ export class OdooTransformationService {
             receiptNumber: `${pmtMethod}-${txnNumber}`,
             remittanceBankAccountId: numericAccountId,
             accountValue: invoiceHeader.billToAccountNumber,
-            orgId: buMap?.businessUnitId ?? 0,
+            orgId: Number(buMap?.businessUnitId ?? 0n),
             receiptAmount: pmtAmount,
           });
         }
@@ -241,7 +241,7 @@ export class OdooTransformationService {
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.bankAccountName,
           receivableActivityName: 'Bank Charges',
-          orgId: buMap?.businessUnitId ?? 0,
+          orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: -miscAmount,
         });
       } else if (lowerMethod === 'cash rounding') {
@@ -253,7 +253,7 @@ export class OdooTransformationService {
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.cashAccountName,
           receivableActivityName: 'Cash Rounding',
-          orgId: buMap?.businessUnitId ?? 0,
+          orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: -pmtAmount,
         });
       }
@@ -275,11 +275,11 @@ export class OdooTransformationService {
     if (journalMeta && invoiceHeader.invoiceLines.length > 0) {
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
         (il) => ({
-          ledgerId: journalMeta.ledgerId,
+          ledgerId: Number(journalMeta.ledgerId),
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Odoo',
           jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
-          chartOfAccountsId: journalMeta.chartOfAccountsId,
+          chartOfAccountsId: Number(journalMeta.chartOfAccountsId),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,
@@ -298,7 +298,7 @@ export class OdooTransformationService {
       journalHeaders.push({
         batchName: `${saleDate.toISOString().split('T')[0]}: ${branchCode}`,
         batchDescription: `Odoo Journal Import: ${txnNumber}`,
-        ledgerId: journalMeta.ledgerId,
+        ledgerId: Number(journalMeta.ledgerId),
         accountingPeriodName: this.getPeriodName(saleDate),
         accountingDate: saleDate,
         userSourceName: journalMeta.jeSource ?? 'Odoo',
