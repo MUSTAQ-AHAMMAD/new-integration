@@ -1,0 +1,3 @@
+# Ignore CSV data files — they are seed inputs, not source code.
+# The README.md explaining the format is intentionally tracked.
+*.csv
