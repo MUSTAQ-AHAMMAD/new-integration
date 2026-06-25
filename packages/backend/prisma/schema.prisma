@@ -1552,7 +1552,9 @@ model BackupOdooOrderLine {
   lineId            Int?
   productId         Int?
   productName       String?
-  /// Product internal reference / SKU (default_code or product_code) — maps to ITEM_NUMBER in old integration
+  /// Line reference / description (e.g. order name on the line, "CCNTRBHR/280633")
+  lineName          String?
+  /// Product internal reference / SKU (default_code or product_code or product_barcode) — maps to ITEM_NUMBER in old integration
   productCode       String?
   qty               Float?
   priceUnit         Float?

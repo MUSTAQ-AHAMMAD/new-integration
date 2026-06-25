@@ -14,7 +14,12 @@ import { findArrayInPayload, toApiDatetime } from '../../common/odoo-utils';
 
 export interface OdooOrderLine {
   id?: number;
+  /** Line reference / description */
+  name?: string;
   product_id?: number | [number, string];
+  product_tmpl_id?: number | [number, string];
+  /** Barcode / SKU string (e.g. "10705112") */
+  product_barcode?: string;
   /** POS orders use "qty", sale orders use "product_uom_qty" */
   qty?: number;
   product_uom_qty?: number;
@@ -22,6 +27,15 @@ export interface OdooOrderLine {
   price_subtotal?: number;
   price_subtotal_incl?: number;
   discount?: number;
+  /** Tax IDs — plural form used by many Odoo variants (may be integer IDs or tuples) */
+  tax_ids?: unknown[];
+  /** Tax IDs — singular form used by some Odoo variants */
+  tax_id?: unknown;
+  /** Unit of measure */
+  product_uom_id?: number | [number, string];
+  base_uom_id?: number | [number, string];
+  is_reward_line?: boolean;
+  reward_id?: number | false;
   [key: string]: unknown;
 }
 
@@ -57,9 +71,10 @@ export interface OdooOrder {
   lines?: OdooOrderLine[];
   /** Sale orders expose lines here */
   order_line?: OdooOrderLine[];
-  /** Odoo v15 uses statement_ids, v18 may use payment_ids */
+  /** Odoo v15 uses statement_ids, v18 may use payment_ids, some variants use payments */
   statement_ids?: OdooOrderPayment[];
   payment_ids?: OdooOrderPayment[];
+  payments?: OdooOrderPayment[];
   [key: string]: unknown;
 }
 
@@ -149,9 +164,14 @@ export class OdooClient {
         const pageSize = 100;
         const allOrders: OdooOrder[] = [];
         let offset = 0;
+        // Total count advertised by the server (null when not available).
+        let totalExpected: number | null = null;
+        // Track IDs of the previous page to detect non-functioning offset pagination.
+        const prevPageIds = new Set<number>();
 
         while (true) {
           let pageOrders: OdooOrder[];
+          let rawData: unknown;
 
           if (this.apiKey) {
             // POS REST API — uses query parameters directly
@@ -171,7 +191,7 @@ export class OdooClient {
                 offset,
               },
             });
-            pageOrders = this.extractList<OdooOrder>(response.data);
+            rawData = response.data;
           } else {
             // Session-based fallback: use domain filter on sale.order
             const domain = this.buildOrdersDomain(params);
@@ -183,19 +203,81 @@ export class OdooClient {
                 offset,
               },
             });
-            pageOrders = this.extractList<OdooOrder>(response.data);
+            rawData = response.data;
+          }
+
+          // Capture total from first page only; server count doesn't change mid-run.
+          if (offset === 0) {
+            totalExpected = this.extractTotal(rawData);
+            if (totalExpected !== null) {
+              this.logger.debug(
+                `Odoo getOrders: server reports ${totalExpected} total records`,
+              );
+            }
+          }
+
+          pageOrders = this.extractList<OdooOrder>(rawData);
+
+          // ── Duplicate-page detection ─────────────────────────────────────
+          // If the server returns the same IDs we saw on the previous page,
+          // offset pagination is not functioning.  Stop immediately to prevent
+          // an infinite loop that would return the same first page forever.
+          if (prevPageIds.size > 0 && pageOrders.length > 0) {
+            const pageIds = pageOrders
+              .map((o) => (typeof o.id === 'number' ? o.id : null))
+              .filter((id): id is number => id !== null);
+            const dupes = pageIds.filter((id) => prevPageIds.has(id));
+            if (dupes.length === pageIds.length) {
+              this.logger.warn(
+                `Odoo getOrders: page at offset=${offset} is identical to the previous page — ` +
+                  `offset pagination is not supported by this endpoint; stopping.`,
+              );
+              break;
+            }
+            if (dupes.length > 0) {
+              this.logger.warn(
+                `Odoo getOrders: page at offset=${offset} contains ${dupes.length} duplicate IDs.`,
+              );
+            }
+            prevPageIds.clear();
+            pageIds.forEach((id) => prevPageIds.add(id));
+          } else {
+            const pageIds = pageOrders
+              .map((o) => (typeof o.id === 'number' ? o.id : null))
+              .filter((id): id is number => id !== null);
+            pageIds.forEach((id) => prevPageIds.add(id));
           }
 
           allOrders.push(...pageOrders);
 
-          // Fewer than a full page → last page reached
-          if (pageOrders.length < pageSize) break;
+          this.logger.debug(
+            `Odoo getOrders: offset=${offset}, page=${pageOrders.length}, cumulative=${allOrders.length}` +
+              (totalExpected !== null ? `, total=${totalExpected}` : ''),
+          );
 
-          // Stop if the caller specified a hard limit
+          // ── Exit conditions ───────────────────────────────────────────────
+          // 1. Count-verified: stop when we have at least as many records as the
+          //    server advertised (handles short pages caused by deleted records).
+          if (totalExpected !== null && allOrders.length >= totalExpected) break;
+
+          // 2. Short page: last page has fewer records than the page size.
+          //    Used when the server does not report a total count.
+          if (totalExpected === null && pageOrders.length < pageSize) break;
+
+          // 3. Caller-specified hard cap.
           if (params.limit !== undefined && allOrders.length >= params.limit)
             break;
 
           offset += pageSize;
+        }
+
+        if (
+          totalExpected !== null &&
+          allOrders.length < totalExpected
+        ) {
+          this.logger.warn(
+            `Odoo getOrders: fetched ${allOrders.length} of ${totalExpected} expected records — some may be missing.`,
+          );
         }
 
         return allOrders;
@@ -293,9 +375,46 @@ export class OdooClient {
       if (!this.apiKey) {
         this.sessionCookie = undefined;
       }
-      await this.delay(200 * 2 ** (attempt - 1));
+      // Exponential backoff with jitter to avoid thundering herd when multiple
+      // cron runs retry simultaneously against the same Odoo instance.
+      await this.delay(
+        200 * 2 ** (attempt - 1) + Math.floor(Math.random() * 100),
+      );
       return this.withRetries(operation, attempt + 1);
     }
+  }
+
+  /**
+   * Extracts the total record count advertised by the Odoo API response
+   * envelope.  Returns `null` when the response does not include a count field
+   * (e.g. plain array responses).
+   *
+   * Supported patterns:
+   *   - `{ length: N, records: [...] }`           — Odoo 17/18 REST
+   *   - `{ total: N, ... }`                        — some custom modules
+   *   - `{ count: N, ... }`                        — some IBQ variants
+   *   - `{ result: { length: N, records: [...] } }` — nested result
+   */
+  private extractTotal(payload: unknown): number | null {
+    if (typeof payload !== 'object' || payload === null) return null;
+    const p = payload as Record<string, unknown>;
+
+    if (typeof p['length'] === 'number') return p['length'];
+    if (typeof p['total'] === 'number') return p['total'];
+    if (typeof p['count'] === 'number') return p['count'];
+
+    if (
+      typeof p['result'] === 'object' &&
+      p['result'] !== null &&
+      !Array.isArray(p['result'])
+    ) {
+      const r = p['result'] as Record<string, unknown>;
+      if (typeof r['length'] === 'number') return r['length'];
+      if (typeof r['total'] === 'number') return r['total'];
+      if (typeof r['count'] === 'number') return r['count'];
+    }
+
+    return null;
   }
 
   private extractList<T>(payload: unknown): T[] {

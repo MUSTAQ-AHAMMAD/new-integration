@@ -85,12 +85,13 @@ function resolveQty(line: OdooOrderLine): number | null {
 }
 
 /**
- * Extract the first tax name from an Odoo Many2many tax_id field.
+ * Extract the first tax name from an Odoo Many2many tax field.
  *
- * Handles three common formats:
+ * Handles four common formats:
  *   - `[[id, "VAT 5%"], ...]`  — tuple array (most common in POS)
  *   - `["VAT 5%", ...]`        — plain string array
  *   - `"VAT 5%"`               — plain string (non-standard)
+ *   - `[61, ...]`              — integer ID-only array (no name available → null)
  */
 function extractFirstTaxName(taxId: unknown): string | null {
   if (typeof taxId === 'string') return taxId || null;
@@ -106,6 +107,8 @@ function extractFirstTaxName(taxId: unknown): string | null {
     return first[1] || null;
   }
   if (typeof first === 'string') return first || null;
+  // Plain integer ID-only array — name is not embedded; return null gracefully.
+  if (typeof first === 'number') return null;
 
   return null;
 }
@@ -687,28 +690,90 @@ export class OdooBackupService {
     // Strategy: pre-fetch the next page while upserting the current page so
     // that network I/O and DB writes overlap.
     //
-    // Two explicit offset variables are maintained to avoid any ambiguity:
-    //   currentOffset — starting offset of the page currently being processed.
-    //   nextOffset    — starting offset of the next page to be fetched.
+    // Exit conditions (evaluated in order after each page):
+    //   1. Count-verified: fetched >= totalExpected (uses server-reported total
+    //      when available — handles short pages from deleted records correctly).
+    //   2. Short page: page.length < effectivePageSize (fallback when the server
+    //      does not report a total count).
+    //   3. Duplicate-page guard: the server returned the same IDs as the previous
+    //      page, meaning offset pagination is non-functional — stop immediately
+    //      to prevent an infinite loop instead of silently re-ingesting records.
     //
     // allOrders is accumulated and returned so runCredentialBackupJob can pass
     // each page through the ingestion pipeline without a second DB round-trip.
     // Incremental 15-minute cron runs fetch only new records, so the in-memory
     // set remains small in normal operation.  Very large initial back-fills
     // should be run in date-range slices via the manual fetch-odoo endpoint.
+
+    // Extract total count from the first response (null when not advertised).
+    const totalExpected = this.extractTotalFromResponse(firstResp.data);
+    const totalPages =
+      totalExpected !== null
+        ? Math.ceil(totalExpected / effectivePageSize)
+        : null;
+
+    if (totalExpected !== null) {
+      this.logger.log(
+        `OdooCredential region=${cred.region}: server reports ${totalExpected} total records` +
+          ` (${totalPages} page${totalPages === 1 ? '' : 's'} of ${effectivePageSize}).`,
+      );
+    }
+
     const allOrders: OdooOrder[] = [];
+    const prevPageIds = new Set<number>();
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
     let currentOffset = 0;
     let nextOffset = effectivePageSize;
+    let pageNumber = 1;
     let saved = 0;
     let skipped = 0;
 
     while (true) {
+      // ── Duplicate-page detection ──────────────────────────────────────────
+      // If the server returns the same set of IDs as the previous page, offset
+      // pagination is not working.  Break immediately to prevent an infinite
+      // loop that would silently re-ingest the same records on every iteration.
+      if (prevPageIds.size > 0 && currentPageOrders.length > 0) {
+        const currentIds = currentPageOrders
+          .map((o) => (typeof o.id === 'number' ? o.id : null))
+          .filter((id): id is number => id !== null);
+        const dupeCount = currentIds.filter((id) => prevPageIds.has(id)).length;
+
+        if (dupeCount === currentIds.length) {
+          this.logger.warn(
+            `OdooCredential region=${cred.region}: page at offset=${currentOffset} is ` +
+              `identical to the previous page — offset pagination is not supported by ` +
+              `this endpoint; stopping to prevent an infinite loop.`,
+          );
+          break;
+        }
+        if (dupeCount > 0) {
+          this.logger.warn(
+            `OdooCredential region=${cred.region}: page at offset=${currentOffset} ` +
+              `contains ${dupeCount} duplicate IDs from the previous page.`,
+          );
+        }
+        prevPageIds.clear();
+        currentIds.forEach((id) => prevPageIds.add(id));
+      } else {
+        const currentIds = currentPageOrders
+          .map((o) => (typeof o.id === 'number' ? o.id : null))
+          .filter((id): id is number => id !== null);
+        currentIds.forEach((id) => prevPageIds.add(id));
+      }
+
+      // ── Determine whether a next page should be pre-fetched ───────────────
+      const fetchedAfterThisPage = allOrders.length + currentPageOrders.length;
+      const expectMoreByCount =
+        totalExpected !== null
+          ? fetchedAfterThisPage < totalExpected
+          : currentPageOrders.length >= effectivePageSize;
+
       // Start fetching the next page in the background before we begin
       // upserting the current page — this hides network latency behind DB work.
       const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
-        currentPageOrders.length === effectivePageSize
+        expectMoreByCount
           ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
@@ -731,13 +796,18 @@ export class OdooBackupService {
       }
       allOrders.push(...currentPageOrders);
 
-      // Last page reached — no more records to fetch.
-      if (currentPageOrders.length < effectivePageSize) break;
-
+      // ── Per-page structured log ───────────────────────────────────────────
       this.logger.debug(
-        `OdooCredential region=${cred.region}: processed page at offset=${currentOffset}, ` +
-          `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
+        `OdooCredential region=${cred.region}: page ${pageNumber}` +
+          (totalPages !== null ? `/${totalPages}` : '') +
+          ` offset=${currentOffset}, fetched=${currentPageOrders.length}` +
+          `, cumulative=${allOrders.length}` +
+          (totalExpected !== null ? `/${totalExpected}` : '') +
+          `, saved=${saved}, skipped=${skipped}`,
       );
+
+      // ── Exit conditions ───────────────────────────────────────────────────
+      if (!expectMoreByCount) break;
 
       let nextResp: AxiosResponse<unknown> | null;
       try {
@@ -760,9 +830,55 @@ export class OdooBackupService {
       currentPageOrders = this.extractOrderList(nextResp.data);
       currentOffset = nextOffset;
       nextOffset += effectivePageSize;
+      pageNumber++;
+    }
+
+    // ── Completeness validation ───────────────────────────────────────────────
+    if (totalExpected !== null && allOrders.length < totalExpected) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region}: fetched ${allOrders.length} of ` +
+          `${totalExpected} expected records — some records may have been missed.`,
+      );
+    } else if (totalExpected !== null) {
+      this.logger.log(
+        `OdooCredential region=${cred.region}: fetched all ${allOrders.length}/${totalExpected} records.`,
+      );
     }
 
     return { saved, skipped, orders: allOrders };
+  }
+
+  /**
+   * Extracts the total record count advertised by the Odoo API response
+   * envelope.  Returns `null` when the response does not include a count field
+   * (e.g. plain-array responses or custom modules that omit it).
+   *
+   * Supported patterns:
+   *   - `{ length: N, records: [...] }`             — Odoo 17/18 REST
+   *   - `{ total: N, ... }`                          — some custom modules
+   *   - `{ count: N, ... }`                          — some IBQ variants
+   *   - `{ result: { length: N, records: [...] } }`  — nested result envelope
+   */
+  private extractTotalFromResponse(payload: unknown): number | null {
+    if (typeof payload !== 'object' || payload === null) return null;
+    const p = payload as Record<string, unknown>;
+
+    if (typeof p['length'] === 'number') return p['length'];
+    if (typeof p['total'] === 'number') return p['total'];
+    if (typeof p['count'] === 'number') return p['count'];
+
+    if (
+      typeof p['result'] === 'object' &&
+      p['result'] !== null &&
+      !Array.isArray(p['result'])
+    ) {
+      const r = p['result'] as Record<string, unknown>;
+      if (typeof r['length'] === 'number') return r['length'];
+      if (typeof r['total'] === 'number') return r['total'];
+      if (typeof r['count'] === 'number') return r['count'];
+    }
+
+    return null;
   }
 
   /** Flatten various Odoo REST API response envelopes to a plain order array. */
@@ -860,16 +976,19 @@ export class OdooBackupService {
 
   /**
    * Resolves the raw payment array from an Odoo order, preferring
-   * `statement_ids` (Odoo v15) when non-empty and falling back to
-   * `payment_ids` (Odoo v18) otherwise. Returns an empty array when neither
-   * field contains data.
+   * `statement_ids` (Odoo v15) when non-empty, falling back to
+   * `payment_ids` (Odoo v18), and then to `payments` (some API variants).
+   * Returns an empty array when no field contains data.
    */
   private extractPaymentItems(order: OdooOrder): unknown[] {
     if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
       return order.statement_ids;
     }
-    if (Array.isArray(order.payment_ids)) {
+    if (Array.isArray(order.payment_ids) && order.payment_ids.length > 0) {
       return order.payment_ids;
+    }
+    if (Array.isArray(order.payments)) {
+      return order.payments;
     }
     return [];
   }
@@ -971,6 +1090,21 @@ export class OdooBackupService {
       (l): l is OdooOrderLine => typeof l === 'object' && l !== null,
     );
 
+    // Warn when the API returned line entries that are plain integers (ID-only
+    // arrays).  This means the Odoo endpoint is not embedding line data in the
+    // order response.  The line items cannot be stored without the full objects.
+    // To resolve this, ensure the Odoo API is configured to return embedded
+    // line records (e.g. via a `fields` expansion parameter) or verify that the
+    // correct endpoint is used for this region.
+    if (lines.length === 0 && rawLineItems.length > 0) {
+      this.logger.warn(
+        `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
+          `API returned ${rawLineItems.length} line item IDs but no embedded objects — ` +
+          `order lines will not be stored. ` +
+          `Check that the Odoo endpoint returns expanded line data.`,
+      );
+    }
+
     if (lines.length > 0) {
       // Batch-replace: delete stale line rows then bulk-insert fresh ones.
       // This replaces the old N+1 (findMany + sequential create/update per line)
@@ -981,13 +1115,20 @@ export class OdooBackupService {
         const lineId = typeof line.id === 'number' ? line.id : null;
 
         const productCode =
-          typeof line['product_code'] === 'string'
-            ? line['product_code']
+          typeof line.product_code === 'string'
+            ? line.product_code
             : typeof line['default_code'] === 'string'
               ? line['default_code']
-              : null;
+              : typeof line.product_barcode === 'string'
+                ? line.product_barcode
+                : null;
 
-        const taxName = extractFirstTaxName(line['tax_id']);
+        // Prefer tax_ids (plural) which is what most Odoo variants return;
+        // fall back to tax_id (singular) for older/non-standard variants.
+        const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
+
+        const lineName =
+          typeof line.name === 'string' ? line.name : null;
 
         return {
           orderId: order.id,
@@ -995,6 +1136,7 @@ export class OdooBackupService {
           productId,
           productName,
           productCode,
+          lineName,
           qty: resolveQty(line),
           priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
           priceSubtotal:
@@ -1025,6 +1167,18 @@ export class OdooBackupService {
     const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(
       order,
     ).filter((p): p is OdooOrderPayment => typeof p === 'object' && p !== null);
+
+    // Warn when the API returned payment entries that are plain integers (ID-only
+    // arrays).  This means the Odoo endpoint is not embedding payment data in the
+    // order response.
+    if (rawPayments.length === 0 && rawPaymentItems.length > 0) {
+      this.logger.warn(
+        `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
+          `API returned ${rawPaymentItems.length} payment IDs but no embedded objects — ` +
+          `payments will not be stored. ` +
+          `Check that the Odoo endpoint returns expanded payment data.`,
+      );
+    }
 
     if (rawPayments.length > 0) {
       // Batch-replace: delete stale payment rows then bulk-insert fresh ones.
