@@ -41,6 +41,7 @@ import {
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 const DEFAULT_SOURCE = 'default';
 /** Default REST endpoint used to fetch POS orders from Odoo. */
@@ -151,6 +152,8 @@ export class OdooBackupService {
     private readonly odooClient: OdooClient,
     @Inject(forwardRef(() => OrderSyncService))
     private readonly orderSyncService: OrderSyncService,
+    @Inject(forwardRef(() => SyncControlService))
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /**
@@ -159,6 +162,14 @@ export class OdooBackupService {
    */
   @Cron('0 */15 * * * *')
   async runBackupJob(): Promise<void> {
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('odoo-backup');
+    if (!enabled) {
+      this.logger.debug('Odoo backup service is disabled, skipping cron run');
+      return;
+    }
+
+    await this.syncControl.markRunning('odoo-backup');
     try {
       const state = await this.prisma.odooBackupState.findUnique({
         where: { source: DEFAULT_SOURCE },
@@ -245,9 +256,12 @@ export class OdooBackupService {
           `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
           `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
       );
+      
+      await this.syncControl.markStopped('odoo-backup', 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Odoo backup cron failed: ${msg}`);
+      await this.syncControl.markStopped('odoo-backup', 'error');
     }
   }
 

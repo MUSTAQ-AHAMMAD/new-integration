@@ -60,6 +60,24 @@ enum JobStatus {
   CANCELLED
 }
 
+model SyncControl {
+  id          String   @id @default(cuid())
+  serviceName String   @unique
+  displayName String
+  description String?
+  enabled     Boolean  @default(true)
+  isRunning   Boolean  @default(false)
+  lastRunAt   DateTime?
+  lastStatus  String?
+  runCount    Int      @default(0)
+  errorCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([serviceName])
+}
+
 model OrderSyncQueue {
   id                     String     @id @default(cuid())
   odooOrderId            String
