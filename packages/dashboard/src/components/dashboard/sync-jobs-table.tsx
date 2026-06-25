@@ -1,16 +1,28 @@
 'use client';
 
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
-import { ArrowRight, RefreshCw } from 'lucide-react';
+import { ArrowRight, RefreshCw, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 
 export function SyncJobsTable() {
+  const qc = useQueryClient();
   const { data: jobs } = useQuery({
     queryKey: ['sync-jobs-table'],
     queryFn: () => api.listSyncJobs(),
     refetchInterval: 30000,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => api.cancelSyncJob(id),
+    onSuccess: () => {
+      toast.success('Job cancelled');
+      qc.invalidateQueries({ queryKey: ['sync-jobs-table'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   return (
@@ -41,6 +53,7 @@ export function SyncJobsTable() {
               <th className="px-4 pb-3 pt-3 text-left text-xs font-bold uppercase tracking-wider text-slate-400">Status</th>
               <th className="px-4 pb-3 pt-3 text-left text-xs font-bold uppercase tracking-wider text-slate-400">Progress</th>
               <th className="px-6 pb-3 pt-3 text-left text-xs font-bold uppercase tracking-wider text-slate-400">Created</th>
+              <th className="px-4 pb-3 pt-3 text-left text-xs font-bold uppercase tracking-wider text-slate-400">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
@@ -73,12 +86,26 @@ export function SyncJobsTable() {
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-6 py-3.5 text-xs text-slate-400">{formatDate(job.createdAt)}</td>
+                  <td className="px-4 py-3.5">
+                    {['PENDING', 'PROCESSING'].includes(job.status) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => cancelMutation.mutate(job.id)}
+                        disabled={cancelMutation.isPending}
+                        className="h-7 px-2 text-red-600 hover:bg-red-50 hover:text-red-700"
+                        title="Cancel job"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {(!jobs || jobs.length === 0) && (
               <tr>
-                <td colSpan={4} className="py-12 text-center">
+                <td colSpan={5} className="py-12 text-center">
                   <RefreshCw className="mx-auto mb-2 h-8 w-8 text-slate-200" />
                   <p className="text-sm font-medium text-slate-400">No sync jobs yet</p>
                 </td>
