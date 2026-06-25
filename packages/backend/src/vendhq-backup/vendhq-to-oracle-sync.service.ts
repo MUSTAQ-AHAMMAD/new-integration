@@ -115,7 +115,10 @@ export class VendHqToOracleSyncService {
         requestDate: new Date(),
         billToCustName: invoiceHeader.billToCustomerName,
         billToLocation: invoiceHeader.billToLocation,
-        billToAccNumber: Number(invoiceHeader.billToAccountNumber) || null,
+        billToAccNumber:
+          invoiceHeader.billToAccountNumber != null
+            ? Number(invoiceHeader.billToAccountNumber)
+            : null,
         businessUnit: invoiceHeader.businessUnit,
         txnSource: invoiceHeader.transactionSource,
         txnType: invoiceHeader.transactionType,
