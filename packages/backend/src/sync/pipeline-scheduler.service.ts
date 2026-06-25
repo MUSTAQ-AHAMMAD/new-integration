@@ -18,16 +18,34 @@ import { SyncService } from './sync.service';
  * 
  * This creates an automatic pipeline: Odoo → Backup → Queue → Oracle
  * instead of requiring manual sync job creation.
+ * 
+ * Configuration via environment variables:
+ * - PIPELINE_ENABLED: Set to "false" to disable (default: "true")
+ * - PIPELINE_MIN_BATCH_SIZE: Minimum orders before creating job (default: 1)
  */
 @Injectable()
 export class PipelineSchedulerService {
   private readonly logger = new Logger(PipelineSchedulerService.name);
   private isRunning = false;
+  private readonly enabled: boolean;
+  private readonly minBatchSize: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly syncService: SyncService,
-  ) {}
+  ) {
+    // Configuration from environment variables
+    this.enabled = process.env.PIPELINE_ENABLED !== 'false';
+    this.minBatchSize = parseInt(process.env.PIPELINE_MIN_BATCH_SIZE || '1', 10);
+
+    if (!this.enabled) {
+      this.logger.warn('🚫 Automatic pipeline is DISABLED (PIPELINE_ENABLED=false)');
+    } else {
+      this.logger.log(
+        `✅ Automatic pipeline is ENABLED (min batch size: ${this.minBatchSize})`,
+      );
+    }
+  }
 
   /**
    * Automatic pipeline cron job - runs every 5 minutes
@@ -35,6 +53,10 @@ export class PipelineSchedulerService {
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async runAutomaticPipeline(): Promise<void> {
+    if (!this.enabled) {
+      return; // Pipeline disabled
+    }
+
     if (this.isRunning) {
       this.logger.debug('Pipeline already running, skipping this cycle');
       return;
@@ -53,6 +75,14 @@ export class PipelineSchedulerService {
 
       if (pendingCount === 0) {
         this.logger.debug('No pending orders to process');
+        return;
+      }
+
+      // Only create job if we have at least minBatchSize orders
+      if (pendingCount < this.minBatchSize) {
+        this.logger.debug(
+          `Pending orders (${pendingCount}) below minimum batch size (${this.minBatchSize})`,
+        );
         return;
       }
 
