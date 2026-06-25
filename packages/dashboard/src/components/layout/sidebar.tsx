@@ -87,6 +87,7 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/fusion-credentials', label: 'Fusion Credentials', icon: Server },
       { href: '/admin/vendhq-credentials', label: 'VendHQ Credentials', icon: Key },
       { href: '/admin/odoo-credentials', label: 'Odoo Credentials', icon: Key },
+      { href: '/admin/ibq-credentials', label: 'IBQ Credentials', icon: Key },
     ],
   },
   {
@@ -138,6 +139,9 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/backup-odoo-orders', label: 'Odoo Orders Backup', icon: Archive },
       { href: '/admin/backup-odoo-order-lines', label: 'Odoo Order Lines Backup', icon: Archive },
       { href: '/admin/backup-odoo-order-payments', label: 'Odoo Order Payments Backup', icon: Archive },
+      { href: '/admin/backup-ibq-orders', label: 'IBQ Orders Backup', icon: Archive },
+      { href: '/admin/backup-ibq-order-lines', label: 'IBQ Order Lines Backup', icon: Archive },
+      { href: '/admin/backup-ibq-order-payments', label: 'IBQ Order Payments Backup', icon: Archive },
       { href: '/admin/sale-sync-status', label: 'Sale Sync Status', icon: Activity },
     ],
   },
