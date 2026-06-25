@@ -156,9 +156,10 @@ export default function OrdersPage() {
             <Download className="h-4 w-4" /> Export CSV
           </Button>
           <Button
-            onClick={() => retrySelectedMutation.mutate(
-              selectedIds.filter((id) => orders.find((o) => o.id === id)?.status === 'FAILED'),
-            )}
+            onClick={() => {
+              const failedIds = new Set(orders.filter((o) => o.status === 'FAILED').map((o) => o.id));
+              retrySelectedMutation.mutate(selectedIds.filter((id) => failedIds.has(id)));
+            }}
             disabled={selectedIds.length === 0 || retrySelectedMutation.isPending}
           >
             <RotateCcw className="h-4 w-4" /> Retry Selected ({selectedIds.length})
