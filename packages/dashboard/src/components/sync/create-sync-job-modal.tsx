@@ -132,9 +132,20 @@ export function CreateSyncJobModal() {
               </div>
             </div>
           )}
-          <Button className="w-full" onClick={() => mutation.mutate(form)} disabled={mutation.isPending}>
-            {mutation.isPending ? 'Creating...' : 'Create Job'}
-          </Button>
+          <div className="flex gap-2">
+            <Button className="flex-1" onClick={() => mutation.mutate(form)} disabled={mutation.isPending}>
+              {mutation.isPending ? 'Creating...' : 'Create Job'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1"
+              onClick={() => { setOpen(false); setForm(initialForm); }}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
