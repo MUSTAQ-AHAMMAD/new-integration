@@ -4,6 +4,7 @@ import { AlertsPanel } from '@/components/dashboard/alerts-panel';
 import { SyncTrendChart } from '@/components/dashboard/sync-trend-chart';
 import { HealthStatusGrid } from '@/components/dashboard/health-status-grid';
 import { BranchOrdersChart } from '@/components/dashboard/branch-orders-chart';
+import { PipelineStatus } from '@/components/dashboard/pipeline-status';
 import { Activity } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -39,6 +40,9 @@ export default function DashboardPage() {
       </div>
 
       <OverviewCards />
+
+      {/* Pipeline Status - NEW */}
+      <PipelineStatus />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <SyncTrendChart />

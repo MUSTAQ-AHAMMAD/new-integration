@@ -27,6 +27,27 @@ packages/
 └── dashboard/    Next.js 15 App Router · shadcn/ui · TanStack Query · Recharts · Socket.IO
 ```
 
+### Automatic Sync Pipeline
+
+The system features an **automatic pipeline** that continuously syncs orders from Odoo to Oracle Fusion, similar to the Java reference implementation's Quartz scheduler:
+
+```
+Odoo API → OdooBackupService (15min cron) → BackupOdooOrder table
+         → OrderSyncService.ingestOrder() → OrderSyncQueue (PENDING status)
+         → PipelineSchedulerService (5min cron) → Creates SyncJob
+         → BullMQ Queue → OrderSyncProcessor (10 workers)
+         → Oracle SOAP/REST APIs → Invoice + Receipt creation
+```
+
+**Key Features:**
+- 🔄 **Automatic processing**: Orders are synced every 5 minutes without manual intervention
+- 🎯 **Quartz-like scheduler**: `PipelineSchedulerService` mimics Java's VendHQIntegrationScheduler
+- 📊 **Real-time monitoring**: Dashboard shows pipeline status and queue statistics
+- 🔁 **Auto-retry**: Failed orders are automatically retried with exponential backoff
+- 🏥 **Health checks**: Pipeline monitors backlog and alerts on issues
+
+See [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) for detailed pipeline documentation.
+
 ### Key Backend Modules
 
 | Module | Responsibility |
