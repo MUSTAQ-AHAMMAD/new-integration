@@ -44,6 +44,19 @@ export default function SyncJobsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const retrySkippedMutation = useMutation({
+    mutationFn: () => fetch('/api/v1/sync/orders/retry-skipped', {
+      method: 'POST',
+      credentials: 'include',
+    }).then(res => res.json()),
+    onSuccess: (data) => {
+      toast.success(`${data.updated || 0} skipped orders re-queued for processing`);
+      qc.invalidateQueries({ queryKey: ['sync-jobs'] });
+      qc.invalidateQueries({ queryKey: ['queue-stats'] });
+    },
+    onError: (error: Error) => toast.error(`Failed to retry skipped orders: ${error.message}`),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
@@ -54,7 +67,16 @@ export default function SyncJobsPage() {
             <p className="mt-0.5 text-sm text-slate-500">Manage and monitor synchronization jobs</p>
           </div>
         </div>
-        <CreateSyncJobModal />
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => retrySkippedMutation.mutate()}
+            disabled={retrySkippedMutation.isPending}
+          >
+            {retrySkippedMutation.isPending ? 'Processing...' : 'Retry Skipped Orders'}
+          </Button>
+          <CreateSyncJobModal />
+        </div>
       </div>
 
       {queueStats && (

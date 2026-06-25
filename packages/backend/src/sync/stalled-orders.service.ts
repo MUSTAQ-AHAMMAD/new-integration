@@ -4,6 +4,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { AlertSeverity, AlertType, SyncStatus } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyncControlService } from './sync-control.service';
 
 /** Default stale-order threshold in hours (overridden by STALE_THRESHOLD_HOURS env var). */
 const DEFAULT_STALE_THRESHOLD_HOURS = 6;
@@ -16,6 +17,7 @@ export class StalledOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly alertsService: AlertsService,
+    private readonly syncControl: SyncControlService,
     configService: ConfigService,
   ) {
     const configured = configService.get<number>('STALE_THRESHOLD_HOURS');
@@ -30,13 +32,23 @@ export class StalledOrdersService {
    */
   @Cron(CronExpression.EVERY_DAY_AT_1AM)
   async detectStalledOrders(): Promise<void> {
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('stalled-orders');
+    if (!enabled) {
+      this.logger.debug('Stalled orders service is disabled, skipping cron run');
+      return;
+    }
+
+    await this.syncControl.markRunning('stalled-orders');
     try {
       await this._detectStalledOrders();
+      await this.syncControl.markStopped('stalled-orders', 'success');
     } catch (err) {
       this.logger.error(
         'detectStalledOrders cron failed',
         err instanceof Error ? err.stack : String(err),
       );
+      await this.syncControl.markStopped('stalled-orders', 'error');
     }
   }
 

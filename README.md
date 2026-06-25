@@ -166,6 +166,27 @@ GitHub Actions (`.github/workflows/ci.yml`):
 
 ---
 
+## Troubleshooting
+
+### PARTIAL Sync Status
+
+If you see **PARTIAL** status in sync jobs, this typically means some orders were **SKIPPED** (not failed). This is normal behavior - not all orders should sync to Oracle.
+
+**Common reasons:**
+- Orders not marked as "paid" (state must be: paid, done, posted, invoiced, sale, invoice, confirmed, validated, or sent)
+- Orders are cancelled
+- Missing branch code
+- Missing store configuration
+
+**How to fix:**
+1. Navigate to **Operations > Skipped Orders** to see WHY each order was skipped
+2. Fix the underlying issue (update order states, add missing config, etc.)
+3. Click **"Retry Skipped Orders"** button to re-process
+
+See [docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md](docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md) for complete troubleshooting guide.
+
+---
+
 ## Monitoring
 
 - **Prometheus** scrapes backend metrics every 10s

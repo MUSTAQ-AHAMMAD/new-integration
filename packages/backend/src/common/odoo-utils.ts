@@ -70,6 +70,9 @@ export interface RawOdooOrderFields {
  * - 'invoiced': Invoice generated (common in IBQ)
  * - 'sale': Sales order confirmed (Odoo Sales workflow)
  * - 'invoice': Invoice state (some Odoo versions)
+ * - 'confirmed': Order confirmed (some Odoo workflows)
+ * - 'validated': Order validated (some IBQ workflows)
+ * - 'sent': Order sent (some Odoo workflows)
  * 
  * Note: 'draft' and 'cancel' states are explicitly excluded.
  */
@@ -80,6 +83,9 @@ const PAID_ORDER_STATES = [
   'invoiced',
   'sale',
   'invoice',
+  'confirmed',
+  'validated',
+  'sent',
 ] as const;
 
 /**
