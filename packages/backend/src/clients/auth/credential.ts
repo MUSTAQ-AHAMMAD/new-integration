@@ -10,9 +10,9 @@
  *   const cred = new Credential('user', 'pass');
  *   cred.toAuthHeader(); // "Basic dXNlcjpwYXNz"
  *
- *   // ******
+ *   // Bearer Token
  *   const cred = new Credential('my-token');
- *   cred.toAuthHeader(); // "******"
+ *   cred.toAuthHeader(); // "Bearer my-token"
  */
 
 /** Identifies how the credential should be serialised. */
@@ -45,7 +45,7 @@ export class Credential {
       ).toString('base64');
       this.type = 'basic';
     } else {
-      // ****** — store as-is
+      // Bearer Token — store as-is
       this.encodedValue = usernameOrToken;
       this.type = 'bearer';
     }
@@ -65,7 +65,7 @@ export class Credential {
    * HTTP request.
    *
    * - Basic:  `"Basic dXNlcjpwYXNz"`
-   * - Bearer: `"******"`
+   * - Bearer: `"Bearer <token>"`
    */
   toAuthHeader(): string {
     if (this.type === 'basic') {
