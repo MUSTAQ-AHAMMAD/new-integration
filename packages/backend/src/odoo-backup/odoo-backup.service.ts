@@ -1341,7 +1341,7 @@ export class OdooBackupService {
         // Reconstruct the order object from rawJson if available, otherwise use backup fields
         const order: RawOdooOrderFields =
           backupOrder.rawJson && typeof backupOrder.rawJson === 'object' && !Array.isArray(backupOrder.rawJson)
-            ? (backupOrder.rawJson as RawOdooOrderFields)
+            ? (backupOrder.rawJson as unknown as RawOdooOrderFields)
             : {
                 id: backupOrder.orderId,
                 name: backupOrder.orderName,
