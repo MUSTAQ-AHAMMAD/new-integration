@@ -385,4 +385,69 @@ export class SyncService {
       ...pagination,
     });
   }
+
+  /**
+   * Re-processes orders that were previously skipped but should now be synced.
+   * This is useful after expanding the isPaid state mapping to include more states.
+   *
+   * @param branchCode Optional filter by branch code
+   * @param limit Maximum number of orders to re-process
+   * @returns Count of orders re-queued for processing
+   */
+  async retrySkippedOrders(
+    branchCode?: string,
+    limit = 1000,
+  ): Promise<{ updated: number; enqueued: number }> {
+    // Find skipped orders that should actually be processed
+    // (orders that were skipped but are now marked as paid)
+    const skippedOrders = await this.prisma.orderSyncQueue.findMany({
+      where: {
+        status: SyncStatus.SKIPPED,
+        isPaid: true,
+        isCancelled: false,
+        ...(branchCode ? { branchCode } : {}),
+      },
+      take: limit,
+      select: {
+        id: true,
+        odooOrderId: true,
+        branchCode: true,
+      },
+    });
+
+    if (skippedOrders.length === 0) {
+      this.logger.log('No skipped orders found to retry');
+      return { updated: 0, enqueued: 0 };
+    }
+
+    // Update status to PENDING
+    const updateResult = await this.prisma.orderSyncQueue.updateMany({
+      where: {
+        id: { in: skippedOrders.map((o) => o.id) },
+      },
+      data: {
+        status: SyncStatus.PENDING,
+      },
+    });
+
+    // Enqueue for processing
+    await this.queues.enqueueOrderSyncBulk(
+      skippedOrders.map((order) => ({
+        orderSyncQueueId: order.id,
+        odooOrderId: order.odooOrderId,
+        branchCode: order.branchCode,
+        isRetry: true,
+      })),
+    );
+
+    this.logger.log(
+      `Re-queued ${updateResult.count} previously skipped orders` +
+        (branchCode ? ` for branch ${branchCode}` : ''),
+    );
+
+    return {
+      updated: updateResult.count,
+      enqueued: skippedOrders.length,
+    };
+  }
 }
