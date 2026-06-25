@@ -192,6 +192,74 @@ export class SyncService {
     return this.queues.getQueueStats();
   }
 
+  async listOrderQueue(
+    opts: {
+      status?: string;
+      branchCode?: string;
+      search?: string;
+      limit?: number;
+    } = {},
+  ) {
+    const { status, branchCode, search, limit = 200 } = opts;
+    const take = Math.min(limit, 1000);
+
+    const where: Prisma.OrderSyncQueueWhereInput = {};
+    if (status && status !== 'ALL') {
+      where.status = status as SyncStatus;
+    }
+    if (branchCode && branchCode !== 'ALL') {
+      where.branchCode = branchCode;
+    }
+    if (search) {
+      const s = search.trim();
+      where.OR = [
+        { odooOrderNumber: { contains: s, mode: 'insensitive' } },
+        { customerName: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+
+    return this.prisma.orderSyncQueue.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take,
+      include: {
+        failedTransactions: {
+          where: { isResolved: false },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true,
+            errorType: true,
+            errorMessage: true,
+            retryCount: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+  }
+
+  async retryOrderQueueEntry(id: string) {
+    const order = await this.prisma.orderSyncQueue.findUnique({
+      where: { id },
+    });
+    if (!order) throw new NotFoundException(`Order queue entry ${id} not found`);
+
+    await this.prisma.orderSyncQueue.update({
+      where: { id },
+      data: { status: SyncStatus.PENDING },
+    });
+
+    await this.queues.enqueueOrderSync({
+      orderSyncQueueId: order.id,
+      odooOrderId: order.odooOrderId,
+      branchCode: order.branchCode,
+      isRetry: true,
+    });
+
+    return { ok: true, id };
+  }
+
   async getOrderStatus(odooOrderId: string) {
     return this.prisma.orderSyncQueue.findMany({
       where: { odooOrderId },

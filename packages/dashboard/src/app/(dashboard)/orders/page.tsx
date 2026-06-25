@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RotateCcw, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, type FailedTransaction, type SyncJob } from '@/lib/api';
+import { api, type OrderQueueEntry } from '@/lib/api';
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,59 +16,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-interface OrderRow {
-  id: string;
-  orderNumber: string;
-  branchCode: string;
-  status: string;
-  totalAmount?: number;
-  customerName?: string;
-  createdAt: string;
-  validationErrors?: unknown;
-  failedCount: number;
-}
-
-interface SyncJobRecord extends SyncJob {
-  scopeValue: Record<string, unknown>;
-}
-
-type FailedTransactionRecord = FailedTransaction;
-
 const PAGE_SIZE = 50;
 const TIMEZONES = ['UTC', 'Asia/Dubai', 'America/New_York', 'Europe/London'] as const;
 const STATUS_OPTIONS = ['ALL', 'PENDING', 'PROCESSING', 'SYNCED', 'FAILED', 'SKIPPED'] as const;
-
-function asObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function getString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
-
-function getNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-}
-
-function getStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : [];
-}
-
-function getStatus(job: SyncJobRecord): string {
-  if (job.status === 'FAILED' || job.failedCount > 0) return 'FAILED';
-  if (job.status === 'PROCESSING') return 'PROCESSING';
-  if (job.status === 'PENDING') return 'PENDING';
-  if ((job.skippedCount ?? 0) > 0 && job.successCount === 0) return 'SKIPPED';
-  if (job.status === 'CANCELLED') return 'SKIPPED';
-  return 'SYNCED';
-}
 
 function getDateKey(value: string, timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -101,157 +51,94 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_OPTIONS)[number]>('ALL');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [errorRow, setErrorRow] = useState<OrderRow | null>(null);
+  const [detailRow, setDetailRow] = useState<OrderQueueEntry | null>(null);
 
-  const { data: jobs, isLoading: jobsLoading, isError: jobsError } = useQuery({
-    queryKey: ['order-sync-jobs'],
-    queryFn: () => api.listSyncJobs() as Promise<SyncJobRecord[]>,
-    refetchInterval: 15000,
-  });
-
-  const { data: failedTransactions } = useQuery({
-    queryKey: ['order-sync-failures'],
-    queryFn: () => api.listFailedTransactions(200) as Promise<FailedTransactionRecord[]>,
+  const { data: orders = [], isLoading, isError } = useQuery({
+    queryKey: ['order-queue'],
+    queryFn: () => api.listOrderQueue({ limit: 500 }),
     refetchInterval: 15000,
   });
 
   const retryMutation = useMutation({
-    mutationFn: (jobId: string) => api.retrySyncJob(jobId),
+    mutationFn: (id: string) => api.retryOrderQueueEntry(id),
     onSuccess: () => {
       toast.success('Order retry queued');
-      void queryClient.invalidateQueries({ queryKey: ['order-sync-jobs'] });
-      void queryClient.invalidateQueries({ queryKey: ['order-sync-failures'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-queue'] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const retrySelectedMutation = useMutation({
-    mutationFn: async (jobIds: string[]) => {
-      const results = await Promise.allSettled(jobIds.map((jobId) => api.retrySyncJob(jobId)));
-      const successCount = results.filter((result) => result.status === 'fulfilled').length;
-      const failedCount = results.length - successCount;
-      return { successCount, failedCount };
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(ids.map((id) => api.retryOrderQueueEntry(id)));
+      const successCount = results.filter((r) => r.status === 'fulfilled').length;
+      return { successCount, failedCount: results.length - successCount };
     },
-    onSuccess: ({ successCount, failedCount }) => {
-      if (successCount > 0) {
-        toast.success(`Queued ${successCount} order ${successCount === 1 ? 'retry' : 'retries'}`);
-      }
-      if (failedCount > 0) {
-        toast.error(`${failedCount} retry ${failedCount === 1 ? 'request failed' : 'requests failed'}`);
-      }
+    onSuccess: ({ successCount, failedCount }: { successCount: number; failedCount: number }) => {
+      if (successCount > 0) toast.success(`Queued ${successCount} order ${successCount === 1 ? 'retry' : 'retries'}`);
+      if (failedCount > 0) toast.error(`${failedCount} retry ${failedCount === 1 ? 'request failed' : 'requests failed'}`);
       setSelectedIds([]);
-      void queryClient.invalidateQueries({ queryKey: ['order-sync-jobs'] });
-      void queryClient.invalidateQueries({ queryKey: ['order-sync-failures'] });
+      void queryClient.invalidateQueries({ queryKey: ['order-queue'] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const rows = useMemo<OrderRow[]>(() => {
-    const failedByOrderNumber = new Map<string, FailedTransactionRecord[]>();
-
-    (failedTransactions ?? []).forEach((transaction) => {
-      const orderNumber = transaction.orderSyncQueue?.odooOrderNumber;
-      if (!orderNumber) return;
-      const current = failedByOrderNumber.get(orderNumber) ?? [];
-      current.push(transaction);
-      failedByOrderNumber.set(orderNumber, current);
-    });
-
-    return (jobs ?? []).map((job) => {
-      const scope = asObject(job.scopeValue);
-      const orderIds = getStringArray(scope.orderIds);
-      const orderNumber = orderIds[0] ?? getString(scope.orderNumber) ?? getString(scope.odooOrderNumber) ?? `JOB-${job.id.slice(0, 8)}`;
-      const relatedFailures = failedByOrderNumber.get(orderNumber) ?? [];
-      const firstFailure = relatedFailures[0];
-      const validationErrors = relatedFailures.length > 0
-        ? relatedFailures.map((transaction) => ({
-            id: transaction.id,
-            errorType: transaction.errorType,
-            errorMessage: transaction.errorMessage,
-            errorDetails: transaction.originalPayload ?? null,
-            retryCount: transaction.retryCount,
-            createdAt: transaction.createdAt,
-          }))
-        : job.errorMessage
-          ? { errorMessage: job.errorMessage }
-          : undefined;
-
-      return {
-        id: job.id,
-        orderNumber,
-        branchCode: getString(scope.branchCode) ?? firstFailure?.orderSyncQueue?.branchCode ?? '—',
-        status: getStatus(job),
-        totalAmount: getNumber(scope.totalAmount),
-        customerName: getString(scope.customerName) ?? getString(scope.customer) ?? getString(scope.customerNameAr) ?? undefined,
-        createdAt: job.createdAt,
-        validationErrors,
-        failedCount: relatedFailures.length > 0 ? relatedFailures.length : job.failedCount,
-      };
-    });
-  }, [failedTransactions, jobs]);
-
   const branchOptions = useMemo(() => {
-    return Array.from(new Set(rows.map((row) => row.branchCode).filter((branch) => branch && branch !== '—'))).sort();
-  }, [rows]);
+    return Array.from(new Set(orders.map((o) => o.branchCode).filter(Boolean))).sort();
+  }, [orders]);
 
   const filteredRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    return rows.filter((row) => {
+    return orders.filter((order) => {
       if (normalizedSearch) {
-        const matchesSearch = row.orderNumber.toLowerCase().includes(normalizedSearch)
-          || (row.customerName ?? '').toLowerCase().includes(normalizedSearch);
-        if (!matchesSearch) return false;
+        const match = order.odooOrderNumber.toLowerCase().includes(normalizedSearch)
+          || (order.customerName ?? '').toLowerCase().includes(normalizedSearch);
+        if (!match) return false;
       }
-
-      if (branchFilter !== 'ALL' && row.branchCode !== branchFilter) return false;
-      if (statusFilter !== 'ALL' && row.status !== statusFilter) return false;
-
-      const dateKey = getDateKey(row.createdAt, timezone);
+      if (branchFilter !== 'ALL' && order.branchCode !== branchFilter) return false;
+      if (statusFilter !== 'ALL' && order.status !== statusFilter) return false;
+      const dateKey = getDateKey(order.createdAt, timezone);
       if (startDate && dateKey < startDate) return false;
       if (endDate && dateKey > endDate) return false;
       return true;
     });
-  }, [branchFilter, endDate, rows, search, startDate, statusFilter, timezone]);
+  }, [orders, search, branchFilter, statusFilter, startDate, endDate, timezone]);
 
   const visibleRows = filteredRows.slice(0, visibleCount);
-  const visibleIds = visibleRows.map((row) => row.id);
+  const visibleIds = visibleRows.map((r) => r.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
 
   const toggleSelectAllVisible = (checked: boolean) => {
     if (checked) {
       setSelectedIds(Array.from(new Set([...selectedIds, ...visibleIds])));
-      return;
+    } else {
+      setSelectedIds(selectedIds.filter((id) => !visibleIds.includes(id)));
     }
-    setSelectedIds(selectedIds.filter((id) => !visibleIds.includes(id)));
   };
 
   const toggleSelected = (id: string, checked: boolean) => {
-    setSelectedIds((current) => (checked ? Array.from(new Set([...current, id])) : current.filter((value) => value !== id)));
+    setSelectedIds((cur) => (checked ? Array.from(new Set([...cur, id])) : cur.filter((v) => v !== id)));
   };
 
   const exportVisibleRows = () => {
     downloadCsv(
       'orders.csv',
-      ['Order Number', 'Branch', 'Status', 'Amount', 'Customer', 'Date', 'Failed Count'],
-      visibleRows.map((row) => [
-        row.orderNumber,
-        row.branchCode,
-        row.status,
-        row.totalAmount !== undefined ? String(row.totalAmount) : '',
-        row.customerName ?? '',
-        formatDate(row.createdAt),
-        String(row.failedCount),
+      ['Order Number', 'Branch', 'Status', 'Amount', 'Currency', 'Customer', 'Date', 'Failed Count'],
+      visibleRows.map((r) => [
+        r.odooOrderNumber,
+        r.branchCode,
+        r.status,
+        r.totalAmount,
+        r.currency,
+        r.customerName ?? '',
+        formatDate(r.createdAt),
+        String(r.failedTransactions.length),
       ]),
     );
   };
 
-  if (jobsLoading) {
-    return <div className="py-16 text-center text-gray-500">Loading...</div>;
-  }
-
-  if (jobsError) {
-    return <ErrorState />;
-  }
+  if (isLoading) return <div className="py-16 text-center text-gray-500">Loading...</div>;
+  if (isError) return <ErrorState />;
 
   return (
     <div className="space-y-6">
@@ -260,7 +147,7 @@ export default function OrdersPage() {
           <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
           <div>
             <h1 className="text-xl font-bold text-slate-900">Order Sync Manager</h1>
-            <p className="mt-0.5 text-sm text-slate-500">Search, filter, retry, and export order synchronization activity.</p>
+            <p className="mt-0.5 text-sm text-slate-500">Search, filter, retry, and export order synchronisation activity.</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -269,7 +156,9 @@ export default function OrdersPage() {
             <Download className="h-4 w-4" /> Export CSV
           </Button>
           <Button
-            onClick={() => retrySelectedMutation.mutate(selectedIds)}
+            onClick={() => retrySelectedMutation.mutate(
+              selectedIds.filter((id) => orders.find((o) => o.id === id)?.status === 'FAILED'),
+            )}
             disabled={selectedIds.length === 0 || retrySelectedMutation.isPending}
           >
             <RotateCcw className="h-4 w-4" /> Retry Selected ({selectedIds.length})
@@ -291,10 +180,7 @@ export default function OrdersPage() {
                 <Input
                   id="order-search"
                   value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    setVisibleCount(PAGE_SIZE);
-                  }}
+                  onChange={(e) => { setSearch(e.target.value); setVisibleCount(PAGE_SIZE); }}
                   placeholder="Search by order number or customer"
                   className="pl-9"
                 />
@@ -302,22 +188,18 @@ export default function OrdersPage() {
             </div>
             <div>
               <Label htmlFor="start-date">Start date</Label>
-              <Input id="start-date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="mt-2" />
+              <Input id="start-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-2" />
             </div>
             <div>
               <Label htmlFor="end-date">End date</Label>
-              <Input id="end-date" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="mt-2" />
+              <Input id="end-date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="mt-2" />
             </div>
             <div>
               <Label>Timezone</Label>
-              <Select value={timezone} onValueChange={(value) => setTimezone(value as (typeof TIMEZONES)[number])}>
-                <SelectTrigger className="mt-2">
-                  <SelectValue placeholder="Select timezone" />
-                </SelectTrigger>
+              <Select value={timezone} onValueChange={(v) => setTimezone(v as (typeof TIMEZONES)[number])}>
+                <SelectTrigger className="mt-2"><SelectValue placeholder="Select timezone" /></SelectTrigger>
                 <SelectContent>
-                  {TIMEZONES.map((item) => (
-                    <SelectItem key={item} value={item}>{item}</SelectItem>
-                  ))}
+                  {TIMEZONES.map((tz) => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -327,33 +209,26 @@ export default function OrdersPage() {
             <div>
               <Label>Branch</Label>
               <Select value={branchFilter} onValueChange={setBranchFilter}>
-                <SelectTrigger className="mt-2">
-                  <SelectValue placeholder="All branches" />
-                </SelectTrigger>
+                <SelectTrigger className="mt-2"><SelectValue placeholder="All branches" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">All branches</SelectItem>
-                  {branchOptions.map((branch) => (
-                    <SelectItem key={branch} value={branch}>{branch}</SelectItem>
-                  ))}
+                  {branchOptions.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Status</Label>
-              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as (typeof STATUS_OPTIONS)[number])}>
-                <SelectTrigger className="mt-2">
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
+              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as (typeof STATUS_OPTIONS)[number])}>
+                <SelectTrigger className="mt-2"><SelectValue placeholder="All statuses" /></SelectTrigger>
                 <SelectContent>
-                  {STATUS_OPTIONS.map((status) => (
-                    <SelectItem key={status} value={status}>{status === 'ALL' ? 'All statuses' : status}</SelectItem>
-                  ))}
+                  {STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s === 'ALL' ? 'All statuses' : s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-end">
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                Showing <span className="font-semibold text-gray-900">{visibleRows.length}</span> of <span className="font-semibold text-gray-900">{filteredRows.length}</span> records · Dates shown as {timezone}
+                Showing <span className="font-semibold text-gray-900">{visibleRows.length}</span> of{' '}
+                <span className="font-semibold text-gray-900">{filteredRows.length}</span> records · Dates as {timezone}
               </div>
             </div>
           </div>
@@ -363,7 +238,7 @@ export default function OrdersPage() {
       <Card>
         <CardHeader>
           <CardTitle>Orders</CardTitle>
-          <CardDescription>Select failed rows to retry in bulk or inspect validation details.</CardDescription>
+          <CardDescription>Select failed rows to retry in bulk or inspect error details.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -373,7 +248,7 @@ export default function OrdersPage() {
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
-                    onChange={(event) => toggleSelectAllVisible(event.target.checked)}
+                    onChange={(e) => toggleSelectAllVisible(e.target.checked)}
                     aria-label="Select all visible orders"
                     className="h-4 w-4 rounded border-gray-300"
                   />
@@ -394,12 +269,12 @@ export default function OrdersPage() {
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(row.id)}
-                      onChange={(event) => toggleSelected(row.id, event.target.checked)}
-                      aria-label={`Select ${row.orderNumber}`}
+                      onChange={(e) => toggleSelected(row.id, e.target.checked)}
+                      aria-label={`Select ${row.odooOrderNumber}`}
                       className="h-4 w-4 rounded border-gray-300"
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{row.orderNumber}</TableCell>
+                  <TableCell className="font-medium">{row.odooOrderNumber}</TableCell>
                   <TableCell className="font-mono text-xs text-gray-600">{row.branchCode}</TableCell>
                   <TableCell>
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusColor(row.status)}`}>
@@ -407,7 +282,7 @@ export default function OrdersPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-right text-gray-700">
-                    {row.totalAmount !== undefined ? formatCurrency(row.totalAmount) : '—'}
+                    {formatCurrency(Number(row.totalAmount))}
                   </TableCell>
                   <TableCell>{row.customerName ?? '—'}</TableCell>
                   <TableCell className="whitespace-nowrap text-gray-500">{formatDate(row.createdAt)}</TableCell>
@@ -426,8 +301,8 @@ export default function OrdersPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setErrorRow(row)}
-                        disabled={!row.validationErrors}
+                        onClick={() => setDetailRow(row)}
+                        disabled={row.failedTransactions.length === 0}
                       >
                         View Errors
                       </Button>
@@ -447,7 +322,7 @@ export default function OrdersPage() {
 
           {filteredRows.length > visibleCount && (
             <div className="mt-4 flex justify-center">
-              <Button variant="outline" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
+              <Button variant="outline" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
                 Load More
               </Button>
             </div>
@@ -455,16 +330,16 @@ export default function OrdersPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={!!errorRow} onOpenChange={(open) => { if (!open) setErrorRow(null); }}>
+      <Dialog open={!!detailRow} onOpenChange={(open) => { if (!open) setDetailRow(null); }}>
         <DialogContent className="max-h-[80vh] max-w-3xl overflow-hidden">
           <DialogHeader>
-            <DialogTitle>Validation Errors</DialogTitle>
+            <DialogTitle>Error Details</DialogTitle>
             <DialogDescription>
-              {errorRow?.orderNumber ? `Details for ${errorRow.orderNumber}` : 'Validation details'}
+              {detailRow?.odooOrderNumber ? `Errors for ${detailRow.odooOrderNumber}` : 'Error details'}
             </DialogDescription>
           </DialogHeader>
           <pre className="max-h-[60vh] overflow-auto rounded-lg bg-gray-900 p-4 text-xs text-green-400">
-            {JSON.stringify(errorRow?.validationErrors ?? { message: 'No validation errors available.' }, null, 2)}
+            {JSON.stringify(detailRow?.failedTransactions ?? [], null, 2)}
           </pre>
         </DialogContent>
       </Dialog>

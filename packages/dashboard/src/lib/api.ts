@@ -83,6 +83,17 @@ export const api = {
   cancelSyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}/cancel`, { method: 'POST' }),
   retrySyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}/retry`, { method: 'POST' }),
   getQueueStats: () => apiRequest<QueueStats>('/sync/queue/stats'),
+  listOrderQueue: (params?: { status?: string; branchCode?: string; search?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status && params.status !== 'ALL') qs.set('status', params.status);
+    if (params?.branchCode && params.branchCode !== 'ALL') qs.set('branchCode', params.branchCode);
+    if (params?.search) qs.set('search', params.search);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return apiRequest<OrderQueueEntry[]>(`/sync/order-queue${q ? `?${q}` : ''}`);
+  },
+  retryOrderQueueEntry: (id: string) =>
+    apiRequest<{ ok: boolean; id: string }>(`/sync/order-queue/${id}/retry`, { method: 'POST' }),
   listAlerts: (params?: { severity?: string; resolved?: boolean }) => {
     const qs = new URLSearchParams();
     if (params?.severity) qs.set('severity', params.severity);
@@ -322,6 +333,34 @@ export interface SyncJob {
   createdBy: string;
   errorMessage: string | null;
   errorDetails: unknown;
+}
+
+export interface OrderQueueEntry {
+  id: string;
+  odooOrderId: string;
+  odooOrderNumber: string;
+  branchCode: string;
+  branchName: string | null;
+  region: string | null;
+  orderDate: string;
+  orderDateUtc: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  totalAmount: string;
+  currency: string;
+  status: string;
+  isPaid: boolean;
+  isCancelled: boolean;
+  isRefund: boolean;
+  createdAt: string;
+  updatedAt: string;
+  failedTransactions: Array<{
+    id: string;
+    errorType: string;
+    errorMessage: string;
+    retryCount: number;
+    createdAt: string;
+  }>;
 }
 
 export interface QueueStats {
