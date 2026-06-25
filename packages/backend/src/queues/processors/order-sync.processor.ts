@@ -296,10 +296,7 @@ export class OrderSyncProcessor {
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
-            billToAccNumber:
-              invoiceHeader.billToAccountNumber != null
-                ? Number(invoiceHeader.billToAccountNumber)
-                : null,
+            billToAccNumber: invoiceHeader.billToAccountNumber != null ? BigInt(invoiceHeader.billToAccountNumber) : null,
             businessUnit: invoiceHeader.businessUnit,
             txnSource: invoiceHeader.transactionSource,
             txnType: invoiceHeader.transactionType,
@@ -394,7 +391,7 @@ export class OrderSyncProcessor {
               requestDate: new Date(),
               region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
-              ledgerId: jh.ledgerId,
+              ledgerId: BigInt(jh.ledgerId),
               batchName: jh.batchName,
               batchDescription: jh.batchDescription,
               accountingPeriodName: jh.accountingPeriodName,
@@ -412,8 +409,8 @@ export class OrderSyncProcessor {
               requestDate: new Date(),
               region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
-              ledgerId: jl.ledgerId,
-              chartOfAccountsId: jl.chartOfAccountsId ?? null,
+              ledgerId: BigInt(jl.ledgerId),
+              chartOfAccountsId: jl.chartOfAccountsId != null ? BigInt(jl.chartOfAccountsId) : null,
               currencyCode: jl.currencyCode,
               headerId: jhAudit.id,
             })),

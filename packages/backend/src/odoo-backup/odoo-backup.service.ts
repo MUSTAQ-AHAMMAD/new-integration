@@ -209,7 +209,7 @@ export class OdooBackupService {
                 : order.branch_id
               : null;
           const storeEntry =
-            odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+            odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
           const resolvedBranchCode =
             storeEntry?.branchCode ?? payload.branchCode;
           const resolvedRegion = storeEntry?.region ?? null;
@@ -350,7 +350,7 @@ export class OdooBackupService {
                   : order.branch_id
                 : null;
             const storeEntry =
-              odooBranchId != null ? branchIdMap.get(odooBranchId) : null;
+              odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
             const resolvedBranchCode =
               storeEntry?.branchCode ?? payload.branchCode;
             // Prefer region from credential; fall back to StoreConfiguration.region
