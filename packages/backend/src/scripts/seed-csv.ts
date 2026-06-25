@@ -127,6 +127,7 @@ function buildKeyNormalizer(
 
 function coerceCsvValue(value: unknown, prismaType: string): unknown {
   if (value === null || value === undefined || value === '') return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const s = String(value);
   switch (prismaType) {
     case 'Int': {
@@ -171,7 +172,8 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
  * 5. Return the longest matching TABLE_MAP key.
  */
 function detectTable(filename: string): string | null {
-  const base = path.basename(filename, path.extname(filename))
+  const base = path
+    .basename(filename, path.extname(filename))
     .toLowerCase()
     .replace(/_/g, '-');
 
@@ -202,8 +204,9 @@ async function importFile(
   tableSlug: string,
 ): Promise<void> {
   const delegateName = TABLE_MAP[tableSlug];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const delegate = (prisma as any)[delegateName] as {
+  const delegate = (prisma as unknown as Record<string, unknown>)[
+    delegateName
+  ] as {
     create: (args: { data: Record<string, unknown> }) => Promise<unknown>;
   };
 
@@ -224,8 +227,12 @@ async function importFile(
       const normalizedRow = Object.fromEntries(
         Object.entries(row).map(([k, v]) => [normalizeKey(k), v]),
       );
-      const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } =
-        normalizedRow;
+      const {
+        id: _id,
+        createdAt: _ca,
+        updatedAt: _ua,
+        ...data
+      } = normalizedRow;
       const cleaned = Object.fromEntries(
         Object.entries(data).map(([k, v]) => {
           if (v === '' || v === null || v === undefined) return [k, null];
@@ -297,9 +304,7 @@ async function main() {
       console.error(
         `No CSV files specified and default data dir not found: ${defaultDataDir}`,
       );
-      console.error(
-        'Usage: pnpm seed:csv [file.csv ...] [--table <slug>]',
-      );
+      console.error('Usage: pnpm seed:csv [file.csv ...] [--table <slug>]');
       process.exit(1);
     }
     files = fs
@@ -319,8 +324,7 @@ async function main() {
     console.log(`\nSeeding ${files.length} CSV file(s)...\n`);
 
     for (const filePath of files) {
-      const tableSlug =
-        explicitTable ?? detectTable(path.basename(filePath));
+      const tableSlug = explicitTable ?? detectTable(path.basename(filePath));
 
       if (!tableSlug) {
         console.warn(

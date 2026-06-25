@@ -296,7 +296,7 @@ export class OrderSyncProcessor {
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
-            billToAccNumber: invoiceHeader.billToAccountNumber ? BigInt(invoiceHeader.billToAccountNumber) : null,
+            billToAccNumber: invoiceHeader.billToAccountNumber != null ? BigInt(invoiceHeader.billToAccountNumber) : null,
             businessUnit: invoiceHeader.businessUnit,
             txnSource: invoiceHeader.transactionSource,
             txnType: invoiceHeader.transactionType,

@@ -11,17 +11,23 @@ function makeDelegate(rows: Record<string, unknown>[] = []) {
     findMany: jest.fn().mockResolvedValue(rows),
     count: jest.fn().mockResolvedValue(rows.length),
     findUnique: jest.fn().mockResolvedValue(rows[0] ?? null),
-    create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-      Promise.resolve({ id: 'new-id', ...data }),
-    ),
-    update: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-      Promise.resolve({ id: 'existing-id', ...data }),
-    ),
+    create: jest
+      .fn()
+      .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: 'new-id', ...data }),
+      ),
+    update: jest
+      .fn()
+      .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: 'existing-id', ...data }),
+      ),
     delete: jest.fn().mockResolvedValue({}),
   };
 }
 
-function makePrisma(delegates: Record<string, ReturnType<typeof makeDelegate>> = {}) {
+function makePrisma(
+  delegates: Record<string, ReturnType<typeof makeDelegate>> = {},
+) {
   // Attach the provided delegates; fall back to an empty delegate for unknown names
   return new Proxy(
     {
@@ -45,7 +51,9 @@ describe('AdminService', () => {
   let delegate: ReturnType<typeof makeDelegate>;
 
   beforeEach(() => {
-    delegate = makeDelegate([{ id: 'rec-001', name: 'Test', createdAt: new Date() }]);
+    delegate = makeDelegate([
+      { id: 'rec-001', name: 'Test', createdAt: new Date() },
+    ]);
     const prisma = makePrisma({ fusionReceiptMethod: delegate });
     service = new AdminService(prisma as unknown as PrismaService);
     jest.clearAllMocks();
@@ -101,16 +109,19 @@ describe('AdminService', () => {
 
   describe('getOne', () => {
     it('returns the record when found', async () => {
-      delegate.findUnique.mockResolvedValueOnce({ id: 'rec-001', name: 'Found' });
+      delegate.findUnique.mockResolvedValueOnce({
+        id: 'rec-001',
+        name: 'Found',
+      });
       const record = await service.getOne('fusion-receipt-methods', 'rec-001');
       expect(record).toMatchObject({ id: 'rec-001' });
     });
 
     it('throws NotFoundException when not found', async () => {
       delegate.findUnique.mockResolvedValueOnce(null);
-      await expect(service.getOne('fusion-receipt-methods', 'missing')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getOne('fusion-receipt-methods', 'missing'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -136,7 +147,9 @@ describe('AdminService', () => {
   describe('update', () => {
     it('updates the record when found', async () => {
       delegate.findUnique.mockResolvedValueOnce({ id: 'rec-001' });
-      await service.update('fusion-receipt-methods', 'rec-001', { name: 'Updated' });
+      await service.update('fusion-receipt-methods', 'rec-001', {
+        name: 'Updated',
+      });
       expect(delegate.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'rec-001' } }),
       );
@@ -156,14 +169,16 @@ describe('AdminService', () => {
     it('deletes the record when found', async () => {
       delegate.findUnique.mockResolvedValueOnce({ id: 'rec-001' });
       await service.remove('fusion-receipt-methods', 'rec-001');
-      expect(delegate.delete).toHaveBeenCalledWith({ where: { id: 'rec-001' } });
+      expect(delegate.delete).toHaveBeenCalledWith({
+        where: { id: 'rec-001' },
+      });
     });
 
     it('throws NotFoundException when record does not exist', async () => {
       delegate.findUnique.mockResolvedValueOnce(null);
-      await expect(service.remove('fusion-receipt-methods', 'missing')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.remove('fusion-receipt-methods', 'missing'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -200,7 +215,9 @@ describe('AdminService', () => {
     });
 
     it('escapes values containing commas', async () => {
-      delegate.findMany.mockResolvedValueOnce([{ id: 'r1', name: 'Comma, Value' }]);
+      delegate.findMany.mockResolvedValueOnce([
+        { id: 'r1', name: 'Comma, Value' },
+      ]);
       const csv = await service.exportCsv('fusion-receipt-methods');
       expect(csv).toContain('"Comma, Value"');
     });
@@ -224,7 +241,10 @@ describe('AdminService', () => {
 
   describe('importCsv', () => {
     it('returns 0 imported and 0 skipped for empty CSV', async () => {
-      const result = await service.importCsv('fusion-receipt-methods', 'header1\n');
+      const result = await service.importCsv(
+        'fusion-receipt-methods',
+        'header1\n',
+      );
       expect(result.imported).toBe(0);
       expect(result.skipped).toBe(0);
     });

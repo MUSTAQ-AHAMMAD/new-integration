@@ -46,13 +46,22 @@ export interface OracleCreditMemoResult {
 }
 
 export interface OracleInventoryItem {
+  ItemId?: number;
   ItemNumber: string;
   ItemDescription?: string;
+  LongDescription?: string;
   PrimaryUOMCode?: string;
-  ItemStatus?: string;
-  ListPrice?: number;
+  PrimaryUOMValue?: string;
+  UserItemTypeValue?: string;
+  /** Oracle active-status field — value is "Active" or other codes */
+  InventoryItemStatusCode?: string;
+  /** Market / retail price as returned by Oracle (may be a string in some API versions) */
+  MarketPrice?: number | string;
   OrganizationCode?: string;
   OrganizationId?: number;
+  OutputTaxClassificationCodeValue?: string;
+  LastUpdateDate?: string;
+  CreationDate?: string;
   [key: string]: unknown;
 }
 
@@ -153,25 +162,55 @@ export class OracleClient implements OnModuleInit {
 
   /**
    * Fetches inventory items from Oracle Fusion SCM.
-   * Equivalent to Java FusionItemsToVendHQItemsIntegration item fetch.
-   * GET /fscmRestApi/resources/11.13.18.05/inventoryItems
+   * Equivalent to Java FusionItemsToVendHQItemsIntegration / FusionItemsService.getFusionItems().
+   * GET /fscmRestApi/resources/11.13.17.11/items
    */
   async getInventoryItems(params: {
     organizationCode?: string;
+    /** Watermark — only items updated after this date are returned (mirrors Java lastRequestedDate). */
+    lastUpdateDate?: Date;
     limit?: number;
     offset?: number;
   }): Promise<OracleInventoryItem[]> {
     return this.circuitBreaker.execute('oracle:getInventoryItems', () =>
       this.withRetries(async () => {
+        // Build the semicolon-delimited "q" filter — mirrors Java FusionItemsService
+        const qParts: string[] = [];
+        if (params.lastUpdateDate) {
+          // Oracle expects 'YYYY-MM-DD HH:mm:ss' (same format used by Java SimpleDateFormat)
+          const oracleDate = this.formatOracleDate(params.lastUpdateDate);
+          qParts.push(`LastUpdateDate>${oracleDate}`);
+        }
+        qParts.push('UserItemTypeValue=Finished Good');
+        if (params.organizationCode)
+          qParts.push(`OrganizationCode=${params.organizationCode}`);
+
         const query: Record<string, string | number> = {
           limit: params.limit ?? 500,
           offset: params.offset ?? 0,
+          orderBy: 'LastUpdateDate',
+          q: qParts.join(';'),
+          fields: [
+            'ItemId',
+            'ItemClass',
+            'OrganizationId',
+            'OrganizationCode',
+            'ItemNumber',
+            'ItemDescription',
+            'MarketPrice',
+            'PrimaryUOMCode',
+            'PrimaryUOMValue',
+            'UserItemTypeValue',
+            'InventoryItemStatusCode',
+            'LongDescription',
+            'OutputTaxClassificationCodeValue',
+            'LastUpdateDate',
+            'CreationDate',
+          ].join(','),
         };
-        if (params.organizationCode)
-          query['q'] = `OrganizationCode=${params.organizationCode}`;
 
         const response = await this.http.get(
-          '/fscmRestApi/resources/11.13.18.05/inventoryItems',
+          '/fscmRestApi/resources/11.13.17.11/items',
           { params: query },
         );
         const data = this.isRecord(response.data) ? response.data : {};
@@ -222,6 +261,14 @@ export class OracleClient implements OnModuleInit {
         return items;
       }),
     );
+  }
+
+  /**
+   * Formats a Date to the 'YYYY-MM-DD HH:mm:ss' string expected by Oracle REST API
+   * query parameters (same format as Java SimpleDateFormat("YYYY-MM-dd HH:mm:ss")).
+   */
+  private formatOracleDate(date: Date): string {
+    return date.toISOString().replace('T', ' ').substring(0, 19);
   }
 
   private async withRetries<T>(

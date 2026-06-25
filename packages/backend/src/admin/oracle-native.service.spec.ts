@@ -118,12 +118,16 @@ describe('OracleNativeService', () => {
         execute: jest.fn().mockResolvedValue({ rows: [] }),
         close: jest.fn().mockResolvedValue(undefined),
       };
-      jest.mock('oracledb', () => ({
-        OUT_FORMAT_ARRAY: 4003,
-        OUT_FORMAT_OBJECT: 4001,
-        thin: true,
-        getConnection: jest.fn().mockResolvedValue(mockConnection),
-      }), { virtual: true });
+      jest.mock(
+        'oracledb',
+        () => ({
+          OUT_FORMAT_ARRAY: 4003,
+          OUT_FORMAT_OBJECT: 4001,
+          thin: true,
+          getConnection: jest.fn().mockResolvedValue(mockConnection),
+        }),
+        { virtual: true },
+      );
 
       // The validation throws before a real DB call when schema is invalid
       // We use requireActual path here by checking the BadRequestException message
@@ -157,11 +161,15 @@ describe('OracleNativeService', () => {
       // Spy on the service and inject mock behaviour for the require call
       jest
         .spyOn(
-          svcWithMockOracle as unknown as { importFromOracle: () => Promise<unknown> },
+          svcWithMockOracle as unknown as {
+            importFromOracle: () => Promise<unknown>;
+          },
           'importFromOracle',
         )
         .mockRejectedValueOnce(
-          new BadRequestException('Failed to connect to Oracle DB: TNS no listener'),
+          new BadRequestException(
+            'Failed to connect to Oracle DB: TNS no listener',
+          ),
         );
 
       await expect(svcWithMockOracle.importFromOracle()).rejects.toThrow(
