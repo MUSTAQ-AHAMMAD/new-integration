@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 
 export function SyncJobsTable() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const { data: jobs } = useQuery({
     queryKey: ['sync-jobs-table'],
     queryFn: () => api.listSyncJobs(),
@@ -20,7 +20,7 @@ export function SyncJobsTable() {
     mutationFn: (id: string) => api.cancelSyncJob(id),
     onSuccess: () => {
       toast.success('Job cancelled');
-      qc.invalidateQueries({ queryKey: ['sync-jobs-table'] });
+      queryClient.invalidateQueries({ queryKey: ['sync-jobs-table'] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
