@@ -624,7 +624,7 @@ model VendHqTaxMeta {
   id          String   @id @default(cuid())
   taxId       String
   taxName     String
-  version     Int      @default(1)
+  version     BigInt   @default(1)
   fusionName  String?
   region      String
   createdAt   DateTime @default(now())
@@ -639,7 +639,7 @@ model VendHqOutlet {
   outletId    String
   outletName  String
   currency    String    @default("AED")
-  version     Int       @default(1)
+  version     BigInt    @default(1)
   deletedAt   DateTime?
   region      String
   createdAt   DateTime  @default(now())
@@ -662,7 +662,7 @@ model VendHqRegister {
   bankAccountId BigInt?
   giftAccount   String?
   giftAccountId BigInt?
-  version       Int       @default(1)
+  version       BigInt    @default(1)
   deletedAt     DateTime?
   region        String
   outletPk      String?
