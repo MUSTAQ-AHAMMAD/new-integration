@@ -934,11 +934,14 @@ export class OdooBackupService {
    * Normalize a raw array of order items from any Odoo/IBQ API variant into
    * the OdooOrder shape consumed by the rest of the service.
    *
-   * Handles two envelope patterns:
+   * Handles three envelope patterns:
    *  1. Standard Odoo REST: each element IS the order object.
-   *  2. IBQ unified API: each element is `{ order: { order_id, amount_paid, ... } }`.
+   *  2. IBQ unified API v1: each element is `{ order: { order_id, amount_paid, ... } }`.
    *     In this case the inner `order` object is unwrapped and field aliases are
    *     normalised (`order_id` → `id`, `amount_paid` → `amount_total`).
+   *  3. IBQ unified API v2: each element is `{ order: {...}, lines: [...], payments: [...] }`.
+   *     The `lines` and `payments` arrays are at the same level as `order` (not nested inside it).
+   *     These sibling arrays must be merged into the order object so upsertOrder can find them.
    */
   private normalizeOrderItems(items: unknown[]): OdooOrder[] {
     return items.map((item) => {
@@ -946,10 +949,13 @@ export class OdooBackupService {
       const raw = item as Record<string, unknown>;
 
       // IBQ unified API wraps each order in a { order: { ... } } envelope.
-      const inner =
-        typeof raw['order'] === 'object' && raw['order'] !== null
-          ? (raw['order'] as Record<string, unknown>)
-          : raw;
+      // Check if this is the IBQ structure with separate order/lines/payments.
+      const hasIbqStructure =
+        typeof raw['order'] === 'object' && raw['order'] !== null;
+
+      const inner = hasIbqStructure
+        ? (raw['order'] as Record<string, unknown>)
+        : raw;
 
       // Normalise field name aliases used by IBQ's unified endpoint.
       const normalised: Record<string, unknown> = { ...inner };
@@ -964,6 +970,20 @@ export class OdooBackupService {
         normalised['amount_paid'] != null
       ) {
         normalised['amount_total'] = normalised['amount_paid'];
+      }
+
+      // IBQ unified API v2: merge sibling `lines` and `payments` arrays into the order.
+      // These arrays sit at the same level as `order` in the response structure:
+      // { order: {...}, lines: [...], payments: [...] }
+      // upsertOrder expects them nested inside the order object, so we merge them here.
+      if (hasIbqStructure) {
+        if (Array.isArray(raw['lines'])) {
+          normalised['lines'] = raw['lines'];
+        }
+        if (Array.isArray(raw['payments'])) {
+          // Map IBQ's `payments` array to `statement_ids` which upsertOrder recognizes.
+          normalised['statement_ids'] = raw['payments'];
+        }
       }
 
       return normalised as unknown as OdooOrder;
