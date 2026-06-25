@@ -62,6 +62,8 @@ COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_mod
 COPY --from=builder /app/packages/backend/dist ./packages/backend/dist
 COPY --from=builder /app/packages/backend/prisma ./packages/backend/prisma
 COPY packages/backend/package.json ./packages/backend/
+# data/ is volume-mounted at runtime; create the directory so the mount point exists
+RUN mkdir -p /app/packages/backend/data
 
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 USER appuser
@@ -115,6 +117,8 @@ COPY packages/backend/ ./packages/backend/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/packages/backend
 RUN pnpm exec prisma generate
+# data/ is volume-mounted at runtime; create the directory so the mount point exists
+RUN mkdir -p /app/packages/backend/data
 
 EXPOSE 3001
 

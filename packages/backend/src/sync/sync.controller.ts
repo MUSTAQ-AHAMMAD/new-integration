@@ -86,6 +86,28 @@ export class SyncController {
     return this.syncService.listFailedTransactions(parseLimit(limit, 50));
   }
 
+  @Get('order-queue')
+  @ApiOperation({ summary: 'List OrderSyncQueue entries (individual ingested orders)' })
+  listOrderQueue(
+    @Query('status') status?: string,
+    @Query('branchCode') branchCode?: string,
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.syncService.listOrderQueue({
+      status,
+      branchCode,
+      search,
+      limit: parseLimit(limit, 200),
+    });
+  }
+
+  @Post('order-queue/:id/retry')
+  @ApiOperation({ summary: 'Re-queue a single OrderSyncQueue entry for processing' })
+  retryOrderQueueEntry(@Param('id') id: string) {
+    return this.syncService.retryOrderQueueEntry(id);
+  }
+
   @Get('orders/:odooOrderId')
   @ApiOperation({ summary: 'Get sync status for specific order' })
   getOrderStatus(@Param('odooOrderId') odooOrderId: string) {

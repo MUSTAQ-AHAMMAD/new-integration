@@ -220,12 +220,47 @@ services:
       timeout: 10s
       retries: 10
       start_period: 120s
+    volumes:
+      # Mount the local data/ folder read-only so CSV seed files are accessible
+      # inside the container without rebuilding the image.
+      - ./packages/backend/data:/app/packages/backend/data:ro
     networks:
       - integration_net
 
   # ─────────────────────────────────────────
-  # Worker — dedicated BullMQ processor
+  # CSV Seeder — one-shot on-demand import
+  # Usage: docker compose run --rm seeder
+  #        docker compose run --rm seeder data/vendhq-registers.csv
+  #        docker compose run --rm seeder data/file.csv --table vendhq-registers
   # ─────────────────────────────────────────
+  seeder:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+      target: development
+    environment:
+      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
+      DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
+    # Use ts-node directly — devDependencies are installed in the development image,
+    # so no build step is required. Prisma generate is needed for the Prisma client.
+    entrypoint:
+      - sh
+      - -c
+      - >
+        pnpm exec prisma generate &&
+        node_modules/.bin/ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts "$@"
+      - --
+    volumes:
+      - ./packages/backend/data:/app/packages/backend/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    networks:
+      - integration_net
+    profiles:
+      - seeder
   worker:
     build:
       context: .
