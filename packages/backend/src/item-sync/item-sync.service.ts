@@ -15,6 +15,7 @@ import { OracleInventoryItem } from '../clients/oracle/oracle.client';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 export interface ItemSyncResult {
   region: string;
@@ -35,6 +36,7 @@ export class ItemSyncService {
     private readonly prisma: PrismaService,
     private readonly oracleClient: OracleClient,
     private readonly vendHqClient: VendHqClient,
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /**
@@ -43,26 +45,48 @@ export class ItemSyncService {
    */
   @Cron('0 0 * * * *')
   async runItemSync(): Promise<void> {
-    const credentials = await this.prisma.vendHqCredential.findMany({
-      where: { active: true },
-    });
-
-    if (credentials.length === 0) {
-      this.logger.warn('No active VendHQ credentials — item sync skipped');
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('item-sync');
+    if (!enabled) {
+      this.logger.debug('Item sync service is disabled, skipping cron run');
       return;
     }
 
-    for (const cred of credentials) {
-      try {
-        const result = await this.syncItemsForRegion(cred.region);
-        this.logger.log(
-          `Item sync done for region=${result.region}: ` +
-            `synced=${result.synced} skipped=${result.skipped} failed=${result.failed}`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(`Item sync failed for region=${cred.region}: ${msg}`);
+    await this.syncControl.markRunning('item-sync');
+    let hasError = false;
+
+    try {
+      const credentials = await this.prisma.vendHqCredential.findMany({
+        where: { active: true },
+      });
+
+      if (credentials.length === 0) {
+        this.logger.warn('No active VendHQ credentials — item sync skipped');
+        return;
       }
+
+      for (const cred of credentials) {
+        try {
+          const result = await this.syncItemsForRegion(cred.region);
+          this.logger.log(
+            `Item sync done for region=${result.region}: ` +
+              `synced=${result.synced} skipped=${result.skipped} failed=${result.failed}`,
+          );
+          if (result.failed > 0) {
+            hasError = true;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(`Item sync failed for region=${cred.region}: ${msg}`);
+          hasError = true;
+        }
+      }
+
+      await this.syncControl.markStopped('item-sync', hasError ? 'error' : 'success');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Item sync job failed: ${msg}`);
+      await this.syncControl.markStopped('item-sync', 'error');
     }
   }
 
