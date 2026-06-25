@@ -142,8 +142,9 @@ export class OracleClient {
         // Build the semicolon-delimited "q" filter — mirrors Java FusionItemsService
         const qParts: string[] = [];
         if (params.lastUpdateDate) {
-          const iso = params.lastUpdateDate.toISOString().replace('T', ' ').substring(0, 19);
-          qParts.push(`LastUpdateDate>${iso}`);
+          // Oracle expects 'YYYY-MM-DD HH:mm:ss' (same format used by Java SimpleDateFormat)
+          const oracleDate = this.formatOracleDate(params.lastUpdateDate);
+          qParts.push(`LastUpdateDate>${oracleDate}`);
         }
         qParts.push('UserItemTypeValue=Finished Good');
         if (params.organizationCode)
@@ -225,6 +226,14 @@ export class OracleClient {
         return items;
       }),
     );
+  }
+
+  /**
+   * Formats a Date to the 'YYYY-MM-DD HH:mm:ss' string expected by Oracle REST API
+   * query parameters (same format as Java SimpleDateFormat("YYYY-MM-dd HH:mm:ss")).
+   */
+  private formatOracleDate(date: Date): string {
+    return date.toISOString().replace('T', ' ').substring(0, 19);
   }
 
   private async withRetries<T>(

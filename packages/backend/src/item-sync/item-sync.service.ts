@@ -24,6 +24,9 @@ export interface ItemSyncResult {
   errors: string[];
 }
 
+/** Fallback watermark when no item meta exists: mirrors Java `calendar.add(Calendar.YEAR, -10)`. */
+const WATERMARK_FALLBACK_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class ItemSyncService {
   private readonly logger = new Logger(ItemSyncService.name);
@@ -91,7 +94,7 @@ export class ItemSyncService {
     });
     const lastUpdateDate =
       latestMeta?.lastUpdateDate ??
-      new Date(Date.now() - 10 * 365 * 24 * 60 * 60 * 1000); // 10 years ago fallback
+      new Date(Date.now() - WATERMARK_FALLBACK_MS); // 10 years ago fallback
 
     // ── 3. Fetch items from Oracle Fusion in pages ──────────────────────────
     const allItems: OracleInventoryItem[] = [];
