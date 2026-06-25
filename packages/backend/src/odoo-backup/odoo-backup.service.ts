@@ -85,12 +85,13 @@ function resolveQty(line: OdooOrderLine): number | null {
 }
 
 /**
- * Extract the first tax name from an Odoo Many2many tax_id field.
+ * Extract the first tax name from an Odoo Many2many tax field.
  *
- * Handles three common formats:
+ * Handles four common formats:
  *   - `[[id, "VAT 5%"], ...]`  — tuple array (most common in POS)
  *   - `["VAT 5%", ...]`        — plain string array
  *   - `"VAT 5%"`               — plain string (non-standard)
+ *   - `[61, ...]`              — integer ID-only array (no name available → null)
  */
 function extractFirstTaxName(taxId: unknown): string | null {
   if (typeof taxId === 'string') return taxId || null;
@@ -106,6 +107,8 @@ function extractFirstTaxName(taxId: unknown): string | null {
     return first[1] || null;
   }
   if (typeof first === 'string') return first || null;
+  // Plain integer ID-only array — name is not embedded; return null gracefully.
+  if (typeof first === 'number') return null;
 
   return null;
 }
@@ -1111,13 +1114,20 @@ export class OdooBackupService {
         const lineId = typeof line.id === 'number' ? line.id : null;
 
         const productCode =
-          typeof line['product_code'] === 'string'
-            ? line['product_code']
+          typeof line.product_code === 'string'
+            ? line.product_code
             : typeof line['default_code'] === 'string'
               ? line['default_code']
-              : null;
+              : typeof line.product_barcode === 'string'
+                ? line.product_barcode
+                : null;
 
-        const taxName = extractFirstTaxName(line['tax_id']);
+        // Prefer tax_ids (plural) which is what most Odoo variants return;
+        // fall back to tax_id (singular) for older/non-standard variants.
+        const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
+
+        const lineName =
+          typeof line.name === 'string' ? line.name : null;
 
         return {
           orderId: order.id,
@@ -1125,6 +1135,7 @@ export class OdooBackupService {
           productId,
           productName,
           productCode,
+          lineName,
           qty: resolveQty(line),
           priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
           priceSubtotal:

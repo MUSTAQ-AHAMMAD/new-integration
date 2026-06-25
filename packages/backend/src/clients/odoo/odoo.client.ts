@@ -14,7 +14,12 @@ import { findArrayInPayload, toApiDatetime } from '../../common/odoo-utils';
 
 export interface OdooOrderLine {
   id?: number;
+  /** Line reference / description */
+  name?: string;
   product_id?: number | [number, string];
+  product_tmpl_id?: number | [number, string];
+  /** Barcode / SKU string (e.g. "10705112") */
+  product_barcode?: string;
   /** POS orders use "qty", sale orders use "product_uom_qty" */
   qty?: number;
   product_uom_qty?: number;
@@ -22,6 +27,15 @@ export interface OdooOrderLine {
   price_subtotal?: number;
   price_subtotal_incl?: number;
   discount?: number;
+  /** Tax IDs — plural form used by many Odoo variants (may be integer IDs or tuples) */
+  tax_ids?: unknown[];
+  /** Tax IDs — singular form used by some Odoo variants */
+  tax_id?: unknown;
+  /** Unit of measure */
+  product_uom_id?: number | [number, string];
+  base_uom_id?: number | [number, string];
+  is_reward_line?: boolean;
+  reward_id?: number | false;
   [key: string]: unknown;
 }
 
