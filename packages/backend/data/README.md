@@ -3,7 +3,12 @@
 Drop CSV files here and run:
 
 ```bash
-# From packages/backend — import all CSVs in this folder
+# ── Local development (no Docker) ──────────────────────────────────────────
+# Build the backend first (compiles seed-csv.ts → dist/scripts/seed-csv.js)
+cd packages/backend
+pnpm build
+
+# Import all CSVs in data/
 pnpm seed:csv
 
 # Import a specific file
@@ -11,7 +16,26 @@ pnpm seed:csv data/VENDHQ_REGISTERS_202606241630.csv
 
 # Import a file whose name doesn't match any table slug
 pnpm seed:csv data/my-file.csv --table vendhq-registers
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+# Drop CSVs into packages/backend/data/ on your host machine, then:
+
+# One-shot seeder (no server restart needed)
+docker compose run --rm seeder
+
+# Or exec directly inside the running backend container
+docker exec integration_backend sh -c "node dist/scripts/seed-csv.js"
+
+# Import a specific file mounted from the host
+docker exec integration_backend sh -c \
+  "node dist/scripts/seed-csv.js /app/packages/backend/data/vendhq-registers.csv"
 ```
+
+## How it works
+
+1. Drop CSV files in this `data/` folder on the **host**.
+2. The folder is mounted read-only into the container at `/app/packages/backend/data`.
+3. Run the seeder — it auto-detects the target table from each filename.
 
 ## File naming convention
 

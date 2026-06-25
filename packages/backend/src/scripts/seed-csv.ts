@@ -270,7 +270,10 @@ async function main() {
   }
 
   // Collect CSV file paths
-  const defaultDataDir = path.join(__dirname, '..', 'data');
+  // __dirname is either:
+  //   src/scripts/   (ts-node)      → go up 2 levels to packages/backend/
+  //   dist/scripts/  (compiled JS)  → go up 2 levels to packages/backend/
+  const defaultDataDir = path.join(__dirname, '..', '..', 'data');
   let files: string[] = [];
 
   if (args.length > 0) {
