@@ -383,7 +383,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-sales': {
     title: 'Backup VendHQ Sales',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'invoiceNumber', label: 'Invoice #' },
@@ -398,7 +397,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-line-items': {
     title: 'Backup VendHQ Line Items',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'invoiceNumber', label: 'Invoice #' },
@@ -413,7 +411,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-payments': {
     title: 'Backup VendHQ Payments',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'invoiceNumber', label: 'Invoice #' },
@@ -426,7 +423,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-promotions': {
     title: 'Backup VendHQ Promotions',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'invoiceNumber', label: 'Invoice #' },
@@ -454,7 +450,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-odoo-orders': {
     title: 'Backup Odoo Orders',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
@@ -474,7 +469,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-odoo-order-lines': {
     title: 'Backup Odoo Order Lines',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
@@ -492,7 +486,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-odoo-order-payments': {
     title: 'Backup Odoo Order Payments',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
@@ -531,7 +524,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-ibq-orders': {
     title: 'Backup IBQ Orders',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
@@ -556,7 +548,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-ibq-order-lines': {
     title: 'Backup IBQ Order Lines',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
@@ -575,7 +566,6 @@ export const ADMIN_TABLE_CONFIGS: Record<
   },
   'backup-ibq-order-payments': {
     title: 'Backup IBQ Order Payments',
-    readOnly: true,
     fields: [
       { key: 'id', label: 'ID', readOnly: true, tableHidden: true },
       { key: 'orderId', label: 'Order ID', type: 'number' },
