@@ -28,6 +28,7 @@ import {
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 // ---------------------------------------------------------------------------
 // Raw IBQ / Odoo POS API response shapes
@@ -139,6 +140,8 @@ export class IbqBackupService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => OrderSyncService))
     private readonly orderSyncService: OrderSyncService,
+    @Inject(forwardRef(() => SyncControlService))
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /**
@@ -148,68 +151,88 @@ export class IbqBackupService {
    */
   @Cron('0 */15 * * * *')
   async runBackupJob(): Promise<void> {
-    const credentials = await this.prisma.ibqCredential.findMany({
-      where: { active: true },
-    });
-
-    if (credentials.length === 0) {
-      this.logger.warn('No active IBQ credentials found — backup skipped');
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('ibq-backup');
+    if (!enabled) {
+      this.logger.debug('IBQ backup service is disabled, skipping cron run');
       return;
     }
 
-    for (const cred of credentials) {
-      try {
-        const enabled = await this.isRegionEnabled(cred.region);
-        if (!enabled) {
-          this.logger.log(
-            `IBQ backup skipped for region=${cred.region} — integration is DISABLED`,
-          );
-          continue;
-        }
+    await this.syncControl.markRunning('ibq-backup');
+    let hasError = false;
 
-        const result = await this.backupRegion(cred);
+    try {
+      const credentials = await this.prisma.ibqCredential.findMany({
+        where: { active: true },
+      });
 
-        // Ingest backed-up orders into OrderSyncQueue.
-        // Backup counts (saved/skipped) and ingestion counts (queued/skipped)
-        // are tracked separately: an order can be backed up but fail to ingest
-        // (e.g. missing branch mapping), and ingestion can be retried from the
-        // backup table without re-fetching from the IBQ API.
-        let ingested = 0;
-        let ingestSkipped = 0;
-        for (const order of result.orders) {
-          try {
-            // IBQ instances don't carry per-order timezone; always use the
-            // region default (Asia/Dubai) as the timezone override.
-            const payload = normalizeOrderForIngestion(
-              order,
-              DEFAULT_ODOO_TIMEZONE,
-            );
-            if (!payload) {
-              ingestSkipped++;
-              continue;
-            }
-            await this.orderSyncService.ingestOrder(payload);
-            ingested++;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.logger.warn(
-              `Failed to ingest IBQ order id=${String(order.id)} region=${cred.region}: ${msg}`,
-            );
-            ingestSkipped++;
-          }
-        }
-
-        this.logger.log(
-          `IBQ backup+ingest done for region=${cred.region}: ` +
-            `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
-            `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(
-          `IBQ backup failed for region=${cred.region} url=${cred.baseUrl}: ${msg}`,
-        );
+      if (credentials.length === 0) {
+        this.logger.warn('No active IBQ credentials found — backup skipped');
+        await this.syncControl.markStopped('ibq-backup', 'success');
+        return;
       }
+
+      for (const cred of credentials) {
+        try {
+          const enabled = await this.isRegionEnabled(cred.region);
+          if (!enabled) {
+            this.logger.log(
+              `IBQ backup skipped for region=${cred.region} — integration is DISABLED`,
+            );
+            continue;
+          }
+
+          const result = await this.backupRegion(cred);
+
+          // Ingest backed-up orders into OrderSyncQueue.
+          // Backup counts (saved/skipped) and ingestion counts (queued/skipped)
+          // are tracked separately: an order can be backed up but fail to ingest
+          // (e.g. missing branch mapping), and ingestion can be retried from the
+          // backup table without re-fetching from the IBQ API.
+          let ingested = 0;
+          let ingestSkipped = 0;
+          for (const order of result.orders) {
+            try {
+              // IBQ instances don't carry per-order timezone; always use the
+              // region default (Asia/Dubai) as the timezone override.
+              const payload = normalizeOrderForIngestion(
+                order,
+                DEFAULT_ODOO_TIMEZONE,
+              );
+              if (!payload) {
+                ingestSkipped++;
+                continue;
+              }
+              await this.orderSyncService.ingestOrder(payload);
+              ingested++;
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.logger.warn(
+                `Failed to ingest IBQ order id=${String(order.id)} region=${cred.region}: ${msg}`,
+              );
+              ingestSkipped++;
+            }
+          }
+
+          this.logger.log(
+            `IBQ backup+ingest done for region=${cred.region}: ` +
+              `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+              `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
+          );
+        } catch (err) {
+          hasError = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `IBQ backup failed for region=${cred.region} url=${cred.baseUrl}: ${msg}`,
+          );
+        }
+      }
+
+      await this.syncControl.markStopped('ibq-backup', hasError ? 'error' : 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`IBQ backup cron failed: ${msg}`);
+      await this.syncControl.markStopped('ibq-backup', 'error');
     }
   }
 

@@ -4,6 +4,7 @@ import { JobType, ScopeType, SyncStatus } from '@prisma/client';
 import { PIPELINE_CREATOR_ID } from '../common/constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
+import { SyncControlService } from './sync-control.service';
 
 /**
  * PipelineSchedulerService - Automatic pipeline that mimics the Java Quartz scheduler
@@ -34,6 +35,7 @@ export class PipelineSchedulerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly syncService: SyncService,
+    private readonly syncControl: SyncControlService,
   ) {
     // Configuration from environment variables
     this.enabled = process.env.PIPELINE_ENABLED !== 'false';
@@ -54,8 +56,15 @@ export class PipelineSchedulerService {
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async runAutomaticPipeline(): Promise<void> {
+    // Check if sync control allows this service to run
+    const controlEnabled = await this.syncControl.isEnabled('pipeline-scheduler');
+    if (!controlEnabled) {
+      this.logger.debug('Pipeline scheduler is disabled, skipping cron run');
+      return;
+    }
+
     if (!this.enabled) {
-      return; // Pipeline disabled
+      return; // Pipeline disabled via env var
     }
 
     if (this.isRunning) {
@@ -64,6 +73,7 @@ export class PipelineSchedulerService {
     }
 
     this.isRunning = true;
+    await this.syncControl.markRunning('pipeline-scheduler');
     try {
       // Count how many orders are waiting to be processed
       const pendingCount = await this.prisma.orderSyncQueue.count({
@@ -76,6 +86,7 @@ export class PipelineSchedulerService {
 
       if (pendingCount === 0) {
         this.logger.debug('No pending orders to process');
+        await this.syncControl.markStopped('pipeline-scheduler', 'success');
         return;
       }
 
@@ -84,6 +95,7 @@ export class PipelineSchedulerService {
         this.logger.debug(
           `Pending orders (${pendingCount}) below minimum batch size (${this.minBatchSize})`,
         );
+        await this.syncControl.markStopped('pipeline-scheduler', 'success');
         return;
       }
 

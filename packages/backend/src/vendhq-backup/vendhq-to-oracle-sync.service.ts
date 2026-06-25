@@ -4,6 +4,7 @@ import { SaleStatus } from '@prisma/client';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionTransformationService } from '../sync/fusion-transformation.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 /** How many pending sales to process per cron run */
 const BATCH_SIZE = 50;
@@ -17,18 +18,32 @@ export class VendHqToOracleSyncService {
     private readonly prisma: PrismaService,
     private readonly transformationService: FusionTransformationService,
     private readonly soapClient: OracleSoapClient,
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /** Every 10 minutes: process all unsynchronised VendHQ backup sales */
   @Cron('0 */10 * * * *')
   async handleCron(): Promise<void> {
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('vendhq-to-oracle');
+    if (!enabled) {
+      this.logger.debug('VendHQ→Oracle sync service is disabled, skipping cron run');
+      return;
+    }
+
     if (this.running) {
       this.logger.warn('VendHQ→Oracle sync already running, skipping tick');
       return;
     }
     this.running = true;
+    await this.syncControl.markRunning('vendhq-to-oracle');
     try {
       await this.runSyncJob();
+      await this.syncControl.markStopped('vendhq-to-oracle', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`VendHQ→Oracle sync cron failed: ${msg}`);
+      await this.syncControl.markStopped('vendhq-to-oracle', 'error');
     } finally {
       this.running = false;
     }
