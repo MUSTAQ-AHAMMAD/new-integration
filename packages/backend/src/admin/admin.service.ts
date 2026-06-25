@@ -50,6 +50,10 @@ const TABLE_MAP: Record<string, keyof PrismaService> = {
   'backup-odoo-orders': 'backupOdooOrder',
   'backup-odoo-order-lines': 'backupOdooOrderLine',
   'backup-odoo-order-payments': 'backupOdooOrderPayment',
+  'ibq-credentials': 'ibqCredential',
+  'backup-ibq-orders': 'backupIbqOrder',
+  'backup-ibq-order-lines': 'backupIbqOrderLine',
+  'backup-ibq-order-payments': 'backupIbqOrderPayment',
   'sale-sync-status': 'saleSyncStatus',
   'api-endpoint-configs': 'apiEndpointConfig',
 };
