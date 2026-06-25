@@ -57,6 +57,32 @@ export interface RawOdooOrderFields {
 }
 
 /**
+ * Odoo/IBQ order states that indicate the order is completed and ready for Oracle sync.
+ * 
+ * Based on analysis of Java integration:
+ * - Java processes ALL orders from backup table regardless of state
+ * - This suggests orders in backup are pre-filtered to include only valid states
+ * 
+ * Odoo POS/ERP states:
+ * - 'paid': Payment completed (POS orders)
+ * - 'done': Order fulfilled/completed
+ * - 'posted': Invoice posted to accounting
+ * - 'invoiced': Invoice generated (common in IBQ)
+ * - 'sale': Sales order confirmed (Odoo Sales workflow)
+ * - 'invoice': Invoice state (some Odoo versions)
+ * 
+ * Note: 'draft' and 'cancel' states are explicitly excluded.
+ */
+const PAID_ORDER_STATES = [
+  'paid',
+  'done',
+  'posted',
+  'invoiced',
+  'sale',
+  'invoice',
+] as const;
+
+/**
  * Normalised ingestion payload extracted from a raw Odoo/IBQ order.
  * Returns null when the order is missing a branch code (must be skipped).
  *
@@ -93,6 +119,11 @@ export function normalizeOrderForIngestion(
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
+  // Check if order state indicates it's paid/completed
+  // Cast to lowercase for case-insensitive comparison
+  const normalizedState = state.toLowerCase();
+  const isPaid = PAID_ORDER_STATES.includes(normalizedState as any);
+
   return {
     odooOrderId: String(order.id),
     odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
@@ -100,8 +131,8 @@ export function normalizeOrderForIngestion(
     orderDate: order.date_order ? new Date(order.date_order) : new Date(),
     originalTimezone: resolvedTimezone,
     totalAmount: amountTotal,
-    isPaid: ['paid', 'done', 'posted'].includes(state),
-    isCancelled: state === 'cancel',
+    isPaid,
+    isCancelled: normalizedState === 'cancel' || normalizedState === 'cancelled',
     isRefund: amountTotal < 0,
   };
 }
