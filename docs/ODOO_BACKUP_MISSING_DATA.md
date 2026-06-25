@@ -1,160 +1,102 @@
-# Odoo Backup Data Issue: Missing Order Lines and Payments
+# Odoo Backup Data Issue: Missing Order Lines and Payments - RESOLVED
 
 ## Problem
-Data is being stored in the `BackupOdooOrder` table (967 records) but **NOT** in the `BackupOdooOrderLine` and `BackupOdooOrderPayment` tables.
+Data was being stored in the `BackupOdooOrder` table (967 records) but **NOT** in the `BackupOdooOrderLine` and `BackupOdooOrderPayment` tables.
 
-## Root Cause
-The Odoo REST API is returning `line_ids` and `statement_ids`/`payment_ids` as **integer ID arrays** instead of **embedded object arrays**.
+## Root Cause (CORRECTED)
 
-When the API returns:
+The issue was in how the code handled the **IBQ Unified API v2 response structure**.
+
+Your Odoo/IBQ API returns:
 ```json
 {
-  "id": 161815,
-  "name": "JUBHUWYLYT/1167",
-  "line_ids": [12345, 12346, 12347],  // ❌ PROBLEM: Just IDs
-  "statement_ids": [67890, 67891]      // ❌ PROBLEM: Just IDs
-}
-```
-
-Instead of:
-```json
-{
-  "id": 161815,
-  "name": "JUBHUWYLYT/1167",
-  "lines": [                           // ✓ CORRECT: Full objects
+  "results": [
     {
-      "id": 12345,
-      "product_id": [100, "Product A"],
-      "qty": 2,
-      "price_unit": 50.0,
-      ...
-    },
-    ...
-  ],
-  "statement_ids": [                   // ✓ CORRECT: Full objects
-    {
-      "id": 67890,
-      "name": "Cash",
-      "amount": 100.0,
-      ...
-    },
-    ...
+      "order": { 
+        "order_id": 125254,
+        "name": "JEDNUJOD/2919",
+        ...
+      },
+      "lines": [ 
+        { "id": 544467, "product_id": [...], ... }
+      ],
+      "payments": [
+        { "id": 137891, "amount": 0.01, ... }
+      ]
+    }
   ]
 }
 ```
 
-The backend code (in `odoo-backup.service.ts` lines 1099-1106 and 1175-1182) filters out integer-only entries and logs warnings when this happens:
+The `normalizeOrderItems()` method was extracting the `order` object but **discarding** the sibling `lines` and `payments` arrays. The `upsertOrder()` method never received the line items and payments, so they were never stored in the database.
+
+## Solution Implemented
+
+Updated `/packages/backend/src/odoo-backup/odoo-backup.service.ts` in the `normalizeOrderItems()` method to:
+
+1. Detect when the API response uses the IBQ structure with separate `order`, `lines`, and `payments` fields
+2. Merge the `lines` array into the normalized order object
+3. Map the `payments` array to `statement_ids` (which `upsertOrder` expects)
+
+### Code Changes
 
 ```typescript
-// If only integer IDs are received, lines won't be stored
-if (lines.length === 0 && rawLineItems.length > 0) {
-  this.logger.warn(
-    `Odoo order id=${order.id}: API returned ${rawLineItems.length} line item IDs 
-     but no embedded objects — order lines will not be stored.`
-  );
+// IBQ unified API v2: merge sibling `lines` and `payments` arrays into the order.
+if (hasIbqStructure) {
+  if (Array.isArray(raw['lines'])) {
+    normalised['lines'] = raw['lines'];
+  }
+  if (Array.isArray(raw['payments'])) {
+    normalised['statement_ids'] = raw['payments'];
+  }
 }
 ```
 
-## Diagnostic Steps
+## What to Do Next
 
-### 1. Check Backend Logs
-Look for warnings like:
-```
-Odoo order id=161815 region=unknown: API returned X line item IDs but no embedded objects — order lines will not be stored.
-Odoo order id=161815 region=unknown: API returned Y payment IDs but no embedded objects — payments will not be stored.
-```
+1. **Pull the latest code** with this fix
+2. **Re-fetch your orders**:
+   ```bash
+   POST /odoo-backup/trigger
+   ```
+   Or:
+   ```bash
+   POST /sync/fetch-odoo
+   ```
 
-### 2. Use the New Diagnostic Endpoint
+3. **Verify the fix** using the diagnostic endpoints:
+   ```bash
+   GET /odoo-backup/diagnostics/summary
+   ```
 
-I've added a diagnostic controller. After starting your backend, call:
+4. **Check your data**:
+   - Go to http://localhost:3000/admin/backup-odoo
+   - Switch to the "Order Lines" and "Payments" tabs
+   - You should now see data in all three tables
 
-**Check Summary:**
-```bash
-GET http://localhost:3000/odoo-backup/diagnostics/summary
-```
+## API Structure Support
 
-This will show:
-- Total counts of orders, lines, and payments
-- Diagnosis of the issue
-- Sample data analysis
-- Suggested solutions
+The code now handles three different API response patterns:
 
-**Analyze a Specific Order:**
-```bash
-GET http://localhost:3000/odoo-backup/diagnostics/analyze-order/161815
-```
-
-This will show:
-- What fields are present in the raw JSON (`lines`, `order_line`, `line_ids`, etc.)
-- Whether they contain integer IDs or embedded objects
-- Actual stored counts
-
-## Solutions
-
-### Option 1: Configure Odoo API Endpoint to Expand Fields
-
-Your Odoo instance needs to be configured to return embedded child records. This depends on your Odoo version and REST API module:
-
-**For Odoo POS REST API (`/api/pos/order`):**
-- Check if your endpoint supports a `fields` parameter to expand relations
-- Example: `/api/pos/order?fields=lines,statement_ids`
-- Some REST API modules support automatic expansion of One2many/Many2many fields
-
-**For Odoo Sale Order REST API (`/api/sale.order`):**
-- This endpoint might have different embedding behavior
-- Try updating the `apiPath` in your OdooCredential to `/api/sale.order`
-
-### Option 2: Update the OdooCredential API Path
-
-1. Go to: `http://localhost:3000/odoo-backup/credentials`
-2. Edit your credential
-3. Set `apiPath` to the endpoint that returns embedded data:
-   - Try `/api/pos/order` (default for POS)
-   - Try `/api/sale.order` (for sale orders)
-   - Try `/api/pos/order?expand=lines,statement_ids` (if expansion supported)
-
-### Option 3: Use the Probe Endpoint
-
-Test what your Odoo API actually returns:
-
-```bash
-POST http://localhost:3000/odoo-backup/credentials/{credentialId}/probe
-```
-
-This makes a test request with `limit=1` and shows you exactly what structure Odoo returns.
-
-### Option 4: Custom Odoo REST API Module
-
-If your Odoo instance uses a custom REST API module, you may need to:
-1. Modify the Odoo module to automatically embed child records
-2. Configure the module's `read` method to include related fields
-3. Or use a different Odoo API endpoint (XML-RPC, JSON-RPC) that supports field expansion
-
-## Checking Your Odoo Version
-
-The field names vary by Odoo version:
-- **Odoo v15**: Uses `statement_ids` for payments, `order_line` for lines
-- **Odoo v16-17**: May use `lines` for POS, `order_line` for sale orders  
-- **Odoo v18**: May use `payment_ids` for payments
-
-The backend code handles all these variations, but **all** require embedded objects, not just IDs.
-
-## Next Steps
-
-1. **Run the diagnostic endpoint** to confirm the issue
-2. **Check your backend logs** for the specific warnings
-3. **Contact your Odoo administrator** to configure the REST API to return expanded child records
-4. **Test with the probe endpoint** after making changes
-5. **Re-fetch orders** once configured: `POST /odoo-backup/trigger` or `POST /sync/fetch-odoo`
+1. **Standard Odoo REST**: Orders with nested `lines` and `statement_ids`
+2. **IBQ Unified API v1**: Wrapped orders with field name aliases
+3. **IBQ Unified API v2**: Separate `order`, `lines`, and `payments` fields at the same level (your case)
 
 ## Technical Details
 
-The issue is in how Odoo's ORM serializes related records. By default, many REST APIs only return IDs for One2many and Many2many relationships to avoid deep nesting. You need to explicitly configure field expansion.
+### What Was Wrong
+The `normalizeOrderItems()` method at line 948-970 was only extracting the inner `order` object and ignoring the sibling arrays.
 
-### Prisma Schema
-The three tables:
-- `BackupOdooOrder` - Main order header (967 records ✓)
-- `BackupOdooOrderLine` - Order line items (0 records ❌)
-- `BackupOdooOrderPayment` - Payment entries (0 records ❌)
+### What Changed
+- Added detection for IBQ structure (`hasIbqStructure`)
+- After normalizing field names, merge sibling `lines` and `payments` arrays into the order
+- Map `payments` → `statement_ids` for compatibility with `upsertOrder()`
 
-Relations use `parentOrderId` foreign key linking to `BackupOdooOrder.id`.
+### Diagnostic Tools
+
+Use the new diagnostic endpoints to verify:
+- `/odoo-backup/diagnostics/summary` - Shows totals and data quality
+- `/odoo-backup/diagnostics/analyze-order/:orderId` - Analyzes specific order structure
+
+These will now show that your orders have proper embedded objects and will be stored correctly.
+
