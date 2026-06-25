@@ -972,16 +972,19 @@ export class OdooBackupService {
 
   /**
    * Resolves the raw payment array from an Odoo order, preferring
-   * `statement_ids` (Odoo v15) when non-empty and falling back to
-   * `payment_ids` (Odoo v18) otherwise. Returns an empty array when neither
-   * field contains data.
+   * `statement_ids` (Odoo v15) when non-empty, falling back to
+   * `payment_ids` (Odoo v18), and then to `payments` (some API variants).
+   * Returns an empty array when no field contains data.
    */
   private extractPaymentItems(order: OdooOrder): unknown[] {
     if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
       return order.statement_ids;
     }
-    if (Array.isArray(order.payment_ids)) {
+    if (Array.isArray(order.payment_ids) && order.payment_ids.length > 0) {
       return order.payment_ids;
+    }
+    if (Array.isArray(order.payments)) {
+      return order.payments;
     }
     return [];
   }

@@ -57,9 +57,10 @@ export interface OdooOrder {
   lines?: OdooOrderLine[];
   /** Sale orders expose lines here */
   order_line?: OdooOrderLine[];
-  /** Odoo v15 uses statement_ids, v18 may use payment_ids */
+  /** Odoo v15 uses statement_ids, v18 may use payment_ids, some variants use payments */
   statement_ids?: OdooOrderPayment[];
   payment_ids?: OdooOrderPayment[];
+  payments?: OdooOrderPayment[];
   [key: string]: unknown;
 }
 
