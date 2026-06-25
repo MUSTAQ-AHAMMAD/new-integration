@@ -270,10 +270,10 @@ async function main() {
   }
 
   // Collect CSV file paths
-  // __dirname is either:
-  //   src/scripts/   (ts-node)      → go up 2 levels to packages/backend/
-  //   dist/scripts/  (compiled JS)  → go up 2 levels to packages/backend/
-  const defaultDataDir = path.join(__dirname, '..', '..', 'data');
+  // Use the working directory (always packages/backend/ in Docker and local dev)
+  // instead of __dirname traversal, which varies by whether we're running as
+  // ts-node (src/scripts/) or compiled JS (dist/scripts/).
+  const defaultDataDir = path.join(process.cwd(), 'data');
   let files: string[] = [];
 
   if (args.length > 0) {
