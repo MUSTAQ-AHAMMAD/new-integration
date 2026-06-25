@@ -1164,9 +1164,10 @@ export class OdooBackupService {
     // Only prefer statement_ids when it is non-empty; otherwise fall through to
     // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
     // carries real data are not silently dropped.
-    const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(
-      order,
-    ).filter((p): p is OdooOrderPayment => typeof p === 'object' && p !== null);
+    const rawPaymentItems: unknown[] = this.extractPaymentItems(order);
+    const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
+      (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
+    );
 
     // Warn when the API returned payment entries that are plain integers (ID-only
     // arrays).  This means the Odoo endpoint is not embedding payment data in the
