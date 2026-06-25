@@ -1,5 +1,6 @@
 import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -70,7 +71,7 @@ export class OdooBackupDiagnosticsController {
 
     // Get a sample order to analyze
     const sampleOrder = await this.prisma.backupOdooOrder.findFirst({
-      where: { rawJson: { not: null } },
+      where: { rawJson: { not: Prisma.JsonNull } },
       select: { orderId: true, orderName: true, rawJson: true },
     });
 
