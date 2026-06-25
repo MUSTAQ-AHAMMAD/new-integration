@@ -128,8 +128,8 @@ export class StoreConfigService {
     const { branchCode, odooBranchId, oracleOperatingUnitId, ...rest } = data;
     const prismaData = {
       ...rest,
-      odooBranchId: BigInt(odooBranchId),
-      oracleOperatingUnitId: BigInt(oracleOperatingUnitId),
+      odooBranchId: odooBranchId != null ? BigInt(odooBranchId) : BigInt(0),
+      oracleOperatingUnitId: oracleOperatingUnitId != null ? BigInt(oracleOperatingUnitId) : BigInt(0),
     };
     return this.prisma.storeConfiguration.upsert({
       where: { branchCode },

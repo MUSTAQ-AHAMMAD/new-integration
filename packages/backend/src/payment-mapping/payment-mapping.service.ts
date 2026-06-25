@@ -97,7 +97,7 @@ export class PaymentMappingService {
         ...data,
         isActive: true,
         oracleReceiptMethodId: BigInt(data.oracleReceiptMethodId),
-        oracleBankAccountId: data.oracleBankAccountId != null ? BigInt(data.oracleBankAccountId) : undefined,
+        oracleBankAccountId: data.oracleBankAccountId != null ? BigInt(data.oracleBankAccountId) : null,
       },
     });
   }
