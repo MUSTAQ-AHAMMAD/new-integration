@@ -140,20 +140,30 @@ This mimics the Java implementation's **VendHQIntegrationScheduler** that uses Q
 
 ```bash
 # Pipeline timing (optional - defaults shown)
+PIPELINE_ENABLED=true                # Enable/disable automatic pipeline
+PIPELINE_MIN_BATCH_SIZE=1            # Minimum orders before creating job
 PIPELINE_INTERVAL_MINUTES=5          # How often to run automatic pipeline
-PIPELINE_RETRY_INTERVAL_MINUTES=30   # How often to retry negative inventory
 
-# Queue settings
-QUEUE_CONCURRENCY=10                 # Number of concurrent workers
-QUEUE_RETRY_ATTEMPTS=3               # Max retry attempts per order
+# Note: QUEUE_RETRY_ATTEMPTS is configured in the BullMQ queue setup
+# See packages/backend/src/queues/queues.module.ts for queue configuration
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Pipeline timing
+PIPELINE_ENABLED=true                # Enable/disable automatic pipeline
+PIPELINE_MIN_BATCH_SIZE=1            # Minimum orders before creating job
 ```
 
 ### Enabling/Disabling
 
 The pipeline runs automatically when the backend starts. To disable:
 
-1. Comment out `@Cron` decorators in `PipelineSchedulerService`
-2. Set `PIPELINE_ENABLED=false` in `.env` (if implemented)
+1. Set `PIPELINE_ENABLED=false` in `.env`
+2. Restart the backend
 
 ## Monitoring
 

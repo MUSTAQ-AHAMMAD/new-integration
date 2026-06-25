@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { JobType, ScopeType, SyncStatus } from '@prisma/client';
+import { PIPELINE_CREATOR_ID } from '../common/constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
 
@@ -94,7 +95,7 @@ export class PipelineSchedulerService {
       const job = await this.syncService.createSyncJob({
         jobType: JobType.ORDER_SYNC,
         scopeType: ScopeType.ALL,
-        createdBy: 'DASHBOARD_PIPELINE',
+        createdBy: PIPELINE_CREATOR_ID,
       });
 
       this.logger.log(
@@ -110,7 +111,7 @@ export class PipelineSchedulerService {
 
   /**
    * Process orders that failed or were skipped due to negative inventory
-   * Runs every 30 minutes to retry orders after inventory corrections
+   * Runs at :00 and :30 of each hour (every 30 minutes)
    */
   @Cron('0 */30 * * * *')
   async retryNegativeInventoryOrders(): Promise<void> {

@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { PIPELINE_CREATOR_ID } from '@/lib/constants';
 
 export function PipelineStatus() {
   const { data: queueStats } = useQuery({
@@ -17,7 +18,7 @@ export function PipelineStatus() {
     refetchInterval: 5000,
   });
 
-  const recentPipelineJobs = jobs?.filter((j) => j.createdBy === 'DASHBOARD_PIPELINE').slice(0, 3) || [];
+  const recentPipelineJobs = jobs?.filter((j) => j.createdBy === PIPELINE_CREATOR_ID).slice(0, 3) || [];
   const lastPipelineJob = recentPipelineJobs[0];
 
   // Calculate pipeline health
