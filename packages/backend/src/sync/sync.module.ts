@@ -10,6 +10,7 @@ import { SyncController } from './sync.controller';
 import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OdooTransformationService } from './odoo-transformation.service';
+import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { PipelineSchedulerService } from './pipeline-scheduler.service';
 import { StalledOrdersService } from './stalled-orders.service';
@@ -38,6 +39,7 @@ import { ValidationService } from './validation.service';
     FusionTransformationService,
     OdooTransformationService,
     StalledOrdersService,
+    OrderDiagnosticsService,
     SyncResolver,
     PipelineSchedulerService,
   ],
@@ -50,6 +52,7 @@ import { ValidationService } from './validation.service';
     FusionTransformationService,
     OdooTransformationService,
     StalledOrdersService,
+    OrderDiagnosticsService,
     PipelineSchedulerService,
   ],
 })

@@ -17,6 +17,7 @@ import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
+import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
 
@@ -29,6 +30,7 @@ export class SyncController {
     private readonly odooBackupService: OdooBackupService,
     private readonly ibqBackupService: IbqBackupService,
     private readonly prisma: PrismaService,
+    private readonly diagnosticsService: OrderDiagnosticsService,
   ) {}
 
   @Post('jobs')
@@ -327,5 +329,26 @@ export class SyncController {
       skipped,
       errors,
     };
+  }
+
+  @Get('orders/:odooOrderId/diagnose')
+  @ApiOperation({
+    summary:
+      'Diagnose why a specific order is not syncing to Oracle - provides detailed analysis and recommendations',
+  })
+  diagnoseOrder(
+    @Param('odooOrderId') odooOrderId: string,
+    @Query('branchCode') branchCode?: string,
+  ) {
+    return this.diagnosticsService.diagnoseOrder(odooOrderId, branchCode);
+  }
+
+  @Get('diagnostics/summary')
+  @ApiOperation({
+    summary:
+      'Get summary statistics of order sync status to identify common issues',
+  })
+  getDiagnosticsSummary() {
+    return this.diagnosticsService.getOrderStatsSummary();
   }
 }
