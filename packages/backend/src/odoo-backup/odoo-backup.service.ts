@@ -686,28 +686,90 @@ export class OdooBackupService {
     // Strategy: pre-fetch the next page while upserting the current page so
     // that network I/O and DB writes overlap.
     //
-    // Two explicit offset variables are maintained to avoid any ambiguity:
-    //   currentOffset — starting offset of the page currently being processed.
-    //   nextOffset    — starting offset of the next page to be fetched.
+    // Exit conditions (evaluated in order after each page):
+    //   1. Count-verified: fetched >= totalExpected (uses server-reported total
+    //      when available — handles short pages from deleted records correctly).
+    //   2. Short page: page.length < effectivePageSize (fallback when the server
+    //      does not report a total count).
+    //   3. Duplicate-page guard: the server returned the same IDs as the previous
+    //      page, meaning offset pagination is non-functional — stop immediately
+    //      to prevent an infinite loop instead of silently re-ingesting records.
     //
     // allOrders is accumulated and returned so runCredentialBackupJob can pass
     // each page through the ingestion pipeline without a second DB round-trip.
     // Incremental 15-minute cron runs fetch only new records, so the in-memory
     // set remains small in normal operation.  Very large initial back-fills
     // should be run in date-range slices via the manual fetch-odoo endpoint.
+
+    // Extract total count from the first response (null when not advertised).
+    const totalExpected = this.extractTotalFromResponse(firstResp.data);
+    const totalPages =
+      totalExpected !== null
+        ? Math.ceil(totalExpected / effectivePageSize)
+        : null;
+
+    if (totalExpected !== null) {
+      this.logger.log(
+        `OdooCredential region=${cred.region}: server reports ${totalExpected} total records` +
+          ` (${totalPages} page${totalPages === 1 ? '' : 's'} of ${effectivePageSize}).`,
+      );
+    }
+
     const allOrders: OdooOrder[] = [];
+    const prevPageIds = new Set<number>();
 
     let currentPageOrders = this.extractOrderList(firstResp.data);
     let currentOffset = 0;
     let nextOffset = effectivePageSize;
+    let pageNumber = 1;
     let saved = 0;
     let skipped = 0;
 
     while (true) {
+      // ── Duplicate-page detection ──────────────────────────────────────────
+      // If the server returns the same set of IDs as the previous page, offset
+      // pagination is not working.  Break immediately to prevent an infinite
+      // loop that would silently re-ingest the same records on every iteration.
+      if (prevPageIds.size > 0 && currentPageOrders.length > 0) {
+        const currentIds = currentPageOrders
+          .map((o) => (typeof o.id === 'number' ? o.id : null))
+          .filter((id): id is number => id !== null);
+        const dupeCount = currentIds.filter((id) => prevPageIds.has(id)).length;
+
+        if (dupeCount === currentIds.length) {
+          this.logger.warn(
+            `OdooCredential region=${cred.region}: page at offset=${currentOffset} is ` +
+              `identical to the previous page — offset pagination is not supported by ` +
+              `this endpoint; stopping to prevent an infinite loop.`,
+          );
+          break;
+        }
+        if (dupeCount > 0) {
+          this.logger.warn(
+            `OdooCredential region=${cred.region}: page at offset=${currentOffset} ` +
+              `contains ${dupeCount} duplicate IDs from the previous page.`,
+          );
+        }
+        prevPageIds.clear();
+        currentIds.forEach((id) => prevPageIds.add(id));
+      } else {
+        const currentIds = currentPageOrders
+          .map((o) => (typeof o.id === 'number' ? o.id : null))
+          .filter((id): id is number => id !== null);
+        currentIds.forEach((id) => prevPageIds.add(id));
+      }
+
+      // ── Determine whether a next page should be pre-fetched ───────────────
+      const fetchedAfterThisPage = allOrders.length + currentPageOrders.length;
+      const expectMoreByCount =
+        totalExpected !== null
+          ? fetchedAfterThisPage < totalExpected
+          : currentPageOrders.length >= effectivePageSize;
+
       // Start fetching the next page in the background before we begin
       // upserting the current page — this hides network latency behind DB work.
       const nextPageFetch: Promise<AxiosResponse<unknown> | null> =
-        currentPageOrders.length === effectivePageSize
+        expectMoreByCount
           ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
@@ -730,13 +792,18 @@ export class OdooBackupService {
       }
       allOrders.push(...currentPageOrders);
 
-      // Last page reached — no more records to fetch.
-      if (currentPageOrders.length < effectivePageSize) break;
-
+      // ── Per-page structured log ───────────────────────────────────────────
       this.logger.debug(
-        `OdooCredential region=${cred.region}: processed page at offset=${currentOffset}, ` +
-          `total so far=${allOrders.length}, saved=${saved}, skipped=${skipped}`,
+        `OdooCredential region=${cred.region}: page ${pageNumber}` +
+          (totalPages !== null ? `/${totalPages}` : '') +
+          ` offset=${currentOffset}, fetched=${currentPageOrders.length}` +
+          `, cumulative=${allOrders.length}` +
+          (totalExpected !== null ? `/${totalExpected}` : '') +
+          `, saved=${saved}, skipped=${skipped}`,
       );
+
+      // ── Exit conditions ───────────────────────────────────────────────────
+      if (!expectMoreByCount) break;
 
       let nextResp: AxiosResponse<unknown> | null;
       try {
@@ -759,9 +826,55 @@ export class OdooBackupService {
       currentPageOrders = this.extractOrderList(nextResp.data);
       currentOffset = nextOffset;
       nextOffset += effectivePageSize;
+      pageNumber++;
+    }
+
+    // ── Completeness validation ───────────────────────────────────────────────
+    if (totalExpected !== null && allOrders.length < totalExpected) {
+      this.logger.warn(
+        `OdooCredential region=${cred.region}: fetched ${allOrders.length} of ` +
+          `${totalExpected} expected records — some records may have been missed.`,
+      );
+    } else if (totalExpected !== null) {
+      this.logger.log(
+        `OdooCredential region=${cred.region}: fetched all ${allOrders.length}/${totalExpected} records.`,
+      );
     }
 
     return { saved, skipped, orders: allOrders };
+  }
+
+  /**
+   * Extracts the total record count advertised by the Odoo API response
+   * envelope.  Returns `null` when the response does not include a count field
+   * (e.g. plain-array responses or custom modules that omit it).
+   *
+   * Supported patterns:
+   *   - `{ length: N, records: [...] }`             — Odoo 17/18 REST
+   *   - `{ total: N, ... }`                          — some custom modules
+   *   - `{ count: N, ... }`                          — some IBQ variants
+   *   - `{ result: { length: N, records: [...] } }`  — nested result envelope
+   */
+  private extractTotalFromResponse(payload: unknown): number | null {
+    if (typeof payload !== 'object' || payload === null) return null;
+    const p = payload as Record<string, unknown>;
+
+    if (typeof p['length'] === 'number') return p['length'];
+    if (typeof p['total'] === 'number') return p['total'];
+    if (typeof p['count'] === 'number') return p['count'];
+
+    if (
+      typeof p['result'] === 'object' &&
+      p['result'] !== null &&
+      !Array.isArray(p['result'])
+    ) {
+      const r = p['result'] as Record<string, unknown>;
+      if (typeof r['length'] === 'number') return r['length'];
+      if (typeof r['total'] === 'number') return r['total'];
+      if (typeof r['count'] === 'number') return r['count'];
+    }
+
+    return null;
   }
 
   /** Flatten various Odoo REST API response envelopes to a plain order array. */
