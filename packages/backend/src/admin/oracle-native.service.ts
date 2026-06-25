@@ -112,13 +112,13 @@ const MAPPINGS: OracleTableMapping[] = [
     oracleTable: 'FUSION_BUSINESS_UNIT_ID_MAP',
     prismaDelegate: (p) => p.fusionBusinessUnitMap,
     mapRow: (r) => ({
-      businessUnitId: num(r, 'BUSINESS_UNIT_ID'),
+      businessUnitId: bigint(r, 'BUSINESS_UNIT_ID'),
       businessUnitName: str(r, 'BUSINESS_UNIT_NAME'),
       region: str(r, 'REGION'),
     }),
     upsertWhere: (r) => ({
       businessUnitId_region: {
-        businessUnitId: num(r, 'BUSINESS_UNIT_ID'),
+        businessUnitId: bigint(r, 'BUSINESS_UNIT_ID'),
         region: str(r, 'REGION'),
       },
     }),
@@ -148,7 +148,7 @@ const MAPPINGS: OracleTableMapping[] = [
     prismaDelegate: (p) => p.fusionSalesMetadata,
     mapRow: (r) => ({
       billToName: str(r, 'BILL_TO_NAME'),
-      billToAccount: num(r, 'BILL_TO_ACCOUNT'),
+      billToAccount: bigint(r, 'BILL_TO_ACCOUNT'),
       siteNumber: optStr(r, 'SITE_NUMBER'),
       businessUnit: str(r, 'BUSINESS_UNIT'),
       txnSource: str(r, 'TXN_SOURCE'),
@@ -158,7 +158,7 @@ const MAPPINGS: OracleTableMapping[] = [
       recActivityNameCash: optStr(r, 'REC_ACTIVITY_NAME_CASH'),
       subinventory: optStr(r, 'SUBINVENTORY'),
       integrationSource: str(r, 'INTEGRATION_SOURCE'),
-      distributionAccId: optNum(r, 'DISTRIBUTION_ACC_ID'),
+      distributionAccId: optBigInt(r, 'DISTRIBUTION_ACC_ID'),
       costCenterCode: optStr(r, 'COST_CENTER_CODE'),
       region: str(r, 'REGION'),
       customerType: str(r, 'CUSTOMER_TYPE'),
@@ -171,9 +171,9 @@ const MAPPINGS: OracleTableMapping[] = [
     prismaDelegate: (p) => p.serviceProviderJournalMeta,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
-      ledgerId: num(r, 'LEDGER_ID'),
-      taxGroupId: optNum(r, 'TAX_GROUP_ID'),
-      chartOfAccountsId: num(r, 'CHART_OF_ACCOUNTS_ID'),
+      ledgerId: bigint(r, 'LEDGER_ID'),
+      taxGroupId: optBigInt(r, 'TAX_GROUP_ID'),
+      chartOfAccountsId: bigint(r, 'CHART_OF_ACCOUNTS_ID'),
       serviceProvider: str(r, 'SERVICE_PROVIDER'),
       creditDebit: optStr(r, 'CREDIT_DEBIT'),
       costIssue: optStr(r, 'COST_ISSUE'),

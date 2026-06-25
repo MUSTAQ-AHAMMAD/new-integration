@@ -165,9 +165,9 @@ model PaymentMethodMapping {
   id                      String   @id @default(cuid())
   sourceSystem            String
   sourcePaymentName       String
-  oracleReceiptMethodId   Int
+  oracleReceiptMethodId   BigInt
   oracleReceiptMethodName String
-  oracleBankAccountId     Int?
+  oracleBankAccountId     BigInt?
   isActive                Boolean  @default(true)
   requiresApproval        Boolean  @default(false)
   approvedBy              String?
@@ -214,8 +214,8 @@ model StoreConfiguration {
   id                    String           @id @default(cuid())
   branchCode            String           @unique
   branchName            String
-  odooBranchId          Int
-  oracleOperatingUnitId Int
+  odooBranchId          BigInt
+  oracleOperatingUnitId BigInt
   oracleBusinessUnit    String
   billToSiteName        String
   billToLocation        String?
@@ -516,7 +516,7 @@ model OutletIntegrationConfig {
 
 model FusionBusinessUnitMap {
   id               String   @id @default(cuid())
-  businessUnitId   Int
+  businessUnitId   BigInt
   businessUnitName String
   region           String
   createdAt        DateTime @default(now())
@@ -545,7 +545,7 @@ model FusionReceiptMethod {
 model FusionSalesMetadata {
   id                   String   @id @default(cuid())
   billToName           String   @unique
-  billToAccount        Int
+  billToAccount        BigInt
   siteNumber           String?
   businessUnit         String
   txnSource            String
@@ -554,7 +554,7 @@ model FusionSalesMetadata {
   recActivityNameBank  String?
   subinventory         String?
   integrationSource    String
-  distributionAccId    Int?
+  distributionAccId    BigInt?
   recActivityNameCash  String?
   region               String
   customerType         String
@@ -569,9 +569,9 @@ model FusionSalesMetadata {
 model ServiceProviderJournalMeta {
   id                String   @id @default(cuid())
   region            String
-  ledgerId          Int
-  taxGroupId        Int?
-  chartOfAccountsId Int
+  ledgerId          BigInt
+  taxGroupId        BigInt?
+  chartOfAccountsId BigInt
   serviceProvider   String   @unique
   creditDebit       String?
   costIssue         String?
@@ -730,7 +730,7 @@ model FusionInvoiceHeader {
   requestDate      DateTime?
   billToCustName   String?
   billToLocation   String?
-  billToAccNumber  Int?
+  billToAccNumber  BigInt?
   businessUnit     String?
   paymentTermsName String?
   txnSource        String?
@@ -862,7 +862,7 @@ model FusionJournalHeader {
   requestDate                DateTime?
   region                     String
   jeHeaderId                 Int?
-  ledgerId                   Int?
+  ledgerId                   BigInt?
   batchName                  String?
   batchDescription           String?
   accountingPeriodName       String?
@@ -895,9 +895,9 @@ model FusionJournalLine {
   region                   String
   jeHeaderId               Int?
   jeLineNum                Int?
-  ledgerId                 Int?
+  ledgerId                 BigInt?
   groupId                  Int?
-  chartOfAccountsId        Int?
+  chartOfAccountsId        BigInt?
   enteredCrAmount          Float?
   accountedCr              Float?
   enteredDrAmount          Float?
