@@ -94,7 +94,11 @@ describe('OdooTransformationService', () => {
 
   it('builds invoice header from store config', async () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(makeBackup());
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
 
     expect(result.invoiceHeader.billToCustomerName).toBe('Acme Corp');
     expect(result.invoiceHeader.businessUnit).toBe('BU-AE');
@@ -107,7 +111,11 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ warehouseName: null }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.invoiceHeader.outletName).toBe('Central');
   });
 
@@ -128,7 +136,11 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
 
     expect(result.invoiceHeader.invoiceLines).toHaveLength(1);
     const line = result.invoiceHeader.invoiceLines[0];
@@ -147,7 +159,11 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.invoiceHeader.invoiceLines).toHaveLength(1);
     expect(result.invoiceHeader.invoiceLines[0].description).toBe('Normal');
   });
@@ -156,7 +172,11 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderLines: [], amountTotal: 200, amountUntaxed: 180 }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
 
     expect(result.invoiceHeader.invoiceLines).toHaveLength(1);
     // amountUntaxed (180) is used when available
@@ -168,25 +188,43 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderLines: [], amountTotal: 200, amountUntaxed: null }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.invoiceHeader.invoiceLines[0].unitSellingPrice).toBe(200);
   });
 
   it('uses productId as itemNumber when productCode is absent', async () => {
     const orderLines = [
-      { productName: 'Widget', qty: 1, priceUnit: 10, productCode: null, productId: 99 },
+      {
+        productName: 'Widget',
+        qty: 1,
+        priceUnit: 10,
+        productCode: null,
+        productId: 99,
+      },
     ];
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.invoiceHeader.invoiceLines[0].itemNumber).toBe('99');
   });
 
   // ── Receipts ──────────────────────────────────────────────────────────────
 
   it('returns no receipts when order has no payments', async () => {
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(0);
     expect(result.miscReceipts).toHaveLength(0);
   });
@@ -196,7 +234,11 @@ describe('OdooTransformationService', () => {
       makeBackup({ orderPayments: [{ paymentName: 'Mystery', amount: 50 }] }),
     );
     prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce(null);
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(0);
   });
 
@@ -206,7 +248,11 @@ describe('OdooTransformationService', () => {
         orderPayments: [{ paymentName: 'Credit on Cust', amount: 50 }],
       }),
     );
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(0);
     // fusionReceiptMethod.findFirst should not even be called
     expect(prisma.fusionReceiptMethod.findFirst).not.toHaveBeenCalled();
@@ -225,7 +271,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(1);
     expect(result.standardReceipts[0].receiptAmount).toBe(100);
     expect(result.standardReceipts[0].receiptMethodId).toBe(123);
@@ -246,7 +296,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(0);
   });
 
@@ -263,7 +317,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0.01,
       receiptMethodTax: 0.05,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.standardReceipts).toHaveLength(1);
     expect(result.miscReceipts).toHaveLength(1);
     // misc amount = 200 * 0.01 * (1 + 0.05) = 2.1
@@ -284,7 +342,11 @@ describe('OdooTransformationService', () => {
       receiptMethodTax: 0.05,
     });
     // region OM triggers the cap
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'OM');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'OM',
+    );
     // 5000 * 0.01 * 1.05 = 52.5 → capped at 10
     expect(result.miscReceipts[0].receiptAmount).toBe(-10);
   });
@@ -302,7 +364,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0.01,
       receiptMethodTax: 0.05,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.miscReceipts[0].receiptAmount).toBeCloseTo(-52.5);
   });
 
@@ -321,7 +387,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.applyReceipts).toHaveLength(1);
     expect(result.applyReceipts[0].receiptNumber).toBe(
       result.standardReceipts[0].receiptNumber,
@@ -332,7 +402,11 @@ describe('OdooTransformationService', () => {
 
   it('returns no journal headers when journalMeta is null', async () => {
     prisma.serviceProviderJournalMeta.findFirst.mockResolvedValueOnce(null);
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.journalHeaders).toHaveLength(0);
   });
 
@@ -351,7 +425,11 @@ describe('OdooTransformationService', () => {
       account: '4000',
       department: null,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     expect(result.journalHeaders).toHaveLength(1);
     expect(result.journalHeaders[0].ledgerId).toBe(1001);
     expect(result.journalHeaders[0].journalLines).toHaveLength(1);
@@ -397,7 +475,11 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
     // cash rounding creates misc receipt, not standard
     expect(result.standardReceipts).toHaveLength(0);
     expect(result.miscReceipts).toHaveLength(1);

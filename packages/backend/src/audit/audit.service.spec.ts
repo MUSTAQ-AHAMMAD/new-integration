@@ -140,12 +140,17 @@ describe('AuditService', () => {
     it('returns the record when found', async () => {
       prisma.$queryRaw.mockResolvedValueOnce([makeAuditRecord()]);
       const record = await service.getEntry('audit-001');
-      expect(record).toMatchObject({ id: 'audit-001', action: 'CREATE_INVOICE' });
+      expect(record).toMatchObject({
+        id: 'audit-001',
+        action: 'CREATE_INVOICE',
+      });
     });
 
     it('throws NotFoundException when no record is found', async () => {
       prisma.$queryRaw.mockResolvedValue([]);
-      await expect(service.getEntry('missing')).rejects.toThrow(NotFoundException);
+      await expect(service.getEntry('missing')).rejects.toThrow(
+        NotFoundException,
+      );
       await expect(service.getEntry('missing')).rejects.toThrow(
         'Audit log entry missing not found',
       );

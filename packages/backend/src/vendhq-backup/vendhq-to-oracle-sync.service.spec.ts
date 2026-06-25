@@ -106,8 +106,12 @@ function makeTransformation() {
 function makeSoapClient() {
   return {
     createSimpleInvoice: jest.fn().mockResolvedValue(makeInvoiceResult()),
-    createStandardReceipt: jest.fn().mockResolvedValue({ receiptNumber: 'RCP-001' }),
-    createMiscellaneousReceipt: jest.fn().mockResolvedValue({ receiptNumber: 'MISC-001' }),
+    createStandardReceipt: jest
+      .fn()
+      .mockResolvedValue({ receiptNumber: 'RCP-001' }),
+    createMiscellaneousReceipt: jest
+      .fn()
+      .mockResolvedValue({ receiptNumber: 'MISC-001' }),
     createApplyReceipt: jest.fn().mockResolvedValue({}),
     importJournalEntry: jest.fn().mockResolvedValue(9001),
   };

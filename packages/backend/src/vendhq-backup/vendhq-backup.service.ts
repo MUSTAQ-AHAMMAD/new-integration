@@ -391,8 +391,7 @@ export class VendHqSalesBackupService {
             totalTax: sale.total_tax ?? null,
             totalLoyalty: sale.total_loyalty ?? null,
             totalPriceInclTax: sale.total_price_incl_tax ?? null,
-            version:
-              typeof sale.version === 'number' ? sale.version : null,
+            version: typeof sale.version === 'number' ? sale.version : null,
             region,
             customerType: this.resolveCustomerType(sale),
             rawJson: sale as object,

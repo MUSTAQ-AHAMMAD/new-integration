@@ -243,7 +243,8 @@ export class SyncService {
     const order = await this.prisma.orderSyncQueue.findUnique({
       where: { id },
     });
-    if (!order) throw new NotFoundException(`Order queue entry ${id} not found`);
+    if (!order)
+      throw new NotFoundException(`Order queue entry ${id} not found`);
 
     await this.prisma.orderSyncQueue.update({
       where: { id },

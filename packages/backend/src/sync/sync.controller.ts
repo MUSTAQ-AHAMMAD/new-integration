@@ -87,7 +87,9 @@ export class SyncController {
   }
 
   @Get('order-queue')
-  @ApiOperation({ summary: 'List OrderSyncQueue entries (individual ingested orders)' })
+  @ApiOperation({
+    summary: 'List OrderSyncQueue entries (individual ingested orders)',
+  })
   listOrderQueue(
     @Query('status') status?: string,
     @Query('branchCode') branchCode?: string,
@@ -103,7 +105,9 @@ export class SyncController {
   }
 
   @Post('order-queue/:id/retry')
-  @ApiOperation({ summary: 'Re-queue a single OrderSyncQueue entry for processing' })
+  @ApiOperation({
+    summary: 'Re-queue a single OrderSyncQueue entry for processing',
+  })
   retryOrderQueueEntry(@Param('id') id: string) {
     return this.syncService.retryOrderQueueEntry(id);
   }

@@ -380,14 +380,21 @@ describe('VendHqSalesBackupService', () => {
       const { service, prisma } = makeService();
       // First call returns 200 sales (full page), second returns 0 (end)
       const fullPage = Array.from({ length: 200 }, (_, i) =>
-        makeSale({ id: `sale-${i}`, invoice_number: `INV-${i}`, version: i + 1 }),
+        makeSale({
+          id: `sale-${i}`,
+          invoice_number: `INV-${i}`,
+          version: i + 1,
+        }),
       );
       mockAxios
         .mockResolvedValueOnce({ data: { data: fullPage } })
         .mockResolvedValueOnce({ data: { data: [] } });
       prisma.backupVendHqSale.findMany.mockResolvedValue([]);
       prisma.backupVendHqSale.upsert.mockImplementation(({ create }) =>
-        Promise.resolve({ id: `db-${create.invoiceNumber}`, invoiceNumber: create.invoiceNumber }),
+        Promise.resolve({
+          id: `db-${create.invoiceNumber}`,
+          invoiceNumber: create.invoiceNumber,
+        }),
       );
 
       await service.backupRegion(makeCred({ lastSyncVersion: 0 }));

@@ -129,7 +129,10 @@ describe('SettingsService', () => {
       const svc = new SettingsService(
         prisma as unknown as PrismaService,
         redis as unknown as RedisService,
-        makeConfig({ FAILURE_RATE_THRESHOLD: 0.2, LATENCY_THRESHOLD_MS: 8000 }) as unknown as ConfigService,
+        makeConfig({
+          FAILURE_RATE_THRESHOLD: 0.2,
+          LATENCY_THRESHOLD_MS: 8000,
+        }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
       );
       redis.get.mockResolvedValueOnce(null);
@@ -174,7 +177,9 @@ describe('SettingsService', () => {
       const svc = new SettingsService(
         prisma as unknown as PrismaService,
         redis as unknown as RedisService,
-        makeConfig({ ORDER_SYNC_CRON: '*/1 * * * *' }) as unknown as ConfigService,
+        makeConfig({
+          ORDER_SYNC_CRON: '*/1 * * * *',
+        }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
       );
       const schedule = svc.getSyncSchedule();
@@ -211,7 +216,9 @@ describe('SettingsService', () => {
       const svc = new SettingsService(
         prisma as unknown as PrismaService,
         redis as unknown as RedisService,
-        makeConfig({ ODOO_PASSWORD: 'supersecret123' }) as unknown as ConfigService,
+        makeConfig({
+          ODOO_PASSWORD: 'supersecret123',
+        }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
       );
       const keys = svc.listApiKeys();
@@ -224,7 +231,9 @@ describe('SettingsService', () => {
       const svc = new SettingsService(
         prisma as unknown as PrismaService,
         redis as unknown as RedisService,
-        makeConfig({ ODOO_PASSWORD: 'supersecret123' }) as unknown as ConfigService,
+        makeConfig({
+          ODOO_PASSWORD: 'supersecret123',
+        }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
       );
       const keys = svc.listApiKeys();

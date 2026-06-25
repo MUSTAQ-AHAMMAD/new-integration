@@ -101,7 +101,9 @@ describe('ItemSyncService', () => {
     });
 
     it('catches per-region errors without rethrowing', async () => {
-      prisma.vendHqCredential.findMany.mockResolvedValueOnce([{ region: 'AE' }]);
+      prisma.vendHqCredential.findMany.mockResolvedValueOnce([
+        { region: 'AE' },
+      ]);
       oracle.getInventoryItems.mockRejectedValueOnce(new Error('Oracle down'));
       await expect(service.runItemSync()).resolves.toBeUndefined();
     });
@@ -201,9 +203,7 @@ describe('ItemSyncService', () => {
       const result = await service.getItemSyncStatus();
       expect(
         (prisma.vendHqItemMeta as unknown as { findMany: jest.Mock }).findMany,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({ where: undefined }),
-      );
+      ).toHaveBeenCalledWith(expect.objectContaining({ where: undefined }));
       expect(result).toHaveLength(1);
     });
 

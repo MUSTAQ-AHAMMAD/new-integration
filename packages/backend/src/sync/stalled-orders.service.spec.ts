@@ -75,8 +75,16 @@ describe('StalledOrdersService', () => {
     it('fires one alert per branch for stalled orders', async () => {
       prisma.orderSyncQueue.findMany.mockResolvedValueOnce([
         makeStalledOrder({ branchCode: 'BR001' }),
-        makeStalledOrder({ id: 'order-002', branchCode: 'BR001', odooOrderNumber: 'S00002' }),
-        makeStalledOrder({ id: 'order-003', branchCode: 'BR002', odooOrderNumber: 'S00003' }),
+        makeStalledOrder({
+          id: 'order-002',
+          branchCode: 'BR001',
+          odooOrderNumber: 'S00002',
+        }),
+        makeStalledOrder({
+          id: 'order-003',
+          branchCode: 'BR002',
+          odooOrderNumber: 'S00003',
+        }),
       ]);
       await service.detectStalledOrders();
 
@@ -109,7 +117,9 @@ describe('StalledOrdersService', () => {
       expect(callArgs[0].where.status).toBe(SyncStatus.PENDING);
       // createdAt.lt should be in the past (a Date object)
       expect(callArgs[0].where.createdAt.lt).toBeInstanceOf(Date);
-      expect(callArgs[0].where.createdAt.lt.getTime()).toBeLessThan(Date.now());
+      expect((callArgs[0].where.createdAt.lt as Date).getTime()).toBeLessThan(
+        Date.now(),
+      );
     });
 
     it('truncates order list to 10 in alert message with overflow note', async () => {
@@ -173,7 +183,7 @@ describe('StalledOrdersService', () => {
       const [callArgs] = prisma.orderSyncQueue.count.mock.calls;
       // Threshold of 12 hours → cutoff ≈ 12 * 3600 * 1000 ms ago
       const nowMs = Date.now();
-      const cutoffMs = callArgs[0].where.createdAt.lt.getTime();
+      const cutoffMs = (callArgs[0].where.createdAt.lt as Date).getTime();
       const diffHours = (nowMs - cutoffMs) / (3600 * 1000);
       expect(diffHours).toBeGreaterThan(11.9);
       expect(diffHours).toBeLessThan(12.1);
@@ -189,7 +199,7 @@ describe('StalledOrdersService', () => {
       await svc.getStalledCount();
       const [callArgs] = prisma.orderSyncQueue.count.mock.calls;
       const nowMs = Date.now();
-      const cutoffMs = callArgs[0].where.createdAt.lt.getTime();
+      const cutoffMs = (callArgs[0].where.createdAt.lt as Date).getTime();
       const diffHours = (nowMs - cutoffMs) / (3600 * 1000);
       expect(diffHours).toBeGreaterThan(5.9);
       expect(diffHours).toBeLessThan(6.1);
