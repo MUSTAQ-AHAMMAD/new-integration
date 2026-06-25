@@ -165,7 +165,7 @@ export class OrderDiagnosticsService {
         isPaid: queueEntry.isPaid,
         isCancelled: queueEntry.isCancelled,
         isRefund: queueEntry.isRefund,
-        totalAmount: queueEntry.totalAmount,
+        totalAmount: queueEntry.totalAmount.toString(),
         negativeInventoryFlag: queueEntry.negativeInventoryFlag,
         validationErrors: queueEntry.validationErrors,
         syncAttempts: queueEntry.syncAttempts,
