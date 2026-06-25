@@ -24,6 +24,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import * as https from 'https';
 import {
@@ -36,9 +37,11 @@ import {
   normalizeOrderForIngestion,
   findArrayInPayload,
   toApiDatetime,
+  RawOdooOrderFields,
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 const DEFAULT_SOURCE = 'default';
 /** Default REST endpoint used to fetch POS orders from Odoo. */
@@ -149,6 +152,8 @@ export class OdooBackupService {
     private readonly odooClient: OdooClient,
     @Inject(forwardRef(() => OrderSyncService))
     private readonly orderSyncService: OrderSyncService,
+    @Inject(forwardRef(() => SyncControlService))
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /**
@@ -157,6 +162,14 @@ export class OdooBackupService {
    */
   @Cron('0 */15 * * * *')
   async runBackupJob(): Promise<void> {
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('odoo-backup');
+    if (!enabled) {
+      this.logger.debug('Odoo backup service is disabled, skipping cron run');
+      return;
+    }
+
+    await this.syncControl.markRunning('odoo-backup');
     try {
       const state = await this.prisma.odooBackupState.findUnique({
         where: { source: DEFAULT_SOURCE },
@@ -243,9 +256,12 @@ export class OdooBackupService {
           `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
           `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
       );
+      
+      await this.syncControl.markStopped('odoo-backup', 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Odoo backup cron failed: ${msg}`);
+      await this.syncControl.markStopped('odoo-backup', 'error');
     }
   }
 
@@ -1237,5 +1253,145 @@ export class OdooBackupService {
         }),
       ]);
     }
+  }
+
+  /**
+   * Re-ingests orders from the backup tables into the OrderSyncQueue without
+   * re-fetching from the Odoo API. Useful for:
+   * - Processing orders that were backed up but never ingested
+   * - Re-processing orders after fixing branch mappings
+   * - Re-processing orders after state mapping changes
+   *
+   * Supports optional filtering by date range, state, and region.
+   *
+   * @param params Filter criteria
+   * @returns Stats on how many orders were ingested/skipped
+   */
+  async reingestFromBackup(params: {
+    startDate?: string;
+    endDate?: string;
+    state?: string;
+    region?: string;
+    limit?: number;
+  }): Promise<{ ingested: number; skipped: number; total: number }> {
+    const { startDate, endDate, state, region, limit } = params;
+
+    // Build filter criteria using Prisma types
+    const where: Prisma.BackupOdooOrderWhereInput = {};
+    if (startDate || endDate) {
+      where.dateOrder = {};
+      if (startDate) {
+        where.dateOrder.gte = new Date(startDate);
+      }
+      if (endDate) {
+        where.dateOrder.lte = new Date(endDate);
+      }
+    }
+    if (state) {
+      where.state = state;
+    }
+    if (region) {
+      where.region = region;
+    }
+
+    // Fetch orders from backup tables
+    const backupOrders = await this.prisma.backupOdooOrder.findMany({
+      where,
+      take: limit ?? 1000, // Default to 1000 to avoid memory issues
+      orderBy: { dateOrder: 'asc' },
+      select: {
+        id: true,
+        orderId: true,
+        orderName: true,
+        branchId: true,
+        branchName: true,
+        dateOrder: true,
+        amountTotal: true,
+        state: true,
+        timezone: true,
+        region: true,
+        resolvedBranchCode: true,
+        rawJson: true,
+      },
+    });
+
+    this.logger.log(
+      `Re-ingesting ${backupOrders.length} orders from backup tables` +
+        (region ? ` (region=${region})` : '') +
+        (state ? ` (state=${state})` : ''),
+    );
+
+    // Pre-load StoreConfigurations for branchCode resolution
+    const storeConfigs = await this.prisma.storeConfiguration.findMany({
+      where: { isActive: true },
+      select: { branchCode: true, odooBranchId: true, region: true },
+    });
+    const branchIdMap = new Map(
+      storeConfigs.map((sc) => [
+        sc.odooBranchId,
+        { branchCode: sc.branchCode, region: sc.region ?? null },
+      ]),
+    );
+
+    let ingested = 0;
+    let skipped = 0;
+
+    for (const backupOrder of backupOrders) {
+      try {
+        // Reconstruct the order object from rawJson if available, otherwise use backup fields
+        const order: RawOdooOrderFields =
+          backupOrder.rawJson && typeof backupOrder.rawJson === 'object'
+            ? (backupOrder.rawJson as RawOdooOrderFields)
+            : {
+                id: backupOrder.orderId,
+                name: backupOrder.orderName,
+                branch_id: backupOrder.branchId,
+                date_order: backupOrder.dateOrder?.toISOString(),
+                amount_total: backupOrder.amountTotal,
+                state: backupOrder.state,
+                timezone: backupOrder.timezone,
+              };
+
+        const payload = normalizeOrderForIngestion(order, backupOrder.timezone ?? undefined);
+        if (!payload) {
+          this.logger.debug(
+            `Skipping backup order id=${backupOrder.orderId}: no valid branch code`,
+          );
+          skipped++;
+          continue;
+        }
+
+        // Resolve canonical branchCode from StoreConfiguration.odooBranchId
+        const odooBranchId = backupOrder.branchId ?? null;
+        const storeEntry =
+          odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
+        const resolvedBranchCode =
+          backupOrder.resolvedBranchCode ??
+          storeEntry?.branchCode ??
+          payload.branchCode;
+        const resolvedRegion =
+          backupOrder.region ?? storeEntry?.region ?? null;
+
+        await this.orderSyncService.ingestOrder({
+          ...payload,
+          branchCode: resolvedBranchCode,
+          region: resolvedRegion ?? undefined,
+          odooBackupOrderId: backupOrder.id,
+        });
+        ingested++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Failed to ingest backup order id=${backupOrder.orderId}: ${msg}`,
+        );
+        skipped++;
+      }
+    }
+
+    this.logger.log(
+      `Re-ingestion complete: ingested=${ingested} skipped=${skipped} total=${backupOrders.length}`,
+    );
+
+    return { ingested, skipped, total: backupOrders.length };
   }
 }

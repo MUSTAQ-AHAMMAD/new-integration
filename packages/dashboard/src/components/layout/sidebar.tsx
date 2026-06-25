@@ -59,6 +59,7 @@ const topItems: NavItem[] = [
 
 const operationalItems: NavItem[] = [
   { href: '/stores', label: 'Store Config Admin', icon: Building2 },
+  { href: '/admin/sync-control', label: 'Sync Control', icon: RefreshCw },
   { href: '/alerts', label: 'Alerts', icon: Bell },
   { href: '/failed', label: 'Failed Transactions', icon: AlertTriangle },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },

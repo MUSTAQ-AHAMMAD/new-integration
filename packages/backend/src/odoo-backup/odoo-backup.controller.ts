@@ -12,7 +12,14 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, IsUrl } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { OdooBackupService } from './odoo-backup.service';
 
@@ -109,6 +116,53 @@ export class UpdateOdooCredentialDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+}
+
+export class ReingestFromBackupDto {
+  @ApiProperty({
+    required: false,
+    description:
+      'Start date filter (ISO 8601). Only orders on or after this date will be re-ingested.',
+  })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'End date filter (ISO 8601). Only orders on or before this date will be re-ingested.',
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Filter by order state (e.g., "paid", "done", "posted"). Case-sensitive.',
+  })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Filter by region (e.g., "AE", "KW", "SA").',
+  })
+  @IsOptional()
+  @IsString()
+  region?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Maximum number of orders to re-ingest. Defaults to 1000 to avoid memory issues.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  limit?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +332,33 @@ export class OdooBackupController {
       throw new NotFoundException(`Odoo credential not found: ${id}`);
     }
     return this.backupService.probeCredential(cred);
+  }
+
+  /**
+   * Re-ingest orders from the backup tables into the OrderSyncQueue without
+   * re-fetching from the Odoo API. Useful for processing orders that were
+   * backed up but never ingested, or re-processing orders after fixing branch
+   * mappings or state mapping changes.
+   */
+  @Post('reingest-from-backup')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Re-ingest orders from backup tables into OrderSyncQueue without re-fetching from Odoo API',
+  })
+  async reingestFromBackup(@Body() dto: ReingestFromBackupDto) {
+    const result = await this.backupService.reingestFromBackup({
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+      state: dto.state,
+      region: dto.region,
+      limit: dto.limit,
+    });
+    return {
+      ok: true,
+      message: `Re-ingested ${result.ingested} orders from backup tables`,
+      ...result,
+    };
   }
 
   // ---------------------------------------------------------------------------

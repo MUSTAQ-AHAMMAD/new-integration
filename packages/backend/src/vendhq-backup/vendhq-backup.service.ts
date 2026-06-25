@@ -23,6 +23,7 @@ import { Cron } from '@nestjs/schedule';
 import { SaleStatus } from '@prisma/client';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 // ---------------------------------------------------------------------------
 // Raw VendHQ API shapes
@@ -97,7 +98,10 @@ const SYNC_CONCURRENCY = 10;
 export class VendHqSalesBackupService {
   private readonly logger = new Logger(VendHqSalesBackupService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly syncControl: SyncControlService,
+  ) {}
 
   /**
    * Runs every 10 minutes — mirrors Java Quartz SimpleSchedule (10 min).
@@ -105,36 +109,56 @@ export class VendHqSalesBackupService {
    */
   @Cron('0 */10 * * * *')
   async runBackupJob(): Promise<void> {
-    const credentials = await this.prisma.vendHqCredential.findMany({
-      where: { active: true },
-    });
-
-    if (credentials.length === 0) {
-      this.logger.warn('No active VendHQ credentials found — backup skipped');
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('vendhq-backup');
+    if (!enabled) {
+      this.logger.debug('VendHQ backup service is disabled, skipping cron run');
       return;
     }
 
-    for (const cred of credentials) {
-      try {
-        // --- Region-level on/off check ---
-        const regionEnabled = await this.isRegionEnabled(cred.region);
-        if (!regionEnabled) {
-          this.logger.log(
-            `Backup skipped for region=${cred.region} — integration is DISABLED`,
-          );
-          continue;
-        }
+    await this.syncControl.markRunning('vendhq-backup');
+    let hasError = false;
 
-        const result = await this.backupRegion(cred);
-        this.logger.log(
-          `Backup done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped}`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(
-          `VendHQ backup failed for region=${cred.region} domain=${cred.domainName}: ${msg}`,
-        );
+    try {
+      const credentials = await this.prisma.vendHqCredential.findMany({
+        where: { active: true },
+      });
+
+      if (credentials.length === 0) {
+        this.logger.warn('No active VendHQ credentials found — backup skipped');
+        await this.syncControl.markStopped('vendhq-backup', 'success');
+        return;
       }
+
+      for (const cred of credentials) {
+        try {
+          // --- Region-level on/off check ---
+          const regionEnabled = await this.isRegionEnabled(cred.region);
+          if (!regionEnabled) {
+            this.logger.log(
+              `Backup skipped for region=${cred.region} — integration is DISABLED`,
+            );
+            continue;
+          }
+
+          const result = await this.backupRegion(cred);
+          this.logger.log(
+            `Backup done for region=${cred.region}: saved=${result.saved} skipped=${result.skipped}`,
+          );
+        } catch (err) {
+          hasError = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `VendHQ backup failed for region=${cred.region} domain=${cred.domainName}: ${msg}`,
+          );
+        }
+      }
+
+      await this.syncControl.markStopped('vendhq-backup', hasError ? 'error' : 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`VendHQ backup cron failed: ${msg}`);
+      await this.syncControl.markStopped('vendhq-backup', 'error');
     }
   }
 

@@ -1,18 +1,21 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MulterModule } from '@nestjs/platform-express';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { OracleNativeService } from './oracle-native.service';
+import { SyncControlController } from './sync-control.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SyncModule } from '../sync/sync.module';
 
 @Module({
   imports: [
     PrismaModule,
     ConfigModule,
     MulterModule.register({ limits: { fileSize: 50 * 1024 * 1024 } }),
+    forwardRef(() => SyncModule),
   ],
-  controllers: [AdminController],
+  controllers: [AdminController, SyncControlController],
   providers: [AdminService, OracleNativeService],
 })
 export class AdminModule {}
