@@ -12,7 +12,14 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, IsUrl } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { OdooBackupService } from './odoo-backup.service';
 
@@ -153,6 +160,8 @@ export class ReingestFromBackupDto {
       'Maximum number of orders to re-ingest. Defaults to 1000 to avoid memory issues.',
   })
   @IsOptional()
+  @IsInt()
+  @Min(1)
   limit?: number;
 }
 

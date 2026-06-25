@@ -24,6 +24,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import * as https from 'https';
 import {
@@ -36,6 +37,7 @@ import {
   normalizeOrderForIngestion,
   findArrayInPayload,
   toApiDatetime,
+  RawOdooOrderFields,
 } from '../common/odoo-utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSyncService } from '../sync/order-sync.service';
@@ -1260,8 +1262,8 @@ export class OdooBackupService {
   }): Promise<{ ingested: number; skipped: number; total: number }> {
     const { startDate, endDate, state, region, limit } = params;
 
-    // Build filter criteria
-    const where: any = {};
+    // Build filter criteria using Prisma types
+    const where: Prisma.BackupOdooOrderWhereInput = {};
     if (startDate || endDate) {
       where.dateOrder = {};
       if (startDate) {
@@ -1323,16 +1325,18 @@ export class OdooBackupService {
     for (const backupOrder of backupOrders) {
       try {
         // Reconstruct the order object from rawJson if available, otherwise use backup fields
-        const rawOrder = backupOrder.rawJson as any;
-        const order: RawOdooOrderFields = rawOrder ?? {
-          id: backupOrder.orderId,
-          name: backupOrder.orderName,
-          branch_id: backupOrder.branchId,
-          date_order: backupOrder.dateOrder?.toISOString(),
-          amount_total: backupOrder.amountTotal,
-          state: backupOrder.state,
-          timezone: backupOrder.timezone,
-        };
+        const order: RawOdooOrderFields =
+          backupOrder.rawJson && typeof backupOrder.rawJson === 'object'
+            ? (backupOrder.rawJson as RawOdooOrderFields)
+            : {
+                id: backupOrder.orderId,
+                name: backupOrder.orderName,
+                branch_id: backupOrder.branchId,
+                date_order: backupOrder.dateOrder?.toISOString(),
+                amount_total: backupOrder.amountTotal,
+                state: backupOrder.state,
+                timezone: backupOrder.timezone,
+              };
 
         const payload = normalizeOrderForIngestion(order, backupOrder.timezone ?? undefined);
         if (!payload) {
