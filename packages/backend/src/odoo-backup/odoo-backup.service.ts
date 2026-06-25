@@ -1083,6 +1083,21 @@ export class OdooBackupService {
       (l): l is OdooOrderLine => typeof l === 'object' && l !== null,
     );
 
+    // Warn when the API returned line entries that are plain integers (ID-only
+    // arrays).  This means the Odoo endpoint is not embedding line data in the
+    // order response.  The line items cannot be stored without the full objects.
+    // To resolve this, ensure the Odoo API is configured to return embedded
+    // line records (e.g. via a `fields` expansion parameter) or verify that the
+    // correct endpoint is used for this region.
+    if (lines.length === 0 && rawLineItems.length > 0) {
+      this.logger.warn(
+        `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
+          `API returned ${rawLineItems.length} line item IDs but no embedded objects — ` +
+          `order lines will not be stored. ` +
+          `Check that the Odoo endpoint returns expanded line data.`,
+      );
+    }
+
     if (lines.length > 0) {
       // Batch-replace: delete stale line rows then bulk-insert fresh ones.
       // This replaces the old N+1 (findMany + sequential create/update per line)
@@ -1134,9 +1149,22 @@ export class OdooBackupService {
     // Only prefer statement_ids when it is non-empty; otherwise fall through to
     // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
     // carries real data are not silently dropped.
-    const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(order).filter(
+    const rawPaymentItems = this.extractPaymentItems(order);
+    const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
       (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
     );
+
+    // Warn when the API returned payment entries that are plain integers (ID-only
+    // arrays).  This means the Odoo endpoint is not embedding payment data in the
+    // order response.
+    if (rawPayments.length === 0 && rawPaymentItems.length > 0) {
+      this.logger.warn(
+        `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
+          `API returned ${rawPaymentItems.length} payment IDs but no embedded objects — ` +
+          `payments will not be stored. ` +
+          `Check that the Odoo endpoint returns expanded payment data.`,
+      );
+    }
 
     if (rawPayments.length > 0) {
       // Batch-replace: delete stale payment rows then bulk-insert fresh ones.

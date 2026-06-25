@@ -92,6 +92,45 @@ function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
 }
 
 /**
+ * Builds the Prisma `where` clause for an optional region filter.
+ *
+ * Most tables have a direct `region` column and can be filtered with
+ * `{ region }` directly.  Child tables (e.g. BackupOdooOrderLine,
+ * BackupOdooOrderPayment) do not carry `region` themselves but are linked
+ * to a parent `BackupOdooOrder` via an `order` relation.  For those tables
+ * the region must be filtered through the relation: `{ order: { region } }`.
+ *
+ * If neither a direct `region` field nor an `order` relation is found, an
+ * empty object is returned (no filter applied) so the query still succeeds.
+ */
+function getRegionWhere(
+  table: string,
+  region: string,
+): Record<string, unknown> {
+  const fields = getModelFieldTypes(table);
+  if (fields.has('region')) {
+    return { region };
+  }
+
+  // Fall back to filtering through the `order` relation when the model is a
+  // child of a table that carries `region` (e.g. order-line, order-payment).
+  const delegateName = TABLE_MAP[table];
+  if (!delegateName) return {};
+  const modelName = delegateToModelName(String(delegateName));
+  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
+  if (model) {
+    const hasOrderRelation = model.fields.some(
+      (f) => f.name === 'order' && f.kind === 'object',
+    );
+    if (hasOrderRelation) {
+      return { order: { region } };
+    }
+  }
+
+  return {};
+}
+
+/**
  * Builds a lookup map from UPPER_SNAKE_CASE (external CSV headers) to the
  * camelCase field names used by Prisma.  Also handles keys that are already
  * camelCase by including them verbatim.
@@ -179,7 +218,7 @@ export class AdminService {
     options: { skip?: number; take?: number; region?: string },
   ) {
     const delegate = this.getDelegate(table);
-    const where = options.region ? { region: options.region } : {};
+    const where = options.region ? getRegionWhere(table, options.region) : {};
     const orderBy = getOrderBy(table);
     const [data, total] = await Promise.all([
       delegate.findMany({
@@ -291,7 +330,7 @@ export class AdminService {
   /** Export all records of a table as CSV string */
   async exportCsv(table: string, region?: string): Promise<string> {
     const delegate = this.getDelegate(table);
-    const where = region ? { region } : {};
+    const where = region ? getRegionWhere(table, region) : {};
     const orderBy = getOrderBy(table);
     const rows = await delegate.findMany({
       where,
