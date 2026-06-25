@@ -127,6 +127,21 @@ export class SyncController {
     return this.orderSyncService.retryNegativeInventoryOrders(branchCode);
   }
 
+  @Post('orders/retry-skipped')
+  @ApiOperation({
+    summary:
+      'Re-process orders that were previously skipped but should now be synced (useful after expanding state mapping)',
+  })
+  retrySkippedOrders(
+    @Query('branchCode') branchCode?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.syncService.retrySkippedOrders(
+      branchCode,
+      parseLimit(limit, 1000),
+    );
+  }
+
   @Post('fetch-odoo')
   @ApiOperation({
     summary:

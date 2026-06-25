@@ -57,6 +57,17 @@ export class OrderSyncService {
       });
     }
 
+    // Log order ingestion status for debugging
+    const statusReason = !processedData.isPaid
+      ? 'unpaid'
+      : processedData.isCancelled
+        ? 'cancelled'
+        : 'will-sync';
+    this.logger.debug(
+      `Ingesting order ${processedData.odooOrderNumber}: isPaid=${processedData.isPaid}, ` +
+        `isCancelled=${processedData.isCancelled}, status=${statusReason}`,
+    );
+
     const orderDateUtc = this.timezoneService.normalizeToUtc(
       processedData.orderDate,
       processedData.originalTimezone,
