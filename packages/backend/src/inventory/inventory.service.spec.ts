@@ -91,7 +91,11 @@ describe('InventoryService', () => {
         reviewNote: 'Checked and confirmed',
       });
       prisma.$queryRaw.mockResolvedValueOnce([reviewed]);
-      const result = await service.markAsReviewed('inv-001', 'admin', 'Checked and confirmed');
+      const result = await service.markAsReviewed(
+        'inv-001',
+        'admin',
+        'Checked and confirmed',
+      );
       expect(result.reviewedBy).toBe('admin');
       expect(result.reviewNote).toBe('Checked and confirmed');
     });
@@ -107,7 +111,9 @@ describe('InventoryService', () => {
     });
 
     it('passes null for reviewNote when omitted', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeRecord({ reviewedAt: new Date() })]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        makeRecord({ reviewedAt: new Date() }),
+      ]);
       await service.markAsReviewed('inv-001', 'admin');
       const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
       // null should appear in the parameterised query values
@@ -120,7 +126,9 @@ describe('InventoryService', () => {
   describe('getInventoryStats', () => {
     it('returns summary and byBranch stats', async () => {
       prisma.$queryRaw
-        .mockResolvedValueOnce([{ totalNegative: 5, reviewed: 3, unreviewed: 2 }])
+        .mockResolvedValueOnce([
+          { totalNegative: 5, reviewed: 3, unreviewed: 2 },
+        ])
         .mockResolvedValueOnce([
           { branchCode: 'BR001', total: 5, reviewed: 3, unreviewed: 2 },
         ]);
@@ -133,9 +141,7 @@ describe('InventoryService', () => {
     });
 
     it('returns zeros when no data', async () => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([]);
+      prisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
       const result = await service.getInventoryStats();
       expect(result.totalNegative).toBe(0);
       expect(result.reviewed).toBe(0);
@@ -148,7 +154,10 @@ describe('InventoryService', () => {
 
   describe('getAlertHistory', () => {
     it('returns records ordered by createdAt desc', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeRecord(), makeRecord({ id: 'inv-002' })]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        makeRecord(),
+        makeRecord({ id: 'inv-002' }),
+      ]);
       const result = await service.getAlertHistory();
       expect(result).toHaveLength(2);
     });

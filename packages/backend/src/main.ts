@@ -20,10 +20,14 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 // number, so we throw early rather than silently corrupt data.
 // All Oracle account IDs used in this application are well within
 // Number.MAX_SAFE_INTEGER (9,007,199,254,740,991).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(BigInt.prototype as any).toJSON = function () {
-  const n = this.valueOf() as bigint;
-  if (n > BigInt(Number.MAX_SAFE_INTEGER) || n < BigInt(-Number.MAX_SAFE_INTEGER)) {
+(BigInt.prototype as { toJSON?: () => number }).toJSON = function (
+  this: bigint,
+) {
+  const n = this.valueOf();
+  if (
+    n > BigInt(Number.MAX_SAFE_INTEGER) ||
+    n < BigInt(-Number.MAX_SAFE_INTEGER)
+  ) {
     throw new RangeError(
       `BigInt value ${n.toString()} cannot be safely serialised as a JSON number (exceeds MAX_SAFE_INTEGER)`,
     );

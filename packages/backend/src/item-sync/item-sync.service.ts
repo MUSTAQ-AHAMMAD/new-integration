@@ -24,6 +24,9 @@ export interface ItemSyncResult {
   errors: string[];
 }
 
+/** Fallback watermark when no item meta exists: mirrors Java `calendar.add(Calendar.YEAR, -10)`. */
+const WATERMARK_FALLBACK_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class ItemSyncService {
   private readonly logger = new Logger(ItemSyncService.name);
@@ -76,14 +79,24 @@ export class ItemSyncService {
       errors: [],
     };
 
-    // ── 1. Determine Oracle organization code from the VendHQ outlet config ─
-    const outlet = await this.prisma.vendHqOutlet.findFirst({
-      where: { region },
+    // ── 1. Resolve the Oracle org code from VendHqCredential.fusionOrgCode ───
+    //       This mirrors the Java doIntegration(region, fusionOrgCode, ...) param.
+    const credential = await this.prisma.vendHqCredential.findFirst({
+      where: { region, active: true },
     });
-    // Oracle organization code defaults to region code when no outlet is found
-    const organizationCode = outlet?.outletName ?? region;
+    const organizationCode = credential?.fusionOrgCode ?? region;
 
-    // ── 2. Fetch items from Oracle Fusion in pages ──────────────────────────
+    // ── 2. Determine watermark — mirrors Java session.getGetVenHqItemsLastUpdatedDate ──
+    const latestMeta = await this.prisma.vendHqItemMeta.findFirst({
+      where: { region },
+      orderBy: { lastUpdateDate: 'desc' },
+      select: { lastUpdateDate: true },
+    });
+    const lastUpdateDate =
+      latestMeta?.lastUpdateDate ??
+      new Date(Date.now() - WATERMARK_FALLBACK_MS); // 10 years ago fallback
+
+    // ── 3. Fetch items from Oracle Fusion in pages ──────────────────────────
     const allItems: OracleInventoryItem[] = [];
     const pageSize = 500;
     let offset = 0;
@@ -92,6 +105,7 @@ export class ItemSyncService {
     while (hasMore) {
       const page = await this.oracleClient.getInventoryItems({
         organizationCode,
+        lastUpdateDate,
         limit: pageSize,
         offset,
       });
@@ -101,22 +115,39 @@ export class ItemSyncService {
     }
 
     this.logger.log(
-      `Fetched ${allItems.length} items from Oracle for region=${region}`,
+      `Fetched ${allItems.length} items from Oracle for region=${region} (orgCode=${organizationCode})`,
     );
 
-    // ── 3. Push each item to VendHQ and track in VendHqItemMeta ─────────────
+    // ── 4. Push each item to VendHQ and track in VendHqItemMeta ─────────────
     for (const item of allItems) {
       if (!item.ItemNumber) {
         result.skipped++;
         continue;
       }
 
+      // Mirrors Java: skip if no market price (Java throws for null price)
+      if (item.MarketPrice == null) {
+        this.logger.warn(
+          `Skipping item ${item.ItemNumber} (region=${region}): MarketPrice is null`,
+        );
+        result.skipped++;
+        continue;
+      }
+
+      const isActive = item.InventoryItemStatusCode === 'Active';
+      const retailPrice = Number(item.MarketPrice);
+      // Java uses LongDescription for the product name, falls back to ItemDescription
+      const productName =
+        item.LongDescription ?? item.ItemDescription ?? item.ItemNumber;
+
       try {
         const vendProduct = await this.vendHqClient.upsertProduct({
           sku: item.ItemNumber,
-          name: item.ItemDescription ?? item.ItemNumber,
-          retail_price: item.ListPrice,
-          is_active: item.ItemStatus?.toUpperCase() === 'ACTIVE',
+          handle: item.ItemNumber,
+          name: productName,
+          description: item.ItemDescription ?? undefined,
+          retail_price: isNaN(retailPrice) ? undefined : retailPrice,
+          is_active: isActive,
         });
 
         // Track / update in VendHqItemMeta
@@ -127,15 +158,21 @@ export class ItemSyncService {
 
         const metaData = {
           itemId: vendProduct.id,
-          name: vendProduct.name ?? item.ItemDescription ?? item.ItemNumber,
+          sourceId: item.ItemId ?? null,
+          name: productName,
           sku: item.ItemNumber,
-          handle: vendProduct.handle ?? null,
+          handle: item.ItemNumber,
+          uomCode: item.PrimaryUOMCode ?? null,
+          uomName: item.PrimaryUOMValue ?? null,
+          itemType: item.UserItemTypeValue ?? null,
           description: item.ItemDescription ?? null,
-          active: item.ItemStatus?.toUpperCase() === 'ACTIVE',
-          retailPrice: item.ListPrice ?? null,
+          active: isActive,
+          retailPrice: isNaN(retailPrice) ? null : retailPrice,
           taxId: vendProduct.tax_id ?? null,
           status: 'SUCCESS',
-          lastUpdateDate: new Date(),
+          lastUpdateDate: item.LastUpdateDate
+            ? new Date(item.LastUpdateDate)
+            : new Date(),
           region,
         };
 
@@ -160,13 +197,14 @@ export class ItemSyncService {
         // Track failure in VendHqItemMeta for observability
         try {
           const existing = await this.prisma.vendHqItemMeta.findFirst({
-            where: { itemId: item.ItemNumber, region },
+            where: { sku: item.ItemNumber, region },
             select: { id: true },
           });
           const failData = {
             itemId: item.ItemNumber,
-            name: item.ItemDescription ?? item.ItemNumber,
+            name: productName,
             sku: item.ItemNumber,
+            handle: item.ItemNumber,
             status: 'ERROR',
             message: msg,
             lastUpdateDate: new Date(),

@@ -79,13 +79,17 @@ describe('NotificationsService', () => {
       });
       svc.onModuleInit();
       // transporter should be set (not null)
-      expect((svc as unknown as { transporter: unknown }).transporter).not.toBeNull();
+      expect(
+        (svc as unknown as { transporter: unknown }).transporter,
+      ).not.toBeNull();
     });
 
     it('leaves transporter null when SMTP env vars are absent', () => {
       const svc = makeService({});
       svc.onModuleInit();
-      expect((svc as unknown as { transporter: unknown }).transporter).toBeNull();
+      expect(
+        (svc as unknown as { transporter: unknown }).transporter,
+      ).toBeNull();
     });
 
     it('uses secure=true when SMTP_PORT is 465', () => {
@@ -96,7 +100,9 @@ describe('NotificationsService', () => {
         SMTP_PORT: 465,
       });
       svc.onModuleInit();
-      expect((svc as unknown as { transporter: unknown }).transporter).not.toBeNull();
+      expect(
+        (svc as unknown as { transporter: unknown }).transporter,
+      ).not.toBeNull();
     });
 
     it('uses secure=true when SMTP_SECURE is "true"', () => {
@@ -107,7 +113,9 @@ describe('NotificationsService', () => {
         SMTP_SECURE: 'true',
       });
       svc.onModuleInit();
-      expect((svc as unknown as { transporter: unknown }).transporter).not.toBeNull();
+      expect(
+        (svc as unknown as { transporter: unknown }).transporter,
+      ).not.toBeNull();
     });
   });
 
@@ -167,7 +175,9 @@ describe('NotificationsService', () => {
 
   describe('updateRecipient', () => {
     it('updates and returns the recipient', async () => {
-      const result = await service.updateRecipient('recip-001', { isActive: false });
+      const result = await service.updateRecipient('recip-001', {
+        isActive: false,
+      });
       expect(prisma.notificationRecipient.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'recip-001' },
@@ -280,9 +290,10 @@ describe('NotificationsService', () => {
       });
       svc.onModuleInit();
       // Inject mock sendMail
-      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter = {
-        sendMail: mockSendMail,
-      };
+      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter =
+        {
+          sendMail: mockSendMail,
+        };
       svc.sendNotification({
         subject: 'Test',
         body: 'Body',
@@ -300,9 +311,10 @@ describe('NotificationsService', () => {
     it('sends to multiple recipients joined with comma', () => {
       const mockSendMail = jest.fn().mockResolvedValue({});
       const svc = makeService();
-      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter = {
-        sendMail: mockSendMail,
-      };
+      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter =
+        {
+          sendMail: mockSendMail,
+        };
       svc.sendNotification({
         subject: 'Multi',
         body: 'Body',
@@ -315,9 +327,10 @@ describe('NotificationsService', () => {
     it('HTML-escapes body content to prevent XSS', () => {
       const mockSendMail = jest.fn().mockResolvedValue({});
       const svc = makeService();
-      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter = {
-        sendMail: mockSendMail,
-      };
+      (svc as unknown as { transporter: { sendMail: jest.Mock } }).transporter =
+        {
+          sendMail: mockSendMail,
+        };
       svc.sendNotification({
         subject: 'XSS test',
         body: '<script>alert("xss")</script>',

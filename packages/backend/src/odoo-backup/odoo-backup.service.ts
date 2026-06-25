@@ -429,7 +429,8 @@ export class OdooBackupService {
       ? rawBase
       : `https://${rawBase}`;
 
-    const apiPath = normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const apiPath =
+      normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
 
     const url = `${baseUrl}${apiPath}`;
     const sslVerify = cred.rejectUnauthorizedSsl !== false;
@@ -462,7 +463,7 @@ export class OdooBackupService {
     } catch (err: unknown) {
       if (err instanceof AxiosError) {
         const status = err.response?.status ?? null;
-        const body = err.response?.data;
+        const body = err.response?.data as unknown;
         const bodySnippet =
           typeof body === 'string'
             ? body.slice(0, 500)
@@ -1021,9 +1022,9 @@ export class OdooBackupService {
     // Only prefer statement_ids when it is non-empty; otherwise fall through to
     // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
     // carries real data are not silently dropped.
-    const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(order).filter(
-      (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
-    );
+    const rawPayments: OdooOrderPayment[] = this.extractPaymentItems(
+      order,
+    ).filter((p): p is OdooOrderPayment => typeof p === 'object' && p !== null);
 
     if (rawPayments.length > 0) {
       // Batch-replace: delete stale payment rows then bulk-insert fresh ones.

@@ -60,11 +60,7 @@ function optBigInt(row: Record<string, unknown>, name: string): bigint | null {
   // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const s = String(v).trim();
   if (s === '') return null;
-  if (
-    typeof v !== 'string' &&
-    typeof v !== 'number' &&
-    typeof v !== 'bigint'
-  )
+  if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'bigint')
     return null;
   try {
     return BigInt(s.split('.')[0]);
@@ -79,11 +75,7 @@ function bigint(row: Record<string, unknown>, name: string): bigint {
   // Guard against object/array/symbol types that BigInt() cannot convert
   // and that would produce a misleading string (e.g. "[object Object]")
   // before the try-catch below could normalise the error into 0n.
-  if (
-    typeof v !== 'string' &&
-    typeof v !== 'number' &&
-    typeof v !== 'bigint'
-  )
+  if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'bigint')
     return 0n;
   try {
     // Strip any decimal part (Oracle may return numeric types as floats).

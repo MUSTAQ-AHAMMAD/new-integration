@@ -23,10 +23,14 @@ function makePrisma() {
       findMany: jest.fn().mockResolvedValue([{ region: 'AE', active: true }]),
     },
     vendHqOutlet: {
-      findFirst: jest.fn().mockResolvedValue({ outletId: 'outlet-001', outletName: 'MAIN' }),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ outletId: 'outlet-001', outletName: 'MAIN' }),
     },
     vendHqItemMeta: {
-      findFirst: jest.fn().mockResolvedValue({ id: 'meta-001', itemId: 'vend-item-001' }),
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ id: 'meta-001', itemId: 'vend-item-001' }),
       create: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -135,7 +139,9 @@ describe('FusionInvToVendHqService', () => {
 
     it('successfully syncs an item and records a SUCCESS txn', async () => {
       oracle.getInventoryOnHand.mockResolvedValueOnce([makeOnHand()]);
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({ itemId: 'vend-001' });
+      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({
+        itemId: 'vend-001',
+      });
       vendHq.updateInventory.mockResolvedValueOnce({});
 
       const result = await service.syncInventoryForRegion('AE');
@@ -156,7 +162,9 @@ describe('FusionInvToVendHqService', () => {
 
     it('increments failed and records an ERROR txn when updateInventory throws', async () => {
       oracle.getInventoryOnHand.mockResolvedValueOnce([makeOnHand()]);
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({ itemId: 'vend-001' });
+      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({
+        itemId: 'vend-001',
+      });
       vendHq.updateInventory.mockRejectedValueOnce(new Error('VendHQ 500'));
 
       const result = await service.syncInventoryForRegion('AE');
@@ -176,7 +184,7 @@ describe('FusionInvToVendHqService', () => {
       );
       const emptyPage: typeof fullPage = [];
       oracle.getInventoryOnHand
-        .mockResolvedValueOnce(fullPage)  // page 1 — triggers another fetch
+        .mockResolvedValueOnce(fullPage) // page 1 — triggers another fetch
         .mockResolvedValueOnce(emptyPage); // page 2 — stops pagination
       // Simulate items not in VendHqItemMeta so we don't need updateInventory mocks for 500 items
       prisma.vendHqItemMeta.findFirst.mockResolvedValue(null);
@@ -208,9 +216,7 @@ describe('FusionInvToVendHqService', () => {
       const result = await service.getInventoryTransactions();
       expect(
         (prisma.fusionInvTxn as unknown as { findMany: jest.Mock }).findMany,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({ where: undefined }),
-      );
+      ).toHaveBeenCalledWith(expect.objectContaining({ where: undefined }));
       expect(result).toHaveLength(1);
     });
 

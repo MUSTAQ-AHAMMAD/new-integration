@@ -174,7 +174,9 @@ describe('StoreConfigService', () => {
       await service.validateConfig('CCNTRBHR');
       expect(prisma.storeConfiguration.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ validationStatus: ValidationStatus.VALIDATED }),
+          data: expect.objectContaining({
+            validationStatus: ValidationStatus.VALIDATED,
+          }),
         }),
       );
     });
@@ -186,7 +188,9 @@ describe('StoreConfigService', () => {
       await service.validateConfig('CCNTRBHR');
       expect(prisma.storeConfiguration.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ validationStatus: ValidationStatus.INVALID }),
+          data: expect.objectContaining({
+            validationStatus: ValidationStatus.INVALID,
+          }),
         }),
       );
     });

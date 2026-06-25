@@ -11,8 +11,9 @@ function makeOracleItem(overrides: Record<string, unknown> = {}) {
   return {
     ItemNumber: 'ITEM-001',
     ItemDescription: 'Widget A',
-    ListPrice: 29.99,
-    ItemStatus: 'ACTIVE',
+    LongDescription: 'Widget A Long',
+    MarketPrice: 29.99,
+    InventoryItemStatusCode: 'Active',
     ...overrides,
   };
 }
@@ -31,12 +32,13 @@ function makePrisma() {
   return {
     vendHqCredential: {
       findMany: jest.fn().mockResolvedValue([{ region: 'AE', active: true }]),
-    },
-    vendHqOutlet: {
-      findFirst: jest.fn().mockResolvedValue({ outletName: 'MAIN' }),
+      // Returns null by default → fusionOrgCode falls back to region string
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     vendHqItemMeta: {
+      // Default: null for both the watermark call and any item-tracking calls
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
     },
@@ -91,13 +93,17 @@ describe('ItemSyncService', () => {
         { region: 'AE' },
         { region: 'KW' },
       ]);
+      // findFirst is called once per syncItemsForRegion: credential lookup + watermark
+      prisma.vendHqCredential.findFirst.mockResolvedValue(null);
       oracle.getInventoryItems.mockResolvedValue([]); // both empty
       await service.runItemSync();
       expect(oracle.getInventoryItems).toHaveBeenCalledTimes(2);
     });
 
     it('catches per-region errors without rethrowing', async () => {
-      prisma.vendHqCredential.findMany.mockResolvedValueOnce([{ region: 'AE' }]);
+      prisma.vendHqCredential.findMany.mockResolvedValueOnce([
+        { region: 'AE' },
+      ]);
       oracle.getInventoryItems.mockRejectedValueOnce(new Error('Oracle down'));
       await expect(service.runItemSync()).resolves.toBeUndefined();
     });
@@ -116,7 +122,11 @@ describe('ItemSyncService', () => {
     });
 
     it('creates VendHqItemMeta when item is new', async () => {
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce(null);
+      // First findFirst call = watermark (null → use fallback date)
+      // Second findFirst call = item-tracking lookup (null → create)
+      prisma.vendHqItemMeta.findFirst
+        .mockResolvedValueOnce(null) // watermark
+        .mockResolvedValueOnce(null); // item tracking
       const result = await service.syncItemsForRegion('AE');
       expect(result.synced).toBe(1);
       expect(prisma.vendHqItemMeta.create).toHaveBeenCalledWith(
@@ -127,7 +137,11 @@ describe('ItemSyncService', () => {
     });
 
     it('updates VendHqItemMeta when item exists', async () => {
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({ id: 'meta-001' });
+      // First call = watermark (null → use fallback date)
+      // Second call = item-tracking lookup → existing record
+      prisma.vendHqItemMeta.findFirst
+        .mockResolvedValueOnce(null) // watermark
+        .mockResolvedValueOnce({ id: 'meta-001' }); // item tracking
       const result = await service.syncItemsForRegion('AE');
       expect(result.synced).toBe(1);
       expect(prisma.vendHqItemMeta.update).toHaveBeenCalledWith(
@@ -145,9 +159,9 @@ describe('ItemSyncService', () => {
       expect(result.errors[0]).toContain('ITEM-001');
     });
 
-    it('upserts product as inactive when ItemStatus is not ACTIVE', async () => {
+    it('upserts product as inactive when InventoryItemStatusCode is not Active', async () => {
       oracle.getInventoryItems.mockResolvedValueOnce([
-        makeOracleItem({ ItemStatus: 'INACTIVE' }),
+        makeOracleItem({ InventoryItemStatusCode: 'Inactive' }),
       ]);
       await service.syncItemsForRegion('AE');
       const [call] = vendHq.upsertProduct.mock.calls;
@@ -170,8 +184,8 @@ describe('ItemSyncService', () => {
       expect(oracle.getInventoryItems).toHaveBeenCalledTimes(2);
     });
 
-    it('uses the region as organizationCode when no outlet found', async () => {
-      prisma.vendHqOutlet.findFirst.mockResolvedValueOnce(null);
+    it('uses the region as organizationCode when no credential fusionOrgCode found', async () => {
+      prisma.vendHqCredential.findFirst.mockResolvedValueOnce(null);
       oracle.getInventoryItems.mockResolvedValueOnce([]);
       await service.syncItemsForRegion('KW');
       const [call] = oracle.getInventoryItems.mock.calls;
@@ -189,9 +203,7 @@ describe('ItemSyncService', () => {
       const result = await service.getItemSyncStatus();
       expect(
         (prisma.vendHqItemMeta as unknown as { findMany: jest.Mock }).findMany,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({ where: undefined }),
-      );
+      ).toHaveBeenCalledWith(expect.objectContaining({ where: undefined }));
       expect(result).toHaveLength(1);
     });
 
