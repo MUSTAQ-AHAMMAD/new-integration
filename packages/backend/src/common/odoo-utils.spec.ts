@@ -155,5 +155,4 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isCancelled).toBe(true);
     });
   });
-  });
 });

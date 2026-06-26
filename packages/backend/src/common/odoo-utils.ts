@@ -135,7 +135,7 @@ export function normalizeOrderForIngestion(
   // Order is paid only if:
   // 1. It's not cancelled, AND
   // 2. Its state is in the PAID_ORDER_STATES list
-  const isPaid = !isCancelled && PAID_ORDER_STATES.includes(normalizedState);
+  const isPaid = !isCancelled && (PAID_ORDER_STATES as readonly string[]).includes(normalizedState);
 
   return {
     odooOrderId: String(order.id),
