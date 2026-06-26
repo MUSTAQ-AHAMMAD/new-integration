@@ -6,7 +6,7 @@ import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
 
 class LoginDto {
-  @IsEmail()
+  @IsString()
   email!: string;
 
   @IsString()

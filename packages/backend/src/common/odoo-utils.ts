@@ -6,6 +6,9 @@
 /** Default timezone assumed for Odoo/IBQ orders that carry no explicit timezone. */
 export const DEFAULT_ODOO_TIMEZONE = 'Asia/Dubai';
 
+/** Enable detailed logging for payment detection (set via env var ODOO_UTILS_DEBUG=true) */
+const DEBUG_PAYMENT_DETECTION = process.env.ODOO_UTILS_DEBUG === 'true';
+
 /**
  * Ensures a date string sent to the Odoo/IBQ `/api/pos/order` endpoint has a
  * time component. The UI date-picker produces `YYYY-MM-DD` (no time) but the
@@ -91,7 +94,7 @@ export interface RawOdooOrderFields {
  * - 'quotation': Just a quote, not an order
  * - 'sent_quotation': Quote sent but not confirmed
  */
-const PAID_ORDER_STATES = [
+export const PAID_ORDER_STATES = [
   'paid',
   'done',
   'posted',
@@ -119,7 +122,7 @@ const PAID_ORDER_STATES = [
  * Order states that explicitly indicate the order should NOT be synced.
  * These orders are either incomplete, cancelled, or just quotes.
  */
-const UNPAID_ORDER_STATES = [
+export const UNPAID_ORDER_STATES = [
   'draft',
   'cancel',
   'cancelled',
@@ -197,53 +200,89 @@ export function normalizeOrderForIngestion(
   if (!branchCode) return null;
 
   const amountTotal = Number(order.amount_total ?? 0);
-  const state = typeof order.state === 'string' ? order.state : 'draft';
+  // Treat null/undefined state as unknown to enable payment data fallback check
+  const state = typeof order.state === 'string' ? order.state : null;
   const resolvedTimezone =
     timezone ??
     (typeof order.timezone === 'string' && order.timezone
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
-  // Normalize state for comparison
-  const normalizedState = state.toLowerCase().trim();
+  // Normalize state for comparison (handle null state)
+  const normalizedState = state ? state.toLowerCase().trim() : null;
   
   // Check if order is explicitly cancelled
   const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
   
   // Determine if order is paid using multi-layered logic:
   let isPaid = false;
+  let paymentDetectionReason = 'not_determined';
   
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
-    const isExplicitlyUnpaid = (UNPAID_ORDER_STATES as readonly string[]).includes(
-      normalizedState
-    );
+    // The explicit null check ensures null states skip this check and fall through to payment detection
+    const isExplicitlyUnpaid = normalizedState !== null && 
+      UNPAID_ORDER_STATES.includes(normalizedState);
     
     if (isExplicitlyUnpaid) {
       // Order is in draft or quotation state - definitely not paid
       isPaid = false;
+      paymentDetectionReason = `unpaid_state:${normalizedState}`;
+      
+      if (DEBUG_PAYMENT_DETECTION) {
+        console.log(`[odoo-utils] Order ${order.id}: isPaid=false - state "${normalizedState}" is in UNPAID_ORDER_STATES`);
+      }
     } else {
       // 2. Check if state is in the known paid states list
-      const stateIndicatesPaid = (PAID_ORDER_STATES as readonly string[]).includes(
-        normalizedState
-      );
+      const stateIndicatesPaid = normalizedState !== null &&
+        PAID_ORDER_STATES.includes(normalizedState);
       
       if (stateIndicatesPaid) {
         // State explicitly indicates payment
         isPaid = true;
+        paymentDetectionReason = `paid_state:${normalizedState}`;
+        
+        if (DEBUG_PAYMENT_DETECTION) {
+          console.log(`[odoo-utils] Order ${order.id}: isPaid=true - state "${normalizedState}" is in PAID_ORDER_STATES`);
+        }
       } else {
         // 3. Fallback: check for payment data
-        // If the state is unknown but there are payments, assume it's paid
+        // If the state is unknown/null but there are payments, assume it's paid
         const hasPayments = hasPaymentData(order);
         
         if (hasPayments) {
-          // Has payment data, so likely paid even if state is unusual
+          // Has payment data, so likely paid even if state is unusual/null
           isPaid = true;
+          paymentDetectionReason = normalizedState 
+            ? `payment_data_found:${normalizedState}`
+            : 'payment_data_found:null_state';
+          
+          if (DEBUG_PAYMENT_DETECTION) {
+            const stateMsg = normalizedState || 'null';
+            console.log(`[odoo-utils] Order ${order.id}: isPaid=true - ${stateMsg} state but has payment data`);
+          }
         } else {
-          // Unknown state and no payments - mark as unpaid to be safe
+          // Unknown/null state and no payments - mark as unpaid to be safe
           isPaid = false;
+          paymentDetectionReason = normalizedState
+            ? `unknown_state_no_payment:${normalizedState}`
+            : 'null_state_no_payment';
+          
+          if (DEBUG_PAYMENT_DETECTION) {
+            const stateMsg = normalizedState || 'null';
+            console.log(`[odoo-utils] Order ${order.id}: isPaid=false - ${stateMsg} state with no payment data`);
+            if (normalizedState) {
+              console.log(`[odoo-utils] Order ${order.id}: Consider adding "${normalizedState}" to PAID_ORDER_STATES if this state indicates payment`);
+            }
+          }
         }
       }
+    }
+  } else {
+    paymentDetectionReason = 'cancelled';
+    
+    if (DEBUG_PAYMENT_DETECTION) {
+      console.log(`[odoo-utils] Order ${order.id}: cancelled - will be skipped`);
     }
   }
 

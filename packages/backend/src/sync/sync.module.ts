@@ -7,6 +7,7 @@ import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module'
 import { QueuesModule } from '../queues/queues.module';
 import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncController } from './sync.controller';
+import { AutoFixService } from './auto-fix.service';
 import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OdooTransformationService } from './odoo-transformation.service';
@@ -41,6 +42,7 @@ import { ValidationService } from './validation.service';
     OdooTransformationService,
     StalledOrdersService,
     OrderDiagnosticsService,
+    AutoFixService,
     SyncResolver,
     PipelineSchedulerService,
     SyncControlService,
@@ -55,6 +57,7 @@ import { ValidationService } from './validation.service';
     OdooTransformationService,
     StalledOrdersService,
     OrderDiagnosticsService,
+    AutoFixService,
     PipelineSchedulerService,
     SyncControlService,
   ],

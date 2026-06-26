@@ -52,23 +52,26 @@ Enhanced `normalizeOrderForIngestion()` with multi-layered payment detection:
 ```typescript
 1. Check if order is explicitly cancelled → mark as unpaid
 2. Check if state is in UNPAID_ORDER_STATES (draft, quotation) → mark as unpaid
+   - Note: null/undefined state is NOT treated as draft anymore
 3. Check if state is in PAID_ORDER_STATES → mark as paid
 4. Fallback: Check for payment data (statement_ids, payment_ids, payments)
-   - If payments exist → mark as paid
+   - If payments exist → mark as paid (handles null state with payment data)
    - If no payments → mark as unpaid (safer default)
 ```
 
-This ensures orders with unusual states but valid payment data are correctly detected as paid.
+This ensures orders with unusual/null states but valid payment data are correctly detected as paid.
+
+**Important**: When the Odoo API returns orders without a `state` field (null/undefined), the code now checks for payment data before marking as unpaid. This is critical for APIs that filter for paid orders but don't return the state field.
 
 ### 3. Enhanced Reingest Logic
 Updated the `reingestFromBackup()` method to fetch payment data from `BackupOdooOrderPayment` when `rawJson` is not available, ensuring payment data is considered during re-ingestion.
 
 ### 4. Comprehensive Test Coverage
-Added 45+ unit tests covering:
+Added 47 unit tests covering:
 - All 22 paid states
 - Explicit unpaid states (draft, quotation, etc.)
 - Payment-based fallback detection
-- Edge cases (null state, cancelled with payments, etc.)
+- Edge cases (null state with/without payments, cancelled with payments, etc.)
 
 All tests passing ✅
 
