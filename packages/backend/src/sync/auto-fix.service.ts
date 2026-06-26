@@ -156,10 +156,11 @@ export class AutoFixService {
           });
 
           // Re-queue for processing
-          await this.queuesService.enqueueOrderSync(
-            order.odooOrderId,
-            order.branchCode,
-          );
+          await this.queuesService.enqueueOrderSync({
+            orderSyncQueueId: order.id,
+            odooOrderId: order.odooOrderId,
+            branchCode: order.branchCode,
+          });
 
           result.success = true;
           result.message += ' Order updated and re-queued for sync.';
@@ -196,10 +197,11 @@ export class AutoFixService {
         },
       });
 
-      await this.queuesService.enqueueOrderSync(
-        order.odooOrderId,
-        order.branchCode,
-      );
+      await this.queuesService.enqueueOrderSync({
+        orderSyncQueueId: order.id,
+        odooOrderId: order.odooOrderId,
+        branchCode: order.branchCode,
+      });
 
       result.success = true;
     }
