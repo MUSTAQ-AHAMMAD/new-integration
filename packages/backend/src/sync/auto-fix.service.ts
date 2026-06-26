@@ -6,6 +6,7 @@ import { SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { QueuesService } from '../queues/queues.service';
+import { PAID_ORDER_STATES } from '../common/odoo-utils';
 
 export interface AutoFixResult {
   orderSyncQueueId: string;
@@ -137,32 +138,8 @@ export class AutoFixService {
       if (backup) {
         const state = (backup.state || '').toLowerCase().trim();
 
-        // Check if state should be paid
-        const PAID_STATES = [
-          'paid',
-          'done',
-          'posted',
-          'invoiced',
-          'sale',
-          'invoice',
-          'confirmed',
-          'validated',
-          'sent',
-          'open',
-          'to invoice',
-          'to_invoice',
-          'progress',
-          'in_payment',
-          'in payment',
-          'processing',
-          'complete',
-          'completed',
-          'closed',
-          'finalized',
-          'finalised',
-        ];
-
-        if (PAID_STATES.includes(state)) {
+        // Check if state should be paid (use imported PAID_ORDER_STATES)
+        if (PAID_ORDER_STATES.includes(state)) {
           // State indicates paid - re-ingest this order
           result.action = 'reingest';
           result.message = `Order state "${backup.state}" indicates payment, but isPaid=false. Re-ingesting from backup.`;

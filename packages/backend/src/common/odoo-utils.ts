@@ -94,7 +94,7 @@ export interface RawOdooOrderFields {
  * - 'quotation': Just a quote, not an order
  * - 'sent_quotation': Quote sent but not confirmed
  */
-const PAID_ORDER_STATES = [
+export const PAID_ORDER_STATES = [
   'paid',
   'done',
   'posted',
@@ -122,7 +122,7 @@ const PAID_ORDER_STATES = [
  * Order states that explicitly indicate the order should NOT be synced.
  * These orders are either incomplete, cancelled, or just quotes.
  */
-const UNPAID_ORDER_STATES = [
+export const UNPAID_ORDER_STATES = [
   'draft',
   'cancel',
   'cancelled',
@@ -222,7 +222,7 @@ export function normalizeOrderForIngestion(
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
     // The explicit null check ensures null states skip this check and fall through to payment detection
     const isExplicitlyUnpaid = normalizedState !== null && 
-      (UNPAID_ORDER_STATES as readonly string[]).includes(normalizedState);
+      UNPAID_ORDER_STATES.includes(normalizedState);
     
     if (isExplicitlyUnpaid) {
       // Order is in draft or quotation state - definitely not paid
@@ -235,7 +235,7 @@ export function normalizeOrderForIngestion(
     } else {
       // 2. Check if state is in the known paid states list
       const stateIndicatesPaid = normalizedState !== null &&
-        (PAID_ORDER_STATES as readonly string[]).includes(normalizedState);
+        PAID_ORDER_STATES.includes(normalizedState);
       
       if (stateIndicatesPaid) {
         // State explicitly indicates payment
