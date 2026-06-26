@@ -208,9 +208,7 @@ export function normalizeOrderForIngestion(
   const normalizedState = state.toLowerCase().trim();
   
   // Check if order is explicitly cancelled
-  const isCancelled = (UNPAID_ORDER_STATES as readonly string[]).some(
-    (s) => s === 'cancel' || s === 'cancelled'
-  ) && (normalizedState === 'cancel' || normalizedState === 'cancelled');
+  const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
   
   // Determine if order is paid using multi-layered logic:
   let isPaid = false;
@@ -218,7 +216,7 @@ export function normalizeOrderForIngestion(
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
     const isExplicitlyUnpaid = (UNPAID_ORDER_STATES as readonly string[]).includes(
-      normalizedState as any
+      normalizedState
     );
     
     if (isExplicitlyUnpaid) {
@@ -227,7 +225,7 @@ export function normalizeOrderForIngestion(
     } else {
       // 2. Check if state is in the known paid states list
       const stateIndicatesPaid = (PAID_ORDER_STATES as readonly string[]).includes(
-        normalizedState as any
+        normalizedState
       );
       
       if (stateIndicatesPaid) {
