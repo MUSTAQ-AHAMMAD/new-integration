@@ -22,10 +22,7 @@ export default function SkippedOrdersPage() {
   });
 
   const retrySkippedMutation = useMutation({
-    mutationFn: () => fetch('/api/v1/sync/orders/retry-skipped', {
-      method: 'POST',
-      credentials: 'include',
-    }).then(res => res.json()),
+    mutationFn: () => api.retrySkippedOrders(),
     onSuccess: (data) => {
       toast.success(`${data.updated || 0} skipped orders re-queued for processing`);
       qc.invalidateQueries({ queryKey: ['order-queue'] });
@@ -34,11 +31,7 @@ export default function SkippedOrdersPage() {
   });
 
   const retryOrderMutation = useMutation({
-    mutationFn: (orderId: string) => 
-      fetch(`/api/v1/sync/order-queue/${orderId}/retry`, {
-        method: 'POST',
-        credentials: 'include',
-      }).then(res => res.json()),
+    mutationFn: (orderId: string) => api.retryOrderQueueEntry(orderId),
     onSuccess: () => {
       toast.success('Order re-queued for processing');
       qc.invalidateQueries({ queryKey: ['order-queue'] });
