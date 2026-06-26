@@ -82,7 +82,7 @@ export default function SkippedOrdersPage() {
           ) : (
             <div className="space-y-4">
               {orders && orders.length > 0 ? (
-                orders.map((order: any) => (
+                orders.map((order: OrderQueueEntry) => (
                   <div 
                     key={order.id}
                     className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors"

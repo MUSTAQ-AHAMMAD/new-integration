@@ -363,6 +363,13 @@ export interface OrderQueueEntry {
   isPaid: boolean;
   isCancelled: boolean;
   isRefund: boolean;
+  negativeInventoryFlag: boolean;
+  syncAttempts: number;
+  validationErrors?: {
+    reasons?: string[];
+    errors?: string[];
+    warnings?: string[];
+  } | null;
   createdAt: string;
   updatedAt: string;
   failedTransactions: Array<{
