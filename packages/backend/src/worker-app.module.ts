@@ -1,3 +1,19 @@
+/**
+ * WorkerAppModule — minimal NestJS application module for the dedicated
+ * BullMQ worker process. It includes only the modules required to process
+ * queue jobs and omits HTTP-only concerns (Swagger, Bull Board, metrics
+ * endpoint, webhooks, dashboard aggregations).
+ *
+ * This module includes:
+ * - Core infrastructure: Prisma, Redis, Queues, Config, Logging
+ * - Queue processors: Order sync, inventory sync, retry, notifications
+ * - Backup services with cron jobs: Odoo, IBQ, VendHQ (scheduled data ingestion)
+ * - Sync pipeline: PipelineSchedulerService, OrderSyncService (automatic processing)
+ * - Store/payment configuration services (required by processors)
+ *
+ * Run with: `node dist/worker`
+ * Scale independently from the API server to increase queue throughput.
+ */
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
