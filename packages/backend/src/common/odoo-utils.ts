@@ -54,16 +54,19 @@ export interface RawOdooOrderFields {
   state?: string | null;
   /** Present on main-Odoo orders; absent on IBQ/multi-tenant instances. */
   timezone?: string | null;
+  /** Optional payment data for enhanced payment detection */
+  statement_ids?: unknown[] | null;
+  payment_ids?: unknown[] | null;
+  payments?: unknown[] | null;
 }
 
 /**
  * Odoo/IBQ order states that indicate the order is completed and ready for Oracle sync.
  * 
- * Only orders with these states (case-insensitive) will be marked as paid and
- * queued for Oracle sync. Orders with other states (e.g., 'draft', 'cancel')
- * will be marked as unpaid and skipped during sync.
+ * This list is comprehensive and includes all known states across different Odoo/IBQ versions
+ * that indicate an order is finalized and should be synced to Oracle.
  * 
- * Supported Odoo POS/ERP states:
+ * Supported states (case-insensitive):
  * - 'paid': Payment completed (POS orders)
  * - 'done': Order fulfilled/completed
  * - 'posted': Invoice posted to accounting
@@ -73,9 +76,20 @@ export interface RawOdooOrderFields {
  * - 'confirmed': Order confirmed (some Odoo workflows)
  * - 'validated': Order validated (some IBQ workflows)
  * - 'sent': Order sent (some Odoo workflows)
+ * - 'open': Invoice/order is open and finalized (common in Odoo Accounting)
+ * - 'to invoice': Order ready to be invoiced (often means payment received)
+ * - 'progress': Order in progress (some Odoo workflows)
+ * - 'in_payment': Payment is being processed
+ * - 'processing': Order is being processed
+ * - 'complete': Order is complete
+ * - 'closed': Order is closed/completed
+ * - 'finalized': Order is finalized
  * 
- * Note: 'draft' and 'cancel' states are explicitly excluded to prevent
- * incomplete or cancelled orders from being synced to Oracle.
+ * Excluded states (will be marked as unpaid):
+ * - 'draft': Order not yet finalized
+ * - 'cancel'/'cancelled': Order cancelled
+ * - 'quotation': Just a quote, not an order
+ * - 'sent_quotation': Quote sent but not confirmed
  */
 const PAID_ORDER_STATES = [
   'paid',
@@ -87,7 +101,62 @@ const PAID_ORDER_STATES = [
   'confirmed',
   'validated',
   'sent',
+  'open',
+  'to invoice',
+  'to_invoice',
+  'progress',
+  'in_payment',
+  'in payment',
+  'processing',
+  'complete',
+  'completed',
+  'closed',
+  'finalized',
+  'finalised',
 ] as const;
+
+/**
+ * Order states that explicitly indicate the order should NOT be synced.
+ * These orders are either incomplete, cancelled, or just quotes.
+ */
+const UNPAID_ORDER_STATES = [
+  'draft',
+  'cancel',
+  'cancelled',
+  'quotation',
+  'sent_quotation',
+  'sent quotation',
+] as const;
+
+/**
+ * Check if an order has payment data in any of the payment fields.
+ * Returns true if the order has at least one payment entry.
+ */
+function hasPaymentData(order: RawOdooOrderFields): boolean {
+  if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
+    // Filter out integer-only entries (ID references without data)
+    const hasObjects = order.statement_ids.some(
+      (item) => typeof item === 'object' && item !== null
+    );
+    if (hasObjects) return true;
+  }
+  
+  if (Array.isArray(order.payment_ids) && order.payment_ids.length > 0) {
+    const hasObjects = order.payment_ids.some(
+      (item) => typeof item === 'object' && item !== null
+    );
+    if (hasObjects) return true;
+  }
+  
+  if (Array.isArray(order.payments) && order.payments.length > 0) {
+    const hasObjects = order.payments.some(
+      (item) => typeof item === 'object' && item !== null
+    );
+    if (hasObjects) return true;
+  }
+  
+  return false;
+}
 
 /**
  * Normalised ingestion payload extracted from a raw Odoo/IBQ order.
@@ -95,6 +164,15 @@ const PAID_ORDER_STATES = [
  *
  * @param order      Raw order from the API
  * @param timezone   Override timezone (pass undefined to read from order.timezone)
+ *
+ * Payment detection logic:
+ * 1. First checks if the order is explicitly cancelled/draft (marked as unpaid)
+ * 2. Then checks if the state is in the PAID_ORDER_STATES list
+ * 3. As a fallback, checks for payment data (statement_ids, payment_ids, payments)
+ * 4. If none of the above apply, the order is marked as unpaid
+ *
+ * This multi-layered approach ensures we catch paid orders across different Odoo/IBQ
+ * configurations and versions, while still filtering out truly unpaid/draft orders.
  *
  * Note: when `order.date_order` is absent the current wall-clock time is used
  * as a best-effort fallback. The caller's `TimezoneService.normalizeToUtc()`
@@ -126,16 +204,48 @@ export function normalizeOrderForIngestion(
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
-  // Check if the order state indicates it's paid and ready for Oracle sync.
-  // The order is considered paid if its state (case-insensitive) is in the
-  // PAID_ORDER_STATES list and it's not cancelled.
-  const normalizedState = state.toLowerCase();
+  // Normalize state for comparison
+  const normalizedState = state.toLowerCase().trim();
+  
+  // Check if order is explicitly cancelled
   const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
   
-  // Order is paid only if:
-  // 1. It's not cancelled, AND
-  // 2. Its state is in the PAID_ORDER_STATES list
-  const isPaid = !isCancelled && (PAID_ORDER_STATES as readonly string[]).includes(normalizedState);
+  // Determine if order is paid using multi-layered logic:
+  let isPaid = false;
+  
+  if (!isCancelled) {
+    // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
+    const isExplicitlyUnpaid = (UNPAID_ORDER_STATES as readonly string[]).includes(
+      normalizedState
+    );
+    
+    if (isExplicitlyUnpaid) {
+      // Order is in draft or quotation state - definitely not paid
+      isPaid = false;
+    } else {
+      // 2. Check if state is in the known paid states list
+      const stateIndicatesPaid = (PAID_ORDER_STATES as readonly string[]).includes(
+        normalizedState
+      );
+      
+      if (stateIndicatesPaid) {
+        // State explicitly indicates payment
+        isPaid = true;
+      } else {
+        // 3. Fallback: check for payment data
+        // If the state is unknown but there are payments, assume it's paid
+        const hasPayments = hasPaymentData(order);
+        
+        if (hasPayments) {
+          // Has payment data, so likely paid even if state is unusual
+          isPaid = true;
+        } else {
+          // Unknown state and no payments - mark as unpaid to be safe
+          isPaid = false;
+        }
+      }
+    }
+  }
 
   return {
     odooOrderId: String(order.id),

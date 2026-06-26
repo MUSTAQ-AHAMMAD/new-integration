@@ -181,8 +181,10 @@ export default function SkippedOrdersPage() {
         <CardContent className="pt-6">
           <h3 className="font-semibold text-blue-900 mb-2">Common Reasons for Skipped Orders</h3>
           <ul className="space-y-1.5 text-sm text-blue-800">
-            <li>• <strong>Order is not paid/posted:</strong> Only orders in states like 'paid', 'done', 'posted', 'invoiced', 'sale', 'confirmed', 'validated' are synced</li>
+            <li>• <strong>Order is not paid/posted:</strong> Only orders in finalized states are synced. Accepted states include: paid, done, posted, invoiced, sale, confirmed, validated, open, to_invoice, progress, in_payment, processing, complete, closed, finalized</li>
+            <li>• <strong>Orders with payments:</strong> Even if the state is unusual, orders with payment data (statement_ids/payment_ids/payments) will now be detected as paid</li>
             <li>• <strong>Order is cancelled:</strong> Cancelled orders are not synced to Oracle</li>
+            <li>• <strong>Draft/Quotation orders:</strong> Orders in draft, quotation, or sent_quotation states are not synced</li>
             <li>• <strong>Missing branch code:</strong> Order doesn't have a valid branch/store identifier</li>
             <li>• <strong>Negative inventory:</strong> Order contains items with negative stock (held until corrected)</li>
             <li>• <strong>Missing configuration:</strong> Store configuration is incomplete or missing required fields</li>

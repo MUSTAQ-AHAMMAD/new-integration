@@ -33,7 +33,23 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
     state,
   });
 
-  describe('State-based paid order detection', () => {
+  const createMockOrderWithPayments = (
+    state: string,
+    amount = 100,
+    hasPayments = true
+  ): RawOdooOrderFields => ({
+    id: 123456,
+    name: 'TEST-ORDER-001',
+    branch_id: [1, 'Test Branch'],
+    date_order: '2026-06-26 10:00:00',
+    amount_total: amount,
+    state,
+    statement_ids: hasPayments ? [
+      { id: 1, amount: 100, paymentName: 'Cash' }
+    ] : [],
+  });
+
+  describe('State-based paid order detection - original states', () => {
     it('should mark "paid" state as paid', () => {
       const order = createMockOrder('paid');
       const result = normalizeOrderForIngestion(order);
@@ -83,6 +99,80 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(true);
     });
+  });
+
+  describe('State-based paid order detection - new states', () => {
+    it('should mark "open" state as paid', () => {
+      const order = createMockOrder('open');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "to invoice" state as paid', () => {
+      const order = createMockOrder('to invoice');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "to_invoice" state as paid', () => {
+      const order = createMockOrder('to_invoice');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "progress" state as paid', () => {
+      const order = createMockOrder('progress');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "in_payment" state as paid', () => {
+      const order = createMockOrder('in_payment');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "in payment" state as paid', () => {
+      const order = createMockOrder('in payment');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "processing" state as paid', () => {
+      const order = createMockOrder('processing');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "complete" state as paid', () => {
+      const order = createMockOrder('complete');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "completed" state as paid', () => {
+      const order = createMockOrder('completed');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "closed" state as paid', () => {
+      const order = createMockOrder('closed');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "finalized" state as paid', () => {
+      const order = createMockOrder('finalized');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "finalised" state as paid', () => {
+      const order = createMockOrder('finalised');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
 
     it('should be case-insensitive for state matching', () => {
       const order = createMockOrder('PAID');
@@ -90,6 +180,14 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isPaid).toBe(true);
     });
 
+    it('should handle state with whitespace', () => {
+      const order = createMockOrder('  paid  ');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+  });
+
+  describe('Explicitly unpaid states', () => {
     it('should mark "draft" state as NOT paid', () => {
       const order = createMockOrder('draft');
       const result = normalizeOrderForIngestion(order);
@@ -97,11 +195,90 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isCancelled).toBe(false);
     });
 
-    it('should mark unknown state as NOT paid', () => {
-      const order = createMockOrder('unknown_state');
+    it('should mark "quotation" state as NOT paid', () => {
+      const order = createMockOrder('quotation');
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(false);
       expect(result?.isCancelled).toBe(false);
+    });
+
+    it('should mark "sent_quotation" state as NOT paid', () => {
+      const order = createMockOrder('sent_quotation');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(false);
+    });
+
+    it('should mark "sent quotation" state as NOT paid', () => {
+      const order = createMockOrder('sent quotation');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(false);
+    });
+  });
+
+  describe('Payment-based fallback detection', () => {
+    it('should mark order with unknown state but valid payments as PAID', () => {
+      const order = createMockOrderWithPayments('unknown_state', 100, true);
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+      expect(result?.isCancelled).toBe(false);
+    });
+
+    it('should mark order with unknown state and NO payments as NOT paid', () => {
+      const order = createMockOrderWithPayments('unknown_state', 100, false);
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(false);
+    });
+
+    it('should NOT mark draft order with payments as paid (explicit unpaid state)', () => {
+      const order = createMockOrderWithPayments('draft', 100, true);
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(false);
+    });
+
+    it('should detect payments in payment_ids field', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'TEST-ORDER-002',
+        branch_id: [1, 'Test Branch'],
+        date_order: '2026-06-26 10:00:00',
+        amount_total: 100,
+        state: 'weird_state',
+        payment_ids: [{ id: 1, amount: 100 }],
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should detect payments in payments field', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'TEST-ORDER-003',
+        branch_id: [1, 'Test Branch'],
+        date_order: '2026-06-26 10:00:00',
+        amount_total: 100,
+        state: 'custom_state',
+        payments: [{ id: 1, amount: 100 }],
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should ignore payment IDs without objects (integer-only arrays)', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'TEST-ORDER-004',
+        branch_id: [1, 'Test Branch'],
+        date_order: '2026-06-26 10:00:00',
+        amount_total: 100,
+        state: 'weird_state',
+        statement_ids: [1, 2, 3], // Just IDs, no payment objects
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
     });
   });
 
@@ -123,6 +300,13 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
 
     it('should be case-insensitive for "CANCEL"', () => {
       const order = createMockOrder('CANCEL');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(true);
+    });
+
+    it('should mark cancelled order as not paid even with payments', () => {
+      const order = createMockOrderWithPayments('cancelled', 100, true);
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(false);
       expect(result?.isCancelled).toBe(true);
@@ -153,6 +337,28 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(false);
       expect(result?.isCancelled).toBe(true);
+    });
+
+    it('should handle null state as draft (unpaid)', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'NULL-STATE',
+        branch_id: [1, 'Test Branch'],
+        state: null,
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+    });
+
+    it('should handle undefined state as draft (unpaid)', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'UNDEFINED-STATE',
+        branch_id: [1, 'Test Branch'],
+        state: undefined,
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
     });
   });
 });

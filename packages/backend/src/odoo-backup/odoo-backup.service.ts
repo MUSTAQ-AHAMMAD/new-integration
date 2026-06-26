@@ -1339,18 +1339,36 @@ export class OdooBackupService {
     for (const backupOrder of backupOrders) {
       try {
         // Reconstruct the order object from rawJson if available, otherwise use backup fields
-        const order: RawOdooOrderFields =
-          backupOrder.rawJson && typeof backupOrder.rawJson === 'object' && !Array.isArray(backupOrder.rawJson)
-            ? (backupOrder.rawJson as unknown as RawOdooOrderFields)
-            : {
-                id: backupOrder.orderId,
-                name: backupOrder.orderName,
-                branch_id: backupOrder.branchId,
-                date_order: backupOrder.dateOrder?.toISOString(),
-                amount_total: backupOrder.amountTotal,
-                state: backupOrder.state,
-                timezone: backupOrder.timezone,
-              };
+        let order: RawOdooOrderFields;
+        
+        if (backupOrder.rawJson && typeof backupOrder.rawJson === 'object' && !Array.isArray(backupOrder.rawJson)) {
+          // Use the full rawJson which should contain payment data
+          order = backupOrder.rawJson as unknown as RawOdooOrderFields;
+        } else {
+          // Fallback: construct from backup fields and fetch payment data from database
+          const payments = await this.prisma.backupOdooOrderPayment.findMany({
+            where: { parentOrderId: backupOrder.id },
+            select: {
+              paymentId: true,
+              paymentName: true,
+              amount: true,
+              currency: true,
+              paymentDate: true,
+            },
+          });
+          
+          order = {
+            id: backupOrder.orderId,
+            name: backupOrder.orderName,
+            branch_id: backupOrder.branchId,
+            date_order: backupOrder.dateOrder?.toISOString(),
+            amount_total: backupOrder.amountTotal,
+            state: backupOrder.state,
+            timezone: backupOrder.timezone,
+            // Include payment data if available
+            statement_ids: payments.length > 0 ? payments : undefined,
+          };
+        }
 
         const payload = normalizeOrderForIngestion(order, backupOrder.timezone ?? undefined);
         if (!payload) {
