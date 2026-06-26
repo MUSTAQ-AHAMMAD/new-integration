@@ -63,7 +63,11 @@ export interface RawOdooOrderFields {
  * - Java processes ALL orders from backup table regardless of state
  * - This suggests orders in backup are pre-filtered to include only valid states
  * 
- * Odoo POS/ERP states:
+ * IMPORTANT: The Odoo/IBQ API calls already filter and return ONLY paid orders.
+ * Therefore, any order fetched from the API should be considered paid by default.
+ * The state field is kept for reference but no longer used for filtering.
+ * 
+ * Odoo POS/ERP states (for reference only):
  * - 'paid': Payment completed (POS orders)
  * - 'done': Order fulfilled/completed
  * - 'posted': Invoice posted to accounting
@@ -74,7 +78,7 @@ export interface RawOdooOrderFields {
  * - 'validated': Order validated (some IBQ workflows)
  * - 'sent': Order sent (some Odoo workflows)
  * 
- * Note: 'draft' and 'cancel' states are explicitly excluded.
+ * Note: 'draft' and 'cancel' states are explicitly excluded at the API fetch level.
  */
 const PAID_ORDER_STATES = [
   'paid',
@@ -125,10 +129,14 @@ export function normalizeOrderForIngestion(
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
-  // Check if order state indicates it's paid/completed
-  // Cast to lowercase for case-insensitive comparison
+  // IMPORTANT: Since the Odoo/IBQ API already filters and returns ONLY paid orders,
+  // we trust the source and mark all orders as paid by default.
+  // The only exception is if the order is explicitly cancelled.
   const normalizedState = state.toLowerCase();
-  const isPaid = PAID_ORDER_STATES.includes(normalizedState as any);
+  const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
+  
+  // Mark as paid unless explicitly cancelled
+  const isPaid = !isCancelled;
 
   return {
     odooOrderId: String(order.id),
@@ -138,7 +146,7 @@ export function normalizeOrderForIngestion(
     originalTimezone: resolvedTimezone,
     totalAmount: amountTotal,
     isPaid,
-    isCancelled: normalizedState === 'cancel' || normalizedState === 'cancelled',
+    isCancelled,
     isRefund: amountTotal < 0,
   };
 }
