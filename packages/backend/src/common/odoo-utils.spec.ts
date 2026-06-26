@@ -148,7 +148,7 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isPaid).toBe(true);
     });
 
-    it('should mark "draft" cancelled state as NOT paid', () => {
+    it('should mark "cancel" state as NOT paid and cancelled', () => {
       const order = createMockOrder('cancel');
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(false);
