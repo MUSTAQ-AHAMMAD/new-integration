@@ -129,14 +129,16 @@ export function normalizeOrderForIngestion(
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
-  // IMPORTANT: Since the Odoo/IBQ API already filters and returns ONLY paid orders,
-  // we trust the source and mark all orders as paid by default.
-  // The only exception is if the order is explicitly cancelled.
+  // Check if the order state indicates it's paid and ready for Oracle sync.
+  // The order is considered paid if its state (case-insensitive) is in the
+  // PAID_ORDER_STATES list and it's not cancelled.
   const normalizedState = state.toLowerCase();
   const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
   
-  // Mark as paid unless explicitly cancelled
-  const isPaid = !isCancelled;
+  // Order is paid only if:
+  // 1. It's not cancelled, AND
+  // 2. Its state is in the PAID_ORDER_STATES list
+  const isPaid = !isCancelled && PAID_ORDER_STATES.includes(normalizedState as any);
 
   return {
     odooOrderId: String(order.id),
