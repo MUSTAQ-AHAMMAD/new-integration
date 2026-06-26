@@ -269,7 +269,7 @@ export class AutoFixService {
           orderId: orders[0].orderId,
           orderName: orders[0].orderName,
           amountTotal: orders[0].amountTotal,
-          hasPaymentData: orders[0].orderPayments && orders[0].orderPayments.length > 0,
+          hasPaymentData: (orders[0].orderPayments?.length ?? 0) > 0,
         },
       }))
       .sort((a, b) => b.count - a.count);
