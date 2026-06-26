@@ -243,8 +243,7 @@ export class AutoFixService {
         orderName: true,
         state: true,
         amountTotal: true,
-        statementIds: true,
-        paymentIds: true,
+        orderPayments: true,
       },
     });
 
@@ -270,8 +269,7 @@ export class AutoFixService {
           orderId: orders[0].orderId,
           orderName: orders[0].orderName,
           amountTotal: orders[0].amountTotal,
-          hasStatementIds: !!orders[0].statementIds,
-          hasPaymentIds: !!orders[0].paymentIds,
+          hasPaymentData: orders[0].orderPayments && orders[0].orderPayments.length > 0,
         },
       }))
       .sort((a, b) => b.count - a.count);
