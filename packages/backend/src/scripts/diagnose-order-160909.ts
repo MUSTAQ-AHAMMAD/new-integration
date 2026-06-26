@@ -30,12 +30,12 @@ async function main() {
     console.log('2. CHECKING BACKUP TABLES...');
     const backupOdoo = await prisma.backupOdooOrder.findFirst({
       where: { orderId: 160909 },
-      orderBy: { fetchedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
     
     const backupIbq = await prisma.backupIbqOrder.findFirst({
       where: { orderId: 160909 },
-      orderBy: { fetchedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
     
     if (backupOdoo) {
@@ -46,7 +46,7 @@ async function main() {
       console.log(`   Amount: ${backupOdoo.amountTotal}`);
       console.log(`   Date: ${backupOdoo.dateOrder}`);
       console.log(`   Branch ID: ${JSON.stringify(backupOdoo.branchId)}`);
-      console.log(`   Fetched At: ${backupOdoo.fetchedAt}`);
+      console.log(`   Created At: ${backupOdoo.createdAt}`);
       console.log();
       console.log('   RECOMMENDATION: Re-ingest from backup using POST /odoo-backup/reingest-from-backup');
     } else if (backupIbq) {
@@ -57,7 +57,7 @@ async function main() {
       console.log(`   Amount: ${backupIbq.amountTotal}`);
       console.log(`   Date: ${backupIbq.dateOrder}`);
       console.log(`   Branch ID: ${JSON.stringify(backupIbq.branchId)}`);
-      console.log(`   Fetched At: ${backupIbq.fetchedAt}`);
+      console.log(`   Created At: ${backupIbq.createdAt}`);
       console.log();
       console.log('   RECOMMENDATION: Re-ingest from backup using POST /ibq-backup/reingest-from-backup');
     } else {
