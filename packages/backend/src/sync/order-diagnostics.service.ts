@@ -202,13 +202,15 @@ export class OrderDiagnosticsService {
         reasons.push(
           `Order is not marked as paid (isPaid=false)`,
           `Source order state: "${state}"`,
-          `Accepted paid states: paid, done, posted, invoiced, sale, invoice`,
+          `Accepted paid states: paid, done, posted, invoiced, sale, invoice, confirmed, validated, sent, open, to_invoice, progress, in_payment, processing, complete, closed, finalized`,
+          `Rejected states: draft, cancel, cancelled, quotation, sent_quotation`,
         );
         recommendations.push(
-          `Check if the order state "${state}" should be considered paid`,
-          'If the state is valid, the PAID_ORDER_STATES list may need to be expanded',
-          'Contact the development team to update the state mapping',
-          'After fixing the mapping, use POST /sync/orders/retry-skipped to re-process this order',
+          `Check if the order state "${state}" is truly unpaid or if it should be considered paid`,
+          `If the state indicates payment was received, check if the order has payment data (statement_ids, payment_ids, payments)`,
+          'Orders with unusual states but containing payment data should now be detected as paid',
+          'After verifying the order should be paid, use POST /sync/orders/retry-skipped to re-process this order',
+          'If this is a new state that should always be considered paid, contact the development team to add it to PAID_ORDER_STATES',
         );
         canRetry = true;
       }
