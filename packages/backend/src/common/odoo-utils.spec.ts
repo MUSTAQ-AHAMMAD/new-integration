@@ -339,7 +339,7 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isCancelled).toBe(true);
     });
 
-    it('should handle null state as draft (unpaid)', () => {
+    it('should handle null state as draft (unpaid) when no payment data', () => {
       const order: RawOdooOrderFields = {
         id: 123456,
         name: 'NULL-STATE',
@@ -350,7 +350,19 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isPaid).toBe(false);
     });
 
-    it('should handle undefined state as draft (unpaid)', () => {
+    it('should handle null state as PAID when payment data exists', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'NULL-STATE-WITH-PAYMENT',
+        branch_id: [1, 'Test Branch'],
+        state: null,
+        statement_ids: [{ id: 1, amount: 100, paymentName: 'Cash' }],
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should handle undefined state as draft (unpaid) when no payment data', () => {
       const order: RawOdooOrderFields = {
         id: 123456,
         name: 'UNDEFINED-STATE',
@@ -359,6 +371,18 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       };
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(false);
+    });
+
+    it('should handle undefined state as PAID when payment data exists', () => {
+      const order: RawOdooOrderFields = {
+        id: 123456,
+        name: 'UNDEFINED-STATE-WITH-PAYMENT',
+        branch_id: [1, 'Test Branch'],
+        state: undefined,
+        payments: [{ id: 1, amount: 100 }],
+      };
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
     });
   });
 });
