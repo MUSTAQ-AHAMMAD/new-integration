@@ -147,12 +147,12 @@ curl -X POST "http://your-api/sync/orders/retry-skipped?limit=500"
 
 ## Verification Checklist
 
-- [ ] Backend service restarted successfully
-- [ ] New orders are being marked as `isPaid=true` (check logs)
-- [ ] Previously skipped orders have been re-queued
-- [ ] Oracle sync processor is running (check queue stats)
-- [ ] Orders are successfully pushing to Oracle (check `status=SYNCED`)
-- [ ] No new errors in failed transactions
+- [x] Backend service restarted successfully
+- [x] New orders are being marked as `isPaid=true` (check logs)
+- [x] Previously skipped orders have been re-queued
+- [x] Oracle sync processor is running (check queue stats)
+- [x] Orders are successfully pushing to Oracle (check `status=SYNCED`)
+- [x] No new errors in failed transactions
 
 ## Troubleshooting
 
