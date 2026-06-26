@@ -125,12 +125,13 @@ async function main() {
                 console.log('   If yes, it may need to be added to PAID_ORDER_STATES in odoo-utils.ts');
               }
               
-              // Check for payment data
-              if (backup.statementIds) {
-                console.log(`   Payment Data (statement_ids): ${JSON.stringify(backup.statementIds)}`);
+              // Check for payment data in rawJson
+              const rawData = backup.rawJson as any;
+              if (rawData?.statement_ids) {
+                console.log(`   Payment Data (statement_ids): ${JSON.stringify(rawData.statement_ids)}`);
               }
-              if (backup.paymentIds) {
-                console.log(`   Payment Data (payment_ids): ${JSON.stringify(backup.paymentIds)}`);
+              if (rawData?.payment_ids) {
+                console.log(`   Payment Data (payment_ids): ${JSON.stringify(rawData.payment_ids)}`);
               }
             }
           }
