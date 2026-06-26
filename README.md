@@ -173,15 +173,17 @@ GitHub Actions (`.github/workflows/ci.yml`):
 If you see **PARTIAL** status in sync jobs, this typically means some orders were **SKIPPED** (not failed). This is normal behavior - not all orders should sync to Oracle.
 
 **Common reasons:**
-- Orders not marked as "paid" (state must be: paid, done, posted, invoiced, sale, invoice, confirmed, validated, or sent)
+- Orders not marked as "paid" (state must be in one of 22+ recognized paid states)
 - Orders are cancelled
 - Missing branch code
 - Missing store configuration
 
-**How to fix:**
-1. Navigate to **Operations > Skipped Orders** to see WHY each order was skipped
-2. Fix the underlying issue (update order states, add missing config, etc.)
-3. Click **"Retry Skipped Orders"** button to re-process
+**How to fix existing orders:**
+1. **Auto-Fix (Recommended)**: `POST /api/v1/sync/auto-fix/skipped-orders`
+2. **Retry Skipped**: `POST /api/v1/sync/orders/retry-skipped`
+3. **Re-Ingest from Backup**: `POST /api/v1/odoo-backup/reingest-from-backup`
+
+See [docs/EXISTING_ORDERS_FIX_GUIDE.md](docs/EXISTING_ORDERS_FIX_GUIDE.md) for comprehensive fix guide with all available endpoints.
 
 See [docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md](docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md) for complete troubleshooting guide.
 
