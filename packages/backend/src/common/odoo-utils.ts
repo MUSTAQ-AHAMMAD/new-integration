@@ -6,6 +6,9 @@
 /** Default timezone assumed for Odoo/IBQ orders that carry no explicit timezone. */
 export const DEFAULT_ODOO_TIMEZONE = 'Asia/Dubai';
 
+/** Enable detailed logging for payment detection (set via env var ODOO_UTILS_DEBUG=true) */
+const DEBUG_PAYMENT_DETECTION = process.env.ODOO_UTILS_DEBUG === 'true';
+
 /**
  * Ensures a date string sent to the Odoo/IBQ `/api/pos/order` endpoint has a
  * time component. The UI date-picker produces `YYYY-MM-DD` (no time) but the
@@ -212,6 +215,7 @@ export function normalizeOrderForIngestion(
   
   // Determine if order is paid using multi-layered logic:
   let isPaid = false;
+  let paymentDetectionReason = 'not_determined';
   
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
@@ -222,6 +226,11 @@ export function normalizeOrderForIngestion(
     if (isExplicitlyUnpaid) {
       // Order is in draft or quotation state - definitely not paid
       isPaid = false;
+      paymentDetectionReason = `unpaid_state:${normalizedState}`;
+      
+      if (DEBUG_PAYMENT_DETECTION) {
+        console.log(`[odoo-utils] Order ${order.id}: isPaid=false - state "${normalizedState}" is in UNPAID_ORDER_STATES`);
+      }
     } else {
       // 2. Check if state is in the known paid states list
       const stateIndicatesPaid = (PAID_ORDER_STATES as readonly string[]).includes(
@@ -231,6 +240,11 @@ export function normalizeOrderForIngestion(
       if (stateIndicatesPaid) {
         // State explicitly indicates payment
         isPaid = true;
+        paymentDetectionReason = `paid_state:${normalizedState}`;
+        
+        if (DEBUG_PAYMENT_DETECTION) {
+          console.log(`[odoo-utils] Order ${order.id}: isPaid=true - state "${normalizedState}" is in PAID_ORDER_STATES`);
+        }
       } else {
         // 3. Fallback: check for payment data
         // If the state is unknown but there are payments, assume it's paid
@@ -239,11 +253,28 @@ export function normalizeOrderForIngestion(
         if (hasPayments) {
           // Has payment data, so likely paid even if state is unusual
           isPaid = true;
+          paymentDetectionReason = `payment_data_found:${normalizedState}`;
+          
+          if (DEBUG_PAYMENT_DETECTION) {
+            console.log(`[odoo-utils] Order ${order.id}: isPaid=true - unknown state "${normalizedState}" but has payment data`);
+          }
         } else {
           // Unknown state and no payments - mark as unpaid to be safe
           isPaid = false;
+          paymentDetectionReason = `unknown_state_no_payment:${normalizedState}`;
+          
+          if (DEBUG_PAYMENT_DETECTION) {
+            console.log(`[odoo-utils] Order ${order.id}: isPaid=false - unknown state "${normalizedState}" with no payment data`);
+            console.log(`[odoo-utils] Order ${order.id}: Consider adding "${normalizedState}" to PAID_ORDER_STATES if this state indicates payment`);
+          }
         }
       }
+    }
+  } else {
+    paymentDetectionReason = 'cancelled';
+    
+    if (DEBUG_PAYMENT_DETECTION) {
+      console.log(`[odoo-utils] Order ${order.id}: cancelled - will be skipped`);
     }
   }
 

@@ -20,6 +20,7 @@ import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
+import { AutoFixService } from './auto-fix.service';
 
 @ApiTags('sync')
 @Controller('sync')
@@ -31,6 +32,7 @@ export class SyncController {
     private readonly ibqBackupService: IbqBackupService,
     private readonly prisma: PrismaService,
     private readonly diagnosticsService: OrderDiagnosticsService,
+    private readonly autoFixService: AutoFixService,
   ) {}
 
   @Post('jobs')
@@ -350,5 +352,31 @@ export class SyncController {
   })
   getDiagnosticsSummary() {
     return this.diagnosticsService.getOrderStatsSummary();
+  }
+
+  @Post('auto-fix/skipped-orders')
+  @ApiOperation({
+    summary:
+      'Automatically diagnose and fix skipped orders - will re-queue orders that should be synced',
+  })
+  autoFixSkippedOrders(
+    @Query('odooOrderId') odooOrderId?: string,
+    @Query('branchCode') branchCode?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.autoFixService.autoFixSkippedOrders(
+      odooOrderId,
+      branchCode,
+      parseLimit(limit, 100),
+    );
+  }
+
+  @Get('auto-fix/suggest-states')
+  @ApiOperation({
+    summary:
+      'Suggest order states that might need to be added to PAID_ORDER_STATES based on skipped orders',
+  })
+  suggestStatesToAdd() {
+    return this.autoFixService.suggestStatesToAdd();
   }
 }
