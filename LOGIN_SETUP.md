@@ -1,51 +1,38 @@
 # Login Setup Guide
 
-## Problem
+## Problem Resolved ✅
 The login was failing with "admin / admin" credentials because:
 1. The `.env` file was missing
-2. The system requires a valid **email address** format (not just "admin")
+2. The auth controller was enforcing strict email validation
 
-## Solution
+## Solution Applied
 
-The backend `.env` file has been created with admin credentials. You have two options:
+### Changes Made:
+1. ✅ Created `.env` file in `packages/backend/` with admin credentials
+2. ✅ Updated auth controller to accept both email and username formats
+3. ✅ Set default credentials to `admin@example.com / admin`
 
-### Option 1: Use "admin" as email (requires code change)
-Current setup in `.env`:
-```bash
-ADMIN_EMAIL=admin
-ADMIN_PASSWORD=admin
-```
+### Current Login Credentials
 
-To make this work, you need to remove the email validation from the auth controller.
+You can now log in with **either** format:
 
-### Option 2: Use a valid email format (recommended)
-Update the `.env` file to use a valid email:
-```bash
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=admin
-```
-
-Then log in with:
+**Option 1: Email format (default)**
 - **Email**: `admin@example.com`
 - **Password**: `admin`
 
-## Quick Fix
+**Option 2: Username format (also works now)**
+- **Email**: `admin` (field name is "email" but accepts any string now)
+- **Password**: `admin`
 
-To apply the recommended fix (Option 2), run:
+## Configuration
+
+The admin credentials are set in `packages/backend/.env`:
 ```bash
-cd packages/backend
-# Edit .env file
-sed -i 's/ADMIN_EMAIL=admin$/ADMIN_EMAIL=admin@example.com/' .env
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=admin
 ```
 
-Or manually edit `packages/backend/.env` and change:
-```
-ADMIN_EMAIL=admin
-```
-to:
-```
-ADMIN_EMAIL=admin@example.com
-```
+You can customize these values to your preference. Both email formats and simple usernames are now accepted.
 
 ## Restart Required
 
@@ -59,9 +46,27 @@ cd packages/backend
 pnpm run dev
 ```
 
-## Security Note
+## Security Recommendations
 
 For production environments:
-- Change the default password to something strong
-- Use a real admin email address
-- Set a secure JWT_SECRET (64+ random characters)
+- ⚠️ Change the default password to something strong (at least 12 characters)
+- ⚠️ Use a real admin email address
+- ⚠️ Set a secure JWT_SECRET (64+ random characters)
+- ⚠️ Update the ADMIN_PASSWORD environment variable immediately
+
+Example secure configuration:
+```bash
+ADMIN_EMAIL=admin@yourcompany.com
+ADMIN_PASSWORD=YourSecureP@ssw0rd!2024
+JWT_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2
+```
+
+## Testing
+
+1. Navigate to the dashboard login page (usually `http://localhost:3000/login`)
+2. Enter: `admin@example.com` (or just `admin`)
+3. Password: `admin`
+4. Click "Sign in"
+
+You should now be logged in successfully!
+
