@@ -126,7 +126,7 @@ async function main() {
               }
               
               // Check for payment data in rawJson
-              const rawData = backup.rawJson as any;
+              const rawData = backup.rawJson as Record<string, unknown>;
               if (rawData?.statement_ids) {
                 console.log(`   Payment Data (statement_ids): ${JSON.stringify(rawData.statement_ids)}`);
               }
