@@ -200,7 +200,7 @@ export function normalizeOrderForIngestion(
   if (!branchCode) return null;
 
   const amountTotal = Number(order.amount_total ?? 0);
-  // Don't default to 'draft' immediately - treat null as unknown to allow payment fallback
+  // Treat null/undefined state as unknown to enable payment data fallback check
   const state = typeof order.state === 'string' ? order.state : null;
   const resolvedTimezone =
     timezone ??
@@ -220,7 +220,7 @@ export function normalizeOrderForIngestion(
   
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
-    // Note: null state is NOT treated as explicitly unpaid - it will fall through to payment check
+    // The explicit null check ensures null states skip this check and fall through to payment detection
     const isExplicitlyUnpaid = normalizedState !== null && 
       (UNPAID_ORDER_STATES as readonly string[]).includes(normalizedState);
     
