@@ -59,15 +59,11 @@ export interface RawOdooOrderFields {
 /**
  * Odoo/IBQ order states that indicate the order is completed and ready for Oracle sync.
  * 
- * Based on analysis of Java integration:
- * - Java processes ALL orders from backup table regardless of state
- * - This suggests orders in backup are pre-filtered to include only valid states
+ * Only orders with these states (case-insensitive) will be marked as paid and
+ * queued for Oracle sync. Orders with other states (e.g., 'draft', 'cancel')
+ * will be marked as unpaid and skipped during sync.
  * 
- * IMPORTANT: The Odoo/IBQ API calls already filter and return ONLY paid orders.
- * Therefore, any order fetched from the API should be considered paid by default.
- * The state field is kept for reference but no longer used for filtering.
- * 
- * Odoo POS/ERP states (for reference only):
+ * Supported Odoo POS/ERP states:
  * - 'paid': Payment completed (POS orders)
  * - 'done': Order fulfilled/completed
  * - 'posted': Invoice posted to accounting
@@ -78,7 +74,8 @@ export interface RawOdooOrderFields {
  * - 'validated': Order validated (some IBQ workflows)
  * - 'sent': Order sent (some Odoo workflows)
  * 
- * Note: 'draft' and 'cancel' states are explicitly excluded at the API fetch level.
+ * Note: 'draft' and 'cancel' states are explicitly excluded to prevent
+ * incomplete or cancelled orders from being synced to Oracle.
  */
 const PAID_ORDER_STATES = [
   'paid',
