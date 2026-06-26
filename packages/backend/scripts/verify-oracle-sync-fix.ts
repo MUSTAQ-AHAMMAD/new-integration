@@ -19,7 +19,7 @@ async function main() {
   const prisma = new PrismaClient();
   
   console.log('🔍 Oracle Sync Fix Verification\n');
-  console.log('=' .repeat(60));
+  console.log('='.repeat(60));
   
   try {
     // Point 1: Check database connection (simulates backend service health)
