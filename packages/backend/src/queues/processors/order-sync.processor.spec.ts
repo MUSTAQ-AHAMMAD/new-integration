@@ -9,7 +9,7 @@ jest.mock('../queues.module', () => ({
   QueuesModule: class QueuesModule {},
 }));
 
-import { AuditStatus, ErrorType, SyncStatus } from '@prisma/client';
+import { AuditStatus, ErrorType, SyncStatus, Prisma } from '@prisma/client';
 import { Job } from 'bull';
 import { AlertsService } from '../../alerts/alerts.service';
 import { OracleSoapClient } from '../../clients/oracle/oracle-soap.client';
@@ -36,7 +36,7 @@ const BASE_ORDER = {
   negativeInventoryFlag: false,
   negativeInventoryItems: null,
   totalAmount: { toNumber: () => 150 },
-  validationErrors: null,
+  validationErrors: Prisma.JsonNull,
 };
 
 function makeJob(overrides: Record<string, unknown> = {}): Job {
