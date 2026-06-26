@@ -33,7 +33,7 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
     state,
   });
 
-  describe('Trust API source - mark all as paid except cancelled', () => {
+  describe('State-based paid order detection', () => {
     it('should mark "paid" state as paid', () => {
       const order = createMockOrder('paid');
       const result = normalizeOrderForIngestion(order);
@@ -60,17 +60,47 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isPaid).toBe(true);
     });
 
-    it('should mark "draft" state as paid (API pre-filters)', () => {
-      const order = createMockOrder('draft');
+    it('should mark "sale" state as paid', () => {
+      const order = createMockOrder('sale');
       const result = normalizeOrderForIngestion(order);
       expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "confirmed" state as paid', () => {
+      const order = createMockOrder('confirmed');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "validated" state as paid', () => {
+      const order = createMockOrder('validated');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "sent" state as paid', () => {
+      const order = createMockOrder('sent');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should be case-insensitive for state matching', () => {
+      const order = createMockOrder('PAID');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(true);
+    });
+
+    it('should mark "draft" state as NOT paid', () => {
+      const order = createMockOrder('draft');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
       expect(result?.isCancelled).toBe(false);
     });
 
-    it('should mark unknown state as paid (API pre-filters)', () => {
+    it('should mark unknown state as NOT paid', () => {
       const order = createMockOrder('unknown_state');
       const result = normalizeOrderForIngestion(order);
-      expect(result?.isPaid).toBe(true);
+      expect(result?.isPaid).toBe(false);
       expect(result?.isCancelled).toBe(false);
     });
   });
@@ -117,5 +147,13 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
       expect(result?.isRefund).toBe(true);
       expect(result?.isPaid).toBe(true);
     });
+
+    it('should mark "draft" cancelled state as NOT paid', () => {
+      const order = createMockOrder('cancel');
+      const result = normalizeOrderForIngestion(order);
+      expect(result?.isPaid).toBe(false);
+      expect(result?.isCancelled).toBe(true);
+    });
+  });
   });
 });
