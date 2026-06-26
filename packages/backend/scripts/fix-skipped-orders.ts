@@ -7,7 +7,7 @@
  * Run: npx ts-node scripts/fix-skipped-orders.ts
  */
 
-import { PrismaClient, SyncStatus } from '@prisma/client';
+import { PrismaClient, SyncStatus, Prisma } from '@prisma/client';
 
 async function main() {
   const prisma = new PrismaClient();
@@ -64,7 +64,7 @@ async function main() {
       data: {
         isPaid: true,
         status: SyncStatus.PENDING,
-        validationErrors: null, // Clear validation errors
+        validationErrors: Prisma.JsonNull, // Clear validation errors
         syncAttempts: 0, // Reset sync attempts
       },
     });

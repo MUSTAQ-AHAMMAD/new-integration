@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { AlertSeverity, AlertType, ValidationStatus } from '@prisma/client';
+import { AlertSeverity, AlertType, ValidationStatus, Prisma } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreConfigService } from './store-config.service';
@@ -14,7 +14,7 @@ function makeStoreConfig(overrides: Record<string, unknown> = {}) {
     branchName: 'Central Branch',
     isActive: true,
     validationStatus: ValidationStatus.VALIDATED,
-    validationErrors: null,
+    validationErrors: Prisma.JsonNull,
     billToSiteName: 'Acme Corp',
     bankAccountName: 'Main Bank',
     cashAccountName: 'Main Cash',

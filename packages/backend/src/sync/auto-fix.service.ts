@@ -2,7 +2,7 @@
  * Auto-Fix Service - Automatically diagnoses and fixes common sync issues
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { SyncStatus } from '@prisma/client';
+import { SyncStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { QueuesService } from '../queues/queues.service';
@@ -139,7 +139,7 @@ export class AutoFixService {
         const state = (backup.state || '').toLowerCase().trim();
 
         // Check if state should be paid (use imported PAID_ORDER_STATES)
-        if (PAID_ORDER_STATES.includes(state)) {
+        if ((PAID_ORDER_STATES as readonly string[]).includes(state)) {
           // State indicates paid - re-ingest this order
           result.action = 'reingest';
           result.message = `Order state "${backup.state}" indicates payment, but isPaid=false. Re-ingesting from backup.`;
@@ -150,7 +150,7 @@ export class AutoFixService {
             data: {
               isPaid: true,
               status: SyncStatus.PENDING,
-              validationErrors: null,
+              validationErrors: Prisma.JsonNull,
               updatedAt: new Date(),
             },
           });
@@ -191,7 +191,7 @@ export class AutoFixService {
         where: { id: order.id },
         data: {
           status: SyncStatus.PENDING,
-          validationErrors: null,
+          validationErrors: Prisma.JsonNull,
           updatedAt: new Date(),
         },
       });
