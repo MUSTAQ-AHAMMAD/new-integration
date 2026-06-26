@@ -94,6 +94,17 @@ export const api = {
   },
   retryOrderQueueEntry: (id: string) =>
     apiRequest<{ ok: boolean; id: string }>(`/sync/order-queue/${id}/retry`, { method: 'POST' }),
+  retrySkippedOrders: (branchCode?: string, limit?: number) => {
+    const params = new URLSearchParams();
+    if (branchCode) params.set('branchCode', branchCode);
+    if (limit) params.set('limit', String(limit));
+    const query = params.toString();
+    return apiRequest<{ updated: number; enqueued: number }>(`/sync/orders/retry-skipped${query ? `?${query}` : ''}`, { method: 'POST' });
+  },
+  retryNegativeInventoryOrders: (branchCode?: string) => {
+    const query = branchCode ? `?branchCode=${branchCode}` : '';
+    return apiRequest<{ enqueued: number }>(`/sync/orders/retry-negative-inventory${query}`, { method: 'POST' });
+  },
   listAlerts: (params?: { severity?: string; resolved?: boolean }) => {
     const qs = new URLSearchParams();
     if (params?.severity) qs.set('severity', params.severity);
@@ -352,6 +363,13 @@ export interface OrderQueueEntry {
   isPaid: boolean;
   isCancelled: boolean;
   isRefund: boolean;
+  negativeInventoryFlag: boolean;
+  syncAttempts: number;
+  validationErrors?: {
+    reasons?: string[];
+    errors?: string[];
+    warnings?: string[];
+  } | null;
   createdAt: string;
   updatedAt: string;
   failedTransactions: Array<{

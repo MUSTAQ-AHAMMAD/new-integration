@@ -45,10 +45,7 @@ export default function SyncJobsPage() {
   });
 
   const retrySkippedMutation = useMutation({
-    mutationFn: () => fetch('/api/v1/sync/orders/retry-skipped', {
-      method: 'POST',
-      credentials: 'include',
-    }).then(res => res.json()),
+    mutationFn: () => api.retrySkippedOrders(),
     onSuccess: (data) => {
       toast.success(`${data.updated || 0} skipped orders re-queued for processing`);
       qc.invalidateQueries({ queryKey: ['sync-jobs'] });

@@ -59,15 +59,11 @@ export interface RawOdooOrderFields {
 /**
  * Odoo/IBQ order states that indicate the order is completed and ready for Oracle sync.
  * 
- * Based on analysis of Java integration:
- * - Java processes ALL orders from backup table regardless of state
- * - This suggests orders in backup are pre-filtered to include only valid states
+ * Only orders with these states (case-insensitive) will be marked as paid and
+ * queued for Oracle sync. Orders with other states (e.g., 'draft', 'cancel')
+ * will be marked as unpaid and skipped during sync.
  * 
- * IMPORTANT: The Odoo/IBQ API calls already filter and return ONLY paid orders.
- * Therefore, any order fetched from the API should be considered paid by default.
- * The state field is kept for reference but no longer used for filtering.
- * 
- * Odoo POS/ERP states (for reference only):
+ * Supported Odoo POS/ERP states:
  * - 'paid': Payment completed (POS orders)
  * - 'done': Order fulfilled/completed
  * - 'posted': Invoice posted to accounting
@@ -78,7 +74,8 @@ export interface RawOdooOrderFields {
  * - 'validated': Order validated (some IBQ workflows)
  * - 'sent': Order sent (some Odoo workflows)
  * 
- * Note: 'draft' and 'cancel' states are explicitly excluded at the API fetch level.
+ * Note: 'draft' and 'cancel' states are explicitly excluded to prevent
+ * incomplete or cancelled orders from being synced to Oracle.
  */
 const PAID_ORDER_STATES = [
   'paid',
@@ -129,14 +126,16 @@ export function normalizeOrderForIngestion(
       ? order.timezone
       : DEFAULT_ODOO_TIMEZONE);
 
-  // IMPORTANT: Since the Odoo/IBQ API already filters and returns ONLY paid orders,
-  // we trust the source and mark all orders as paid by default.
-  // The only exception is if the order is explicitly cancelled.
+  // Check if the order state indicates it's paid and ready for Oracle sync.
+  // The order is considered paid if its state (case-insensitive) is in the
+  // PAID_ORDER_STATES list and it's not cancelled.
   const normalizedState = state.toLowerCase();
   const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
   
-  // Mark as paid unless explicitly cancelled
-  const isPaid = !isCancelled;
+  // Order is paid only if:
+  // 1. It's not cancelled, AND
+  // 2. Its state is in the PAID_ORDER_STATES list
+  const isPaid = !isCancelled && (PAID_ORDER_STATES as readonly string[]).includes(normalizedState);
 
   return {
     odooOrderId: String(order.id),
