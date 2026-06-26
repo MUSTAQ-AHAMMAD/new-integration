@@ -206,11 +206,11 @@ export class SyncController {
 
     for (const order of orders) {
       try {
-        const branchCode = extractBranchCode(order.branch_id);
+        // Use normalizeOrderForIngestion which handles comprehensive payment detection
+        // with 22+ paid states and payment data fallback
+        const payload = normalizeOrderForIngestion(order);
 
-        // Skip orders that carry no branch information — they cannot be
-        // mapped to a store configuration or routed to Oracle correctly.
-        if (!branchCode) {
+        if (!payload) {
           skipped++;
           errors.push(
             `Order ${String(order.name ?? order.id)} skipped: missing branch_id`,
@@ -218,27 +218,7 @@ export class SyncController {
           continue;
         }
 
-        const amountTotal = Number(order.amount_total ?? 0);
-        const state = typeof order.state === 'string' ? order.state : 'draft';
-
-        // Use the timezone carried on the order when available; fall back to
-        // the Odoo default which is typically the Dubai (Gulf Standard) zone.
-        const orderTimezone =
-          typeof order.timezone === 'string' && order.timezone
-            ? order.timezone
-            : 'Asia/Dubai';
-
-        await this.orderSyncService.ingestOrder({
-          odooOrderId: String(order.id),
-          odooOrderNumber: String(order.name ?? order.id),
-          branchCode,
-          orderDate: order.date_order ? new Date(order.date_order) : new Date(),
-          originalTimezone: orderTimezone,
-          totalAmount: amountTotal,
-          isPaid: ['paid', 'done', 'posted'].includes(state),
-          isCancelled: state === 'cancel',
-          isRefund: amountTotal < 0,
-        });
+        await this.orderSyncService.ingestOrder(payload);
         ingested++;
       } catch (err) {
         skipped++;
