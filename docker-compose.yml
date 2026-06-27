@@ -268,13 +268,13 @@ services:
       target: development
     container_name: integration_worker
     restart: unless-stopped
-    command: ['sh', '-c', 'sleep 365d']
+    command: ['sh', '-c', 'set -e && pnpm exec prisma db push --skip-generate && pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       REDIS_HOST: redis-master
-      
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
