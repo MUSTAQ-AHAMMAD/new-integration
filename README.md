@@ -83,8 +83,10 @@ cp .env.example .env
 ### 2. Start infrastructure
 
 ```bash
-docker compose up -d postgres redis
+docker compose up -d
 ```
+
+> **Note**: By default, services connect directly to PostgreSQL (bypassing PgBouncer). This simplifies development and avoids connection pooling issues. PgBouncer is available as an optional service if needed. See [PGBOUNCER_SETUP.md](PGBOUNCER_SETUP.md) for details.
 
 ### 3. Install & migrate
 

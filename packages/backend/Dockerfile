@@ -122,4 +122,4 @@ RUN mkdir -p /app/packages/backend/data
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate && pnpm dev"]
+CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate --accept-data-loss && pnpm dev"]
