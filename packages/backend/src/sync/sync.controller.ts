@@ -552,4 +552,141 @@ export class SyncController {
       order: new OrderResponseDto(order),
     };
   }
+
+  /**
+   * GET /sync/order-data/:orderSyncQueueId - Get order data with lines and payments
+   * 
+   * Test endpoint to verify that order lines and payments exist in the backup tables
+   */
+  @Get('order-data/:orderSyncQueueId')
+  @ApiOperation({
+    summary: 'Get order data with lines and payments from backup tables',
+    description: 'Retrieves order along with its line items and payments from BackupOdooOrder tables. Use this to verify data exists before enrichment.'
+  })
+  async getOrderData(@Param('orderSyncQueueId') orderSyncQueueId: string) {
+    // Get order from OrderSyncQueue
+    const order = await this.prisma.orderSyncQueue.findUnique({
+      where: { id: orderSyncQueueId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderSyncQueueId} not found in OrderSyncQueue`);
+    }
+
+    let orderLines: any[] = [];
+    let payments: any[] = [];
+    let backupOrder: any = null;
+
+    // Try to get from backup tables if odooBackupOrderId is set
+    if (order.odooBackupOrderId) {
+      backupOrder = await this.prisma.backupOdooOrder.findUnique({
+        where: { id: order.odooBackupOrderId },
+        include: {
+          orderLines: true,
+          orderPayments: true,
+        },
+      });
+
+      if (backupOrder) {
+        orderLines = backupOrder.orderLines || [];
+        payments = backupOrder.orderPayments || [];
+      }
+    }
+
+    // Also check if data exists in JSON fields
+    const jsonOrderLines = order.orderLines ? (Array.isArray(order.orderLines) ? order.orderLines : []) : [];
+    const jsonPayments = order.orderPayments ? (Array.isArray(order.orderPayments) ? order.orderPayments : []) : [];
+
+    return {
+      order: {
+        id: order.id,
+        odooOrderId: order.odooOrderId,
+        odooOrderNumber: order.odooOrderNumber,
+        branchCode: order.branchCode,
+        region: order.region,
+        odooBackupOrderId: order.odooBackupOrderId,
+        totalAmount: order.totalAmount,
+        currency: order.currency,
+        status: order.status,
+        orderDate: order.orderDate,
+      },
+      backupOrder: backupOrder ? {
+        id: backupOrder.id,
+        orderId: backupOrder.orderId,
+        name: backupOrder.name,
+        amountTotal: backupOrder.amountTotal,
+      } : null,
+      orderLinesCount: orderLines.length,
+      orderLines: orderLines.slice(0, 10), // Show first 10
+      paymentsCount: payments.length,
+      payments: payments.slice(0, 10), // Show first 10
+      jsonOrderLinesCount: jsonOrderLines.length,
+      jsonPaymentsCount: jsonPayments.length,
+      dataSource: orderLines.length > 0 ? 'backup_tables' : (jsonOrderLines.length > 0 ? 'json_fields' : 'none'),
+    };
+  }
+
+  /**
+   * POST /sync/test-enrich/:orderSyncQueueId - Test enrichment for a specific order
+   * 
+   * Test endpoint to verify that enrichment works with the backup table data
+   */
+  @Post('test-enrich/:orderSyncQueueId')
+  @ApiOperation({
+    summary: 'Test order enrichment with backup table data',
+    description: 'Runs enrichment on a specific order to verify that lines and payments are being fetched correctly from backup tables.'
+  })
+  async testEnrichOrder(@Param('orderSyncQueueId') orderSyncQueueId: string) {
+    const order = await this.prisma.orderSyncQueue.findUnique({
+      where: { id: orderSyncQueueId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderSyncQueueId} not found in OrderSyncQueue`);
+    }
+
+    // Import OrderEnrichmentService dynamically to avoid circular dependencies
+    const { OrderEnrichmentService } = await import('./order-enrichment.service');
+    const enrichmentService = new OrderEnrichmentService(this.prisma);
+
+    try {
+      const enriched = await enrichmentService.enrichOrder(
+        orderSyncQueueId,
+        order.branchCode,
+        order.region || 'AE',
+      );
+
+      return {
+        success: true,
+        message: 'Order enrichment successful',
+        order: {
+          id: order.id,
+          odooOrderId: order.odooOrderId,
+          odooOrderNumber: order.odooOrderNumber,
+          branchCode: order.branchCode,
+        },
+        enrichedData: {
+          invoiceLinesCount: enriched.invoiceHeader.invoiceLines.length,
+          invoiceLines: enriched.invoiceHeader.invoiceLines.slice(0, 5),
+          standardReceiptsCount: enriched.standardReceipts.length,
+          standardReceipts: enriched.standardReceipts.slice(0, 5),
+          miscReceiptsCount: enriched.miscReceipts.length,
+          applyReceiptsCount: enriched.applyReceipts.length,
+          journalHeadersCount: enriched.journalHeaders.length,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: 'Order enrichment failed',
+        error: error instanceof Error ? error.message : String(error),
+        order: {
+          id: order.id,
+          odooOrderId: order.odooOrderId,
+          odooOrderNumber: order.odooOrderNumber,
+          branchCode: order.branchCode,
+        },
+      };
+    }
+  }
 }
