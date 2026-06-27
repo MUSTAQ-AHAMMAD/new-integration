@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
-import { ErrorType, SyncStatus } from '@prisma/client';
+import { ErrorType, SyncStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AlertsService } from '../alerts/alerts.service';
 import { GatewayService } from '../gateway/gateway.service';
@@ -98,11 +98,6 @@ export class DeadLetterQueueService {
       this.gateway.emitOrderStatus({
         orderId: odooOrderId,
         status: SyncStatus.FAILED,
-        errorDetails: {
-          type: error.type,
-          message: error.message,
-          attempts,
-        },
       });
 
       this.logger.log(
@@ -221,7 +216,7 @@ export class DeadLetterQueueService {
       data: {
         status: SyncStatus.PENDING,
         syncAttempts: 0,
-        validationErrors: null,
+        validationErrors: Prisma.DbNull,
       },
     });
 
