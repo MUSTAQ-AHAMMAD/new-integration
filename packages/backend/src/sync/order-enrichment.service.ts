@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Define the types properly
+// Define the types properly - matching Oracle client expectations
 interface InvoiceLine {
   lineNumber: number;
   itemNumber?: string;
@@ -9,7 +9,7 @@ interface InvoiceLine {
   quantity: number;
   unitSellingPrice: number;
   currencyCode: string;
-  salesOrder?: string;
+  salesOrder: string;  // ✅ Must be string, not optional
   salesOrderLine?: string;
   memoLineName?: string;
 }
@@ -80,16 +80,17 @@ export class OrderEnrichmentService {
     }
 
     // 2. Get ORDER LINES from BackupOdooOrderLine table
+    //    Use the order ID (number) from the order record
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
       where: { 
-        orderId: order.odooOrderNumber,
+        orderId: Number(order.odooOrderId),  // ✅ Convert to number
       },
     });
 
     // 3. Get PAYMENTS from BackupOdooOrderPayments table
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
       where: { 
-        orderId: order.odooOrderNumber,
+        orderId: Number(order.odooOrderId),  // ✅ Convert to number
       },
     });
 
@@ -156,7 +157,7 @@ export class OrderEnrichmentService {
         quantity: qty,
         unitSellingPrice: unitPrice || (qty > 0 ? subtotal / qty : 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: order.odooOrderNumber,
+        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
       };
       
@@ -173,7 +174,7 @@ export class OrderEnrichmentService {
         quantity: 1,
         unitSellingPrice: Number(order.totalAmount || 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: order.odooOrderNumber,
+        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
         salesOrderLine: '1',
       };
       
@@ -283,7 +284,7 @@ export class OrderEnrichmentService {
         quantity: 1,
         unitSellingPrice: total,
         currencyCode: order.currency || 'AED',
-        salesOrder: order.odooOrderNumber,
+        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
         salesOrderLine: '1',
       }],
     };
