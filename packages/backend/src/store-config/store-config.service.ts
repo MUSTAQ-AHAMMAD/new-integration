@@ -3,6 +3,13 @@ import { AlertSeverity, AlertType, ValidationStatus } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+interface BranchInfo {
+  branchId: number;
+  branchName: string | null;
+  region: string | null;
+  orderCount: number;
+}
+
 @Injectable()
 export class StoreConfigService {
   private readonly logger = new Logger(StoreConfigService.name);
@@ -136,5 +143,184 @@ export class StoreConfigService {
       create: { branchCode, ...prismaData },
       update: { ...prismaData, version: { increment: 1 } },
     });
+  }
+
+  /**
+   * Option B: Populate StoreConfiguration for All Branches
+   *
+   * Creates StoreConfiguration records for all unique branches found in
+   * BackupOdooOrder and BackupIbqOrder tables. Maps to FusionSalesMetadata
+   * by region to populate Oracle configuration fields.
+   *
+   * @returns Summary of created/skipped configurations
+   */
+  async populateAllBranches(): Promise<{
+    totalBranches: number;
+    created: number;
+    skipped: number;
+    errors: string[];
+  }> {
+    this.logger.log('Starting StoreConfiguration population for all branches');
+
+    const errors: string[] = [];
+
+    // ── Step 1: Get unique branches from BackupOdooOrder ────────────────────
+    const odooBranches = await this.prisma.$queryRaw<BranchInfo[]>`
+      SELECT 
+        "branchId"::int as "branchId",
+        MAX("branchName") as "branchName",
+        MAX(region) as region,
+        COUNT(*)::int as "orderCount"
+      FROM "BackupOdooOrder"
+      WHERE "branchId" IS NOT NULL
+      GROUP BY "branchId"
+      ORDER BY "orderCount" DESC, "branchId"
+    `;
+
+    this.logger.log(
+      `Found ${odooBranches.length} unique branches in BackupOdooOrder`,
+    );
+
+    // ── Step 2: Get unique branches from BackupIbqOrder ─────────────────────
+    const ibqBranches = await this.prisma.$queryRaw<BranchInfo[]>`
+      SELECT 
+        "branchId"::int as "branchId",
+        MAX("branchName") as "branchName",
+        MAX(region) as region,
+        COUNT(*)::int as "orderCount"
+      FROM "BackupIbqOrder"
+      WHERE "branchId" IS NOT NULL
+      GROUP BY "branchId"
+      ORDER BY "orderCount" DESC, "branchId"
+    `;
+
+    this.logger.log(
+      `Found ${ibqBranches.length} unique branches in BackupIbqOrder`,
+    );
+
+    // ── Step 3: Merge and deduplicate branches ──────────────────────────────
+    const branchMap = new Map<number, BranchInfo>();
+
+    for (const branch of [...odooBranches, ...ibqBranches]) {
+      const existing = branchMap.get(branch.branchId);
+      if (!existing) {
+        branchMap.set(branch.branchId, branch);
+      } else {
+        // Merge: prefer non-null values, sum order counts
+        branchMap.set(branch.branchId, {
+          branchId: branch.branchId,
+          branchName: existing.branchName || branch.branchName,
+          region: existing.region || branch.region,
+          orderCount: existing.orderCount + branch.orderCount,
+        });
+      }
+    }
+
+    const allBranches = Array.from(branchMap.values()).sort(
+      (a, b) => b.orderCount - a.orderCount,
+    );
+
+    this.logger.log(`Total unique branches: ${allBranches.length}`);
+
+    // ── Step 4: Get FusionSalesMetadata records ─────────────────────────────
+    const fusionMetadata = await this.prisma.fusionSalesMetadata.findMany({
+      orderBy: { billToName: 'asc' },
+    });
+
+    if (fusionMetadata.length === 0) {
+      const error =
+        'No FusionSalesMetadata records found. ' +
+        'You must populate FusionSalesMetadata first.';
+      this.logger.error(error);
+      throw new Error(error);
+    }
+
+    this.logger.log(
+      `Found ${fusionMetadata.length} FusionSalesMetadata records`,
+    );
+
+    // ── Step 5: Create StoreConfiguration for each branch ───────────────────
+    let created = 0;
+    let skipped = 0;
+
+    for (const branch of allBranches) {
+      const branchCode = String(branch.branchId);
+
+      try {
+        // Check if config already exists
+        const existing = await this.prisma.storeConfiguration.findUnique({
+          where: { branchCode },
+        });
+
+        if (existing) {
+          this.logger.debug(
+            `Branch ${branchCode} already has configuration, skipping`,
+          );
+          skipped++;
+          continue;
+        }
+
+        // Find matching FusionSalesMetadata by region
+        const metadata =
+          fusionMetadata.find(
+            (m) => branch.region && m.region === branch.region,
+          ) ||
+          fusionMetadata.find((m) => m.region === 'AE') || // Default to AE
+          fusionMetadata[0]; // Last resort
+
+        if (!metadata) {
+          const error = `No suitable FusionSalesMetadata found for branch ${branchCode}`;
+          errors.push(error);
+          this.logger.warn(error);
+          skipped++;
+          continue;
+        }
+
+        // Create StoreConfiguration
+        await this.prisma.storeConfiguration.create({
+          data: {
+            branchCode,
+            branchName: branch.branchName || `Branch ${branchCode}`,
+            odooBranchId: BigInt(branch.branchId),
+            oracleOperatingUnitId: metadata.billToAccount,
+            oracleBusinessUnit: metadata.businessUnit,
+            billToSiteName: metadata.billToName,
+            billToLocation: metadata.siteNumber || undefined,
+            bankAccountName: `BANK_${metadata.region}`,
+            cashAccountName: `CASH_${metadata.region}`,
+            paymentTermsName: 'IMMEDIATE',
+            taxClassificationCode: undefined,
+            transactionSource: metadata.txnSource,
+            transactionType: metadata.txnType,
+            invoiceCurrencyCode: 'AED',
+            region: branch.region || metadata.region,
+            isActive: true,
+            validationStatus: ValidationStatus.PENDING,
+            createdBy: 'SYSTEM_POPULATE_API',
+          },
+        });
+
+        this.logger.log(
+          `Created StoreConfiguration for branch ${branchCode} (${branch.branchName || 'N/A'})`,
+        );
+        created++;
+      } catch (err) {
+        const errorMsg = `Failed to create config for branch ${branchCode}: ${err instanceof Error ? err.message : String(err)}`;
+        errors.push(errorMsg);
+        this.logger.error(errorMsg);
+        skipped++;
+      }
+    }
+
+    this.logger.log(
+      `Completed: ${created} created, ${skipped} skipped out of ${allBranches.length} branches`,
+    );
+
+    return {
+      totalBranches: allBranches.length,
+      created,
+      skipped,
+      errors,
+    };
   }
 }

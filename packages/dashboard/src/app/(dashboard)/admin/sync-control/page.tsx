@@ -94,7 +94,7 @@ export default function SyncControlPage() {
     <div className="space-y-6">
       <PageHeader
         title="Sync Control Center"
-        description="Monitor and control all background sync operations"
+        subtitle="Monitor and control all background sync operations"
       />
 
       <div className="grid gap-4 md:grid-cols-4">

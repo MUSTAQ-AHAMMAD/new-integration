@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Card,
@@ -35,7 +35,6 @@ import {
   RefreshCw,
   Download,
   Search,
-  Filter,
   Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -54,7 +53,7 @@ interface SyncOrder {
   status: string;
   syncAttempts: number;
   lastSyncAt: string | null;
-  validationErrors: any;
+  validationErrors: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -107,7 +106,7 @@ export default function RealTimeSyncStatusPage() {
   const [pageSize] = useState(50);
 
   // Fetch sync statistics
-  const { data: stats, isLoading: statsLoading } = useQuery<SyncStatistics>({
+  const { data: stats } = useQuery<SyncStatistics>({
     queryKey: ['sync-statistics'],
     queryFn: async () => {
       const response = await fetch('/api/v1/sync/statistics');
@@ -166,7 +165,8 @@ export default function RealTimeSyncStatusPage() {
     },
   });
 
-  // Bulk retry mutation
+  // Bulk retry mutation - keeping for future use
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const bulkRetryMutation = useMutation({
     mutationFn: async (orderIds: string[]) => {
       const response = await fetch('/api/v1/sync/orders/bulk-retry', {

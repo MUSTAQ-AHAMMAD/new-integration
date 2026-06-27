@@ -235,4 +235,144 @@ describe('StoreConfigService', () => {
       );
     });
   });
+
+  // ── populateAllBranches ──────────────────────────────────────────────────
+
+  describe('populateAllBranches', () => {
+    beforeEach(() => {
+      // Mock $queryRaw for branch queries
+      (prisma as unknown as Record<string, jest.Mock>).$queryRaw = jest
+        .fn()
+        .mockResolvedValueOnce([
+          // BackupOdooOrder branches
+          {
+            branchId: 3,
+            branchName: 'Branch 3',
+            region: 'AE',
+            orderCount: 100,
+          },
+          {
+            branchId: 5,
+            branchName: 'Branch 5',
+            region: 'KW',
+            orderCount: 50,
+          },
+        ])
+        .mockResolvedValueOnce([
+          // BackupIbqOrder branches
+          {
+            branchId: 3,
+            branchName: 'Branch 3 IBQ',
+            region: 'AE',
+            orderCount: 25,
+          },
+          {
+            branchId: 7,
+            branchName: 'Branch 7',
+            region: 'OM',
+            orderCount: 30,
+          },
+        ]);
+
+      // Mock fusionSalesMetadata
+      (prisma as unknown as Record<string, { findMany: jest.Mock }>)
+        .fusionSalesMetadata = {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: '1',
+            billToName: 'AE Store',
+            billToAccount: BigInt(101),
+            businessUnit: 'BU-AE',
+            txnSource: 'Manual',
+            txnType: 'SALE',
+            region: 'AE',
+            siteNumber: 'SITE-AE',
+          },
+          {
+            id: '2',
+            billToName: 'KW Store',
+            billToAccount: BigInt(102),
+            businessUnit: 'BU-KW',
+            txnSource: 'Manual',
+            txnType: 'SALE',
+            region: 'KW',
+            siteNumber: 'SITE-KW',
+          },
+        ]),
+      };
+
+      // Mock storeConfiguration.create
+      (prisma as unknown as Record<string, { create: jest.Mock }>)
+        .storeConfiguration.create = jest.fn().mockResolvedValue({});
+    });
+
+    it('creates configurations for all unique branches', async () => {
+      const result = await service.populateAllBranches();
+
+      expect(result.totalBranches).toBe(3); // 3, 5, 7 (deduplicated)
+      expect(result.created).toBe(3);
+      expect(result.skipped).toBe(0);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('skips branches that already have configurations', async () => {
+      // First branch already exists
+      prisma.storeConfiguration.findUnique
+        .mockResolvedValueOnce(makeStoreConfig({ branchCode: '3' }))
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      const result = await service.populateAllBranches();
+
+      expect(result.created).toBe(2);
+      expect(result.skipped).toBe(1);
+    });
+
+    it('throws error when no FusionSalesMetadata exists', async () => {
+      (prisma as unknown as Record<string, { findMany: jest.Mock }>)
+        .fusionSalesMetadata.findMany = jest.fn().mockResolvedValue([]);
+
+      await expect(service.populateAllBranches()).rejects.toThrow(
+        'No FusionSalesMetadata records found',
+      );
+    });
+
+    it('matches branches to FusionSalesMetadata by region', async () => {
+      await service.populateAllBranches();
+
+      const createCalls = (
+        prisma.storeConfiguration.create as jest.Mock
+      ).mock.calls;
+
+      // Branch 3 (AE) should use AE metadata
+      expect(createCalls[0][0].data.billToSiteName).toBe('AE Store');
+
+      // Branch 5 (KW) should use KW metadata
+      expect(createCalls[1][0].data.billToSiteName).toBe('KW Store');
+
+      // Branch 7 (OM) should fall back to AE (no OM metadata)
+      expect(createCalls[2][0].data.billToSiteName).toBe('AE Store');
+    });
+
+    it('deduplicates branches across Odoo and IBQ sources', async () => {
+      const result = await service.populateAllBranches();
+
+      // Branch 3 appears in both Odoo and IBQ — should only create once
+      expect(result.totalBranches).toBe(3); // 3, 5, 7
+    });
+
+    it('handles create errors gracefully', async () => {
+      (prisma.storeConfiguration.create as jest.Mock)
+        .mockRejectedValueOnce(new Error('Database error'))
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
+
+      const result = await service.populateAllBranches();
+
+      expect(result.created).toBe(2);
+      expect(result.skipped).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('Database error');
+    });
+  });
 });

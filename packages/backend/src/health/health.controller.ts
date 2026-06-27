@@ -48,4 +48,16 @@ export class HealthController {
       distinct: ['serviceName'],
     });
   }
+
+  @Get('sync-status')
+  @ApiOperation({ summary: 'Get comprehensive sync system status' })
+  async getSyncStatus() {
+    return this.healthService.getSyncSystemStatus();
+  }
+
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get system metrics and counters' })
+  async getMetrics() {
+    return this.healthService.getSystemMetrics();
+  }
 }

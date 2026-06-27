@@ -176,7 +176,7 @@ If you see **PARTIAL** status in sync jobs, this typically means some orders wer
 - Orders not marked as "paid" (state must be in one of 22+ recognized paid states)
 - Orders are cancelled
 - Missing branch code
-- Missing store configuration
+- **Missing store configuration** — use `POST /api/v1/store-config/populate/all-branches` to auto-create configs
 
 **How to fix existing orders:**
 1. **Auto-Fix (Recommended)**: `POST /api/v1/sync/auto-fix/skipped-orders`
@@ -184,6 +184,8 @@ If you see **PARTIAL** status in sync jobs, this typically means some orders wer
 3. **Re-Ingest from Backup**: `POST /api/v1/odoo-backup/reingest-from-backup`
 
 See [docs/EXISTING_ORDERS_FIX_GUIDE.md](docs/EXISTING_ORDERS_FIX_GUIDE.md) for comprehensive fix guide with all available endpoints.
+
+See [docs/STORE_CONFIG_POPULATION.md](docs/STORE_CONFIG_POPULATION.md) for how to populate StoreConfiguration for all branches.
 
 See [docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md](docs/ORACLE_INTEGRATION_TROUBLESHOOTING.md) for complete troubleshooting guide.
 

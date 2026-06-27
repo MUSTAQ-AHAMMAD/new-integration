@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, OrderQueueEntry } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -185,12 +185,12 @@ export default function SkippedOrdersPage() {
             <li>• <strong>Orders with payments:</strong> Even if the state is unusual, orders with payment data (statement_ids/payment_ids/payments) will now be detected as paid</li>
             <li>• <strong>Order is cancelled:</strong> Cancelled orders are not synced to Oracle</li>
             <li>• <strong>Draft/Quotation orders:</strong> Orders in draft, quotation, or sent_quotation states are not synced</li>
-            <li>• <strong>Missing branch code:</strong> Order doesn't have a valid branch/store identifier</li>
+            <li>• <strong>Missing branch code:</strong> Order doesn&apos;t have a valid branch/store identifier</li>
             <li>• <strong>Negative inventory:</strong> Order contains items with negative stock (held until corrected)</li>
             <li>• <strong>Missing configuration:</strong> Store configuration is incomplete or missing required fields</li>
           </ul>
           <div className="mt-3 text-xs text-blue-700">
-            💡 Tip: After fixing the underlying issues (e.g., updating order states in Odoo/IBQ), use the "Retry All Skipped" button to re-process these orders.
+            💡 Tip: After fixing the underlying issues (e.g., updating order states in Odoo/IBQ), use the &quot;Retry All Skipped&quot; button to re-process these orders.
           </div>
         </CardContent>
       </Card>

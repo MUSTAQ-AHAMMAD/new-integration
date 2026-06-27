@@ -95,4 +95,13 @@ export class StoreConfigController {
   validate(@Param('branchCode') branchCode: string) {
     return this.service.validateConfig(branchCode);
   }
+
+  @Post('populate/all-branches')
+  @ApiOperation({
+    summary:
+      'Populate StoreConfiguration for all branches (Option B) - creates configs for all branches found in backup tables',
+  })
+  async populateAllBranches() {
+    return this.service.populateAllBranches();
+  }
 }
