@@ -32,7 +32,7 @@ async function removeDuplicates() {
     // For each duplicate group, delete all but the most recent record
     for (const dup of duplicates) {
       const { itemId, region } = dup;
-      
+
       // Get all records for this itemId + region, ordered by updatedAt DESC
       const records = await prisma.vendHqItemMeta.findMany({
         where: { itemId, region },
@@ -45,7 +45,7 @@ async function removeDuplicates() {
 
       // Keep the first (most recent) record, delete the rest
       const recordsToDelete = records.slice(1);
-      
+
       console.log(
         `  Deleting ${recordsToDelete.length} duplicate(s) for itemId=${itemId}, region=${region}`
       );
