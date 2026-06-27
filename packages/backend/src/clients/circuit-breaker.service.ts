@@ -163,6 +163,14 @@ export class CircuitBreakerService {
     return statuses;
   }
 
+  /**
+   * Check if circuit breaker is in OPEN state
+   */
+  async isOpen(name: string = 'default'): Promise<boolean> {
+    const snap = await this.readCircuit(name, DEFAULT_OPTIONS);
+    return snap.state === CircuitState.OPEN;
+  }
+
   // ── Private helpers ──────────────────────────────────────────────
 
   private async circuitExists(name: string): Promise<boolean> {

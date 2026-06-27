@@ -541,10 +541,13 @@ export class PreFlightValidationService {
       if (key === 'lines' && Array.isArray(fixed.lines)) {
         // Fix line items
         for (const [lineIndex, lineFixed] of Object.entries(value as any)) {
-          fixed.lines[parseInt(lineIndex)] = {
-            ...fixed.lines[parseInt(lineIndex)],
-            ...lineFixed,
-          };
+          const currentLine = fixed.lines[parseInt(lineIndex)];
+          if (currentLine && typeof lineFixed === 'object' && lineFixed !== null) {
+            fixed.lines[parseInt(lineIndex)] = {
+              ...currentLine,
+              ...(lineFixed as Record<string, any>),
+            };
+          }
         }
       } else {
         fixed[key] = value;
