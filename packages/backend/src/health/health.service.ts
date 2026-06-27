@@ -10,6 +10,13 @@ import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
 export class HealthService {
   private readonly logger = new Logger(HealthService.name);
 
+  // Alert thresholds
+  private readonly FAILURE_RATE_WARNING_THRESHOLD = 10; // percentage
+  private readonly FAILURE_RATE_CRITICAL_THRESHOLD = 25; // percentage
+  private readonly HIGH_PROCESSING_COUNT_THRESHOLD = 100;
+  private readonly LARGE_BACKLOG_THRESHOLD = 1000;
+  private readonly HIGH_UNRESOLVED_FAILURES_THRESHOLD = 100;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
@@ -189,7 +196,7 @@ export class HealthService {
     let overallStatus = 'HEALTHY';
     const alerts = [];
 
-    if (failureRate > 10) {
+    if (failureRate > this.FAILURE_RATE_WARNING_THRESHOLD) {
       overallStatus = 'DEGRADED';
       alerts.push({
         severity: 'WARNING',
@@ -197,7 +204,7 @@ export class HealthService {
       });
     }
 
-    if (failureRate > 25) {
+    if (failureRate > this.FAILURE_RATE_CRITICAL_THRESHOLD) {
       overallStatus = 'UNHEALTHY';
       alerts.push({
         severity: 'CRITICAL',
@@ -205,14 +212,14 @@ export class HealthService {
       });
     }
 
-    if (processingCount > 100) {
+    if (processingCount > this.HIGH_PROCESSING_COUNT_THRESHOLD) {
       alerts.push({
         severity: 'INFO',
         message: `High number of orders currently processing: ${processingCount}`,
       });
     }
 
-    if (pendingCount > 1000) {
+    if (pendingCount > this.LARGE_BACKLOG_THRESHOLD) {
       overallStatus = overallStatus === 'HEALTHY' ? 'DEGRADED' : overallStatus;
       alerts.push({
         severity: 'WARNING',
@@ -220,7 +227,7 @@ export class HealthService {
       });
     }
 
-    if (unresolvedFailures > 100) {
+    if (unresolvedFailures > this.HIGH_UNRESOLVED_FAILURES_THRESHOLD) {
       alerts.push({
         severity: 'WARNING',
         message: `${unresolvedFailures} unresolved failures need attention`,

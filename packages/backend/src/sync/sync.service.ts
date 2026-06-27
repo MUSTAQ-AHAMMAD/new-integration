@@ -14,6 +14,9 @@ import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
 
+  // Constants
+  private readonly MAX_CSV_EXPORT_RECORDS = 5000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly queues: QueuesService,
@@ -472,7 +475,7 @@ export class SyncService {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 5000, // Limit to prevent memory issues
+      take: this.MAX_CSV_EXPORT_RECORDS, // Limit to prevent memory issues
     });
 
     // Build CSV header
