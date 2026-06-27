@@ -1,7 +1,7 @@
 import { AdminModule } from './admin/admin.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { LoggerModule } from 'nestjs-pino';
@@ -32,6 +32,7 @@ import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 import { ItemSyncModule } from './item-sync/item-sync.module';
 import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
 import { OdooBackupModule } from './odoo-backup/odoo-backup.module';
+import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
 
 @Module({
   imports: [
@@ -110,6 +111,11 @@ import { OdooBackupModule } from './odoo-backup/odoo-backup.module';
     OdooBackupModule,
   ],
   providers: [
+    // Global BigInt serialization interceptor (applied before all other processing)
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: BigIntInterceptor,
+    },
     // Rate limiting (applied after auth to avoid wasting tokens on invalid requests)
     {
       provide: APP_GUARD,
