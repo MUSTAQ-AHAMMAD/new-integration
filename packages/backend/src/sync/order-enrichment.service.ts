@@ -383,6 +383,7 @@ export class OrderEnrichmentService {
 
   /**
    * Enriches order from BackupOdooOrder tables (existing backup path)
+   * NOW FETCHES FROM ACTUAL BackupOdooOrderLine and BackupOdooOrderPayment tables
    */
   private async enrichFromBackupOdooOrder(
     backupOrderId: string,
@@ -390,17 +391,282 @@ export class OrderEnrichmentService {
     region: string,
     transactionNumberOverride?: string,
   ): Promise<EnrichedOrderData> {
-    // This delegates to OdooTransformationService for backward compatibility
-    // We import it dynamically to avoid circular dependencies
-    const { OdooTransformationService } = await import('./odoo-transformation.service');
-    const odooTransformService = new OdooTransformationService(this.prisma);
-    
-    return odooTransformService.buildOrderPayloads(
-      backupOrderId,
+    this.logger.log(`Fetching backup order ${backupOrderId} with lines and payments from tables...`);
+
+    // 1. Get the backup order
+    const backupOrder = await this.prisma.backupOdooOrder.findUnique({
+      where: { id: backupOrderId },
+      include: {
+        orderLines: true,    // ← FETCH FROM TABLE
+        orderPayments: true, // ← FETCH FROM TABLE
+      },
+    });
+
+    if (!backupOrder) {
+      throw new Error(`BackupOdooOrder not found: ${backupOrderId}`);
+    }
+
+    this.logger.log(
+      `Found backup order ${backupOrder.orderId}: ${backupOrder.orderLines.length} lines, ${backupOrder.orderPayments.length} payments`
+    );
+
+    // 2. Build enriched order using table data
+    return this.buildEnrichedOrderFromBackup(
+      backupOrder,
+      backupOrder.orderLines,
+      backupOrder.orderPayments,
       branchCode,
       region,
       transactionNumberOverride,
     );
+  }
+
+  /**
+   * Builds enriched order from BackupOdooOrder with lines and payments from tables
+   */
+  private async buildEnrichedOrderFromBackup(
+    backupOrder: any,
+    orderLines: any[],
+    orderPayments: any[],
+    branchCode: string,
+    region: string,
+    transactionNumberOverride?: string,
+  ): Promise<EnrichedOrderData> {
+    // Load store configuration
+    const storeConfig = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
+    if (!storeConfig) {
+      throw new Error(
+        `StoreConfiguration not found for branchCode=${branchCode}`,
+      );
+    }
+
+    // Load Oracle regional config tables
+    const [buMap, journalMeta] = await Promise.all([
+      this.prisma.fusionBusinessUnitMap.findFirst({ where: { region } }),
+      this.prisma.serviceProviderJournalMeta.findFirst({ where: { region } }),
+    ]);
+
+    const saleDate = backupOrder.dateOrder instanceof Date 
+      ? backupOrder.dateOrder 
+      : new Date(String(backupOrder.dateOrder));
+    const txnNumber = transactionNumberOverride ?? backupOrder.name ?? String(backupOrder.orderId);
+    const currency = backupOrder.currency || 'AED';
+
+    // Build invoice header
+    const invoiceHeader: InvoiceHeader = {
+      billToCustomerName: storeConfig.billToSiteName,
+      billToLocation: storeConfig.billToLocation ?? '',
+      billToAccountNumber: String(storeConfig.oracleOperatingUnitId),
+      businessUnit: storeConfig.oracleBusinessUnit,
+      outletName: backupOrder.warehouseName ?? branchCode,
+      saleDate,
+      transactionSource: storeConfig.transactionSource,
+      transactionType: storeConfig.transactionType,
+      invoiceCurrencyCode: currency,
+      conversionRateType: 'Corporate',
+      invoiceLines: [],
+    };
+
+    // Build invoice lines from orderLines table
+    for (const line of orderLines) {
+      const qty = Number(line.qty || 1);
+      if (qty === 0) continue;
+
+      const unitPrice = Number(line.priceUnit || 0);
+      const totalPrice = Number(line.priceSubtotal || 0);
+
+      invoiceHeader.invoiceLines.push({
+        lineNumber: invoiceHeader.invoiceLines.length + 1,
+        itemNumber: line.productCode || (line.productId ? String(line.productId) : undefined),
+        description: line.productName || 'Product',
+        quantity: qty,
+        unitSellingPrice: unitPrice || (qty > 0 ? totalPrice / qty : 0),
+        currencyCode: currency,
+        salesOrder: txnNumber,
+        salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
+      });
+    }
+
+    // If NO lines found, create ONE from amountTotal
+    if (invoiceHeader.invoiceLines.length === 0) {
+      const total = Number(backupOrder.amountTotal || 0);
+      this.logger.warn(
+        `No line items for backup order ${backupOrder.orderId}, creating synthetic line of ${total}`
+      );
+      
+      invoiceHeader.invoiceLines.push({
+        lineNumber: 1,
+        description: txnNumber || 'Sale',
+        quantity: 1,
+        unitSellingPrice: total,
+        currencyCode: currency,
+        salesOrder: txnNumber,
+        salesOrderLine: '1',
+      });
+    }
+
+    // Build receipts from Payments table
+    const standardReceipts: StandardReceiptRequest[] = [];
+    const miscReceipts: MiscReceiptRequest[] = [];
+
+    for (const payment of orderPayments) {
+      const pmtMethod = payment.paymentName || 'DEFAULT';
+      const amount = Number(payment.amount || 0);
+      
+      if (pmtMethod.toLowerCase() === 'credit on cust') continue;
+
+      const receiptMethod = await this.prisma.fusionReceiptMethod.findFirst({
+        where: { receiptMethodName: pmtMethod, region },
+      });
+
+      if (!receiptMethod) {
+        this.logger.warn(
+          `Receipt method not configured: "${pmtMethod}" (region=${region}) — payment skipped`,
+        );
+        continue;
+      }
+
+      const isCash = receiptMethod.receiptIsCash;
+      const numericAccountId = isCash
+        ? (storeConfig.cashAccountId ?? null)
+        : (storeConfig.bankAccountId ?? null);
+
+      const lowerMethod = pmtMethod.toLowerCase();
+
+      if (lowerMethod !== 'cash rounding') {
+        if (numericAccountId == null) {
+          this.logger.warn(
+            `StoreConfiguration branchCode=${branchCode} has no ` +
+              `${isCash ? 'cashAccountId' : 'bankAccountId'} — ` +
+              `standard receipt for "${pmtMethod}" skipped.`,
+          );
+        } else {
+          standardReceipts.push({
+            currencyCode: currency,
+            saleDate,
+            receiptMethodId: Number(receiptMethod.receiptMethodId),
+            receiptNumber: `${pmtMethod}-${txnNumber}`,
+            remittanceBankAccountId: numericAccountId,
+            accountValue: invoiceHeader.billToAccountNumber,
+            orgId: Number(buMap?.businessUnitId ?? 0n),
+            receiptAmount: amount,
+          });
+        }
+      }
+
+      if (!isCash) {
+        let miscAmount =
+          amount *
+          receiptMethod.receiptBankCharge *
+          (1 + receiptMethod.receiptMethodTax);
+        // Regional cap: Debit Card in OM capped at 10
+        if (pmtMethod === 'Debit Card' && region === 'OM' && miscAmount > 10) {
+          miscAmount = 10;
+        }
+        miscReceipts.push({
+          currencyCode: currency,
+          saleDate,
+          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodName: pmtMethod,
+          receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
+          bankAccountName: storeConfig.bankAccountName,
+          receivableActivityName: 'Bank Charges',
+          orgId: Number(buMap?.businessUnitId ?? 0n),
+          receiptAmount: -miscAmount,
+        });
+      } else if (lowerMethod === 'cash rounding') {
+        miscReceipts.push({
+          currencyCode: currency,
+          saleDate,
+          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodName: pmtMethod,
+          receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
+          bankAccountName: storeConfig.cashAccountName,
+          receivableActivityName: 'Cash Rounding',
+          orgId: Number(buMap?.businessUnitId ?? 0n),
+          receiptAmount: -amount,
+        });
+      }
+    }
+
+    // If no payments, create one from amountTotal
+    if (standardReceipts.length === 0) {
+      const total = Number(backupOrder.amountTotal || 0);
+      this.logger.warn(
+        `No payments for backup order ${backupOrder.orderId}, creating synthetic payment of ${total}`
+      );
+      
+      standardReceipts.push({
+        currencyCode: currency,
+        saleDate,
+        receiptMethodId: 1,
+        receiptNumber: `DEFAULT-${txnNumber}`,
+        remittanceBankAccountId: storeConfig.bankAccountId ?? 1000,
+        accountValue: invoiceHeader.billToAccountNumber,
+        orgId: Number(buMap?.businessUnitId ?? 0n),
+        receiptAmount: total,
+      });
+    }
+
+    // Build apply receipts
+    const applyReceipts: ApplyReceiptRequest[] = standardReceipts.map((sr) => ({
+      transactionNumber: txnNumber,
+      receiptNumber: sr.receiptNumber,
+      amountApplied: sr.receiptAmount,
+      receiptCurrency: sr.currencyCode,
+      transactionSource: invoiceHeader.transactionSource,
+      accountingDate: saleDate,
+      applicationDate: saleDate,
+    }));
+
+    // Build journal entries
+    const journalHeaders: JournalHeader[] = [];
+    if (journalMeta && invoiceHeader.invoiceLines.length > 0) {
+      const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
+        (il) => ({
+          ledgerId: Number(journalMeta.ledgerId),
+          accountingDate: saleDate,
+          userJeSourceName: journalMeta.jeSource ?? 'Odoo',
+          jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
+          chartOfAccountsId: Number(journalMeta.chartOfAccountsId),
+          segment1: journalMeta.company ?? undefined,
+          segment2: journalMeta.account ?? undefined,
+          segment3: journalMeta.department ?? undefined,
+          currencyCode: currency,
+          enteredCrAmount: il.unitSellingPrice * il.quantity,
+          accountedCr: il.unitSellingPrice * il.quantity,
+          currencyConversionRate: 1,
+          currencyConversionType: invoiceHeader.conversionRateType,
+          currencyConversionDate: saleDate,
+          transactionDate: saleDate,
+          status: 'P',
+          taxCode: 'N',
+        }),
+      );
+
+      journalHeaders.push({
+        batchName: `${saleDate.toISOString().split('T')[0]}: ${branchCode}`,
+        batchDescription: `Odoo Journal Import: ${txnNumber}`,
+        ledgerId: Number(journalMeta.ledgerId),
+        accountingPeriodName: this.getPeriodName(saleDate),
+        accountingDate: saleDate,
+        userSourceName: journalMeta.jeSource ?? 'Odoo',
+        userCategoryName: journalMeta.jeCategory ?? 'Odoo',
+        errorToSuspenseFlag: false,
+        summaryFlag: false,
+        journalLines,
+      });
+    }
+
+    return {
+      invoiceHeader,
+      standardReceipts,
+      miscReceipts,
+      applyReceipts,
+      journalHeaders,
+    };
   }
 
   /**
