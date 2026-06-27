@@ -9,14 +9,25 @@ export function formatNumber(n: number): string {
   return new Intl.NumberFormat().format(n);
 }
 
-export function formatDate(date: string | Date): string {
+export function formatDate(date: string | Date | null | undefined): string {
+  if (!date) {
+    return 'N/A';
+  }
+  
+  const dateObj = new Date(date);
+  
+  // Check if the date is valid
+  if (isNaN(dateObj.getTime())) {
+    return 'Invalid Date';
+  }
+  
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(date));
+  }).format(dateObj);
 }
 
 export function formatCurrency(amount: number, currency = 'AED'): string {
