@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Define the types properly - matching Oracle client expectations
-interface InvoiceLine {
+export interface InvoiceLine {
   lineNumber: number;
   itemNumber?: string;
   description?: string;
@@ -14,7 +14,7 @@ interface InvoiceLine {
   memoLineName?: string;
 }
 
-interface InvoiceHeader {
+export interface InvoiceHeader {
   billToCustomerName: string;
   billToLocation: string;
   billToAccountNumber: string;
@@ -28,7 +28,7 @@ interface InvoiceHeader {
   invoiceLines: InvoiceLine[];
 }
 
-interface ReceiptRequest {
+export interface ReceiptRequest {
   currencyCode: string;
   saleDate: Date;
   receiptMethodId: number;
@@ -39,7 +39,7 @@ interface ReceiptRequest {
   receiptAmount: number;
 }
 
-interface ApplyReceiptRequest {
+export interface ApplyReceiptRequest {
   transactionNumber: string;
   receiptNumber: string;
   amountApplied: number;
