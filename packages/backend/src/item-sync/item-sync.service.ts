@@ -228,7 +228,7 @@ export class ItemSyncService {
             lastUpdateDate: new Date(),
             region,
           };
-          
+
           await this.prisma.vendHqItemMeta.upsert({
             where: {
               itemId_region: {

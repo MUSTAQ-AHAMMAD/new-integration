@@ -26,7 +26,7 @@ async function removeDuplicates() {
     }
 
     console.log(`⚠️  Found ${duplicates.length} duplicate groups.`);
-    
+
     let totalRecordsDeleted = 0;
 
     // For each duplicate group, delete all but the most recent record
