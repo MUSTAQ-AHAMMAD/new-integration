@@ -76,12 +76,21 @@ export class OrderEnrichmentService {
       this.logger.log(
         `Order ${order.odooOrderId} incomplete - falling back to BackupOdooOrder`,
       );
-      return this.enrichFromBackupOdooOrder(
-        order.odooBackupOrderId,
-        branchCode,
-        region,
-        transactionNumberOverride,
-      );
+      try {
+        return await this.enrichFromBackupOdooOrder(
+          order.odooBackupOrderId,
+          branchCode,
+          region,
+          transactionNumberOverride,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to load backup data for order ${order.odooOrderId}: ${
+            err instanceof Error ? err.message : 'Unknown error'
+          } - will create minimal payloads instead`,
+        );
+        // Continue to minimal enrichment below
+      }
     }
 
     // Step 4: Try VendHQ backup as last resort
@@ -98,16 +107,15 @@ export class OrderEnrichmentService {
     });
 
     if (backupSale) {
-      this.logger.log(
-        `Found VendHQ backup for order ${order.odooOrderId} - using BackupVendHqSale enrichment`,
+      this.logger.warn(
+        `Found VendHQ backup for order ${order.odooOrderId} but VendHQ enrichment not yet integrated - creating minimal payloads instead`,
       );
-      // Note: This would need FusionTransformationService integration
-      throw new Error(
-        `VendHQ backup found but not yet integrated with enrichment service`,
-      );
+      // VendHQ backup integration would require FusionTransformationService
+      // For now, fall through to minimal enrichment
     }
 
     // Step 5: Create minimal viable order payloads
+    // This ensures ALL orders can sync even without backup data
     this.logger.warn(
       `Order ${order.odooOrderId} has no complete data - creating minimal payloads`,
     );
