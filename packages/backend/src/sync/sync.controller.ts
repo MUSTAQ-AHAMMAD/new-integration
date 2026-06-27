@@ -687,4 +687,41 @@ export class SyncController {
       };
     }
   }
+
+  @Get('/debug-backup/:orderNumber')
+  @ApiOperation({ summary: 'Debug backup data for an order by order number' })
+  async debugBackup(@Param('orderNumber') orderNumber: string) {
+    // Get order
+    const order = await this.prisma.orderSyncQueue.findFirst({
+      where: { odooOrderNumber: orderNumber },
+    });
+
+    // Parse order number as integer for backup table queries
+    const orderIdInt = parseInt(orderNumber, 10);
+
+    // Get backup lines
+    const lines = await this.prisma.backupOdooOrderLine.findMany({
+      where: { orderId: orderIdInt },
+    });
+
+    // Get backup payments
+    const payments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: { orderId: orderIdInt },
+    });
+
+    return {
+      orderNumber,
+      orderExists: !!order,
+      orderId: order?.id,
+      backupLines: {
+        count: lines.length,
+        sample: lines.slice(0, 3),
+      },
+      backupPayments: {
+        count: payments.length,
+        sample: payments.slice(0, 3),
+      },
+      canSync: lines.length > 0 && payments.length > 0,
+    };
+  }
 }
