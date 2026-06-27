@@ -1,11 +1,59 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+// Define the types properly
+interface InvoiceLine {
+  lineNumber: number;
+  itemNumber?: string;
+  description?: string;
+  quantity: number;
+  unitSellingPrice: number;
+  currencyCode: string;
+  salesOrder?: string;
+  salesOrderLine?: string;
+  memoLineName?: string;
+}
+
+interface InvoiceHeader {
+  billToCustomerName: string;
+  billToLocation: string;
+  billToAccountNumber: string;
+  businessUnit: string;
+  outletName?: string;
+  saleDate: Date;
+  transactionSource: string;
+  transactionType: string;
+  invoiceCurrencyCode: string;
+  conversionRateType: string;
+  invoiceLines: InvoiceLine[];
+}
+
+interface ReceiptRequest {
+  currencyCode: string;
+  saleDate: Date;
+  receiptMethodId: number;
+  receiptNumber: string;
+  remittanceBankAccountId: number;
+  accountValue: string;
+  orgId: number;
+  receiptAmount: number;
+}
+
+interface ApplyReceiptRequest {
+  transactionNumber: string;
+  receiptNumber: string;
+  amountApplied: number;
+  receiptCurrency: string;
+  transactionSource: string;
+  accountingDate: Date;
+  applicationDate: Date;
+}
+
 export interface EnrichedOrderData {
-  invoiceHeader: any;
-  standardReceipts: any[];
+  invoiceHeader: InvoiceHeader;
+  standardReceipts: ReceiptRequest[];
   miscReceipts: any[];
-  applyReceipts: any[];
+  applyReceipts: ApplyReceiptRequest[];
   journalHeaders: any[];
 }
 
@@ -32,17 +80,16 @@ export class OrderEnrichmentService {
     }
 
     // 2. Get ORDER LINES from BackupOdooOrderLine table
-    //    Use order.odooOrderNumber to link (not orderSyncQueueId)
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
       where: { 
-        orderId: parseInt(order.odooOrderNumber, 10),  // This links to the order
+        orderId: order.odooOrderNumber,
       },
     });
 
-    // 3. Get PAYMENTS from BackupOdooOrderPayment table
+    // 3. Get PAYMENTS from BackupOdooOrderPayments table
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
       where: { 
-        orderId: parseInt(order.odooOrderNumber, 10),  // This links to the order
+        orderId: order.odooOrderNumber,
       },
     });
 
@@ -66,11 +113,11 @@ export class OrderEnrichmentService {
     backupPayments: any[],
     branchCode: string,
     region: string
-  ) {
+  ): EnrichedOrderData {
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
 
-    // Build invoice header
-    const invoiceHeader = {
+    // Build invoice header with proper typing
+    const invoiceHeader: InvoiceHeader = {
       billToCustomerName: order.customerName || 'Default Customer',
       billToLocation: '',
       billToAccountNumber: '1000',
@@ -81,34 +128,46 @@ export class OrderEnrichmentService {
       transactionType: 'Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
       conversionRateType: 'Corporate',
-      invoiceLines: [],
+      invoiceLines: [],  // Now properly typed as InvoiceLine[]
     };
 
     // Build invoice lines from backup data
     for (const line of backupLines) {
       const qty = Number(line.qty || 1);
-      const unitPrice = Number(line.priceUnit || 0);
-      const subtotal = Number(line.priceSubtotal || 0);
+      const unitPrice = Number(line.unitPrice || 0);
+      const subtotal = Number(line.subtotal || 0);
       
       // Skip discount items or zero amounts if needed
       if (qty === 0 && subtotal === 0) continue;
 
-      invoiceHeader.invoiceLines.push({
+      // Extract product code from product name if it has pattern [CODE]
+      let productCode = '';
+      let productName = line.productName || 'Product';
+      const match = productName.match(/\[([^\]]+)\]/);
+      if (match) {
+        productCode = match[1];
+        productName = productName.replace(/\[[^\]]+\]\s*/, '');
+      }
+
+      const invoiceLine: InvoiceLine = {
         lineNumber: invoiceHeader.invoiceLines.length + 1,
-        itemNumber: line.productName?.split(']')[0]?.replace('[', '') || String(line.productId || ''),
-        description: line.productName || 'Product',
+        itemNumber: productCode || String(line.productId || ''),
+        description: productName,
         quantity: qty,
         unitSellingPrice: unitPrice || (qty > 0 ? subtotal / qty : 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         salesOrder: order.odooOrderNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
-      });
+      };
+      
+      invoiceHeader.invoiceLines.push(invoiceLine);
     }
 
     // If no valid lines, create one from total
     if (invoiceHeader.invoiceLines.length === 0) {
       this.logger.warn(`No valid lines for order ${order.odooOrderNumber}, creating synthetic line`);
-      invoiceHeader.invoiceLines.push({
+      
+      const syntheticLine: InvoiceLine = {
         lineNumber: 1,
         description: order.odooOrderNumber || 'Sale',
         quantity: 1,
@@ -116,67 +175,77 @@ export class OrderEnrichmentService {
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         salesOrder: order.odooOrderNumber,
         salesOrderLine: '1',
-      });
+      };
+      
+      invoiceHeader.invoiceLines.push(syntheticLine);
     }
 
     // Build receipts from backup payments
-    const standardReceipts = [];
-    const applyReceipts = [];
+    const standardReceipts: ReceiptRequest[] = [];
+    const applyReceipts: ApplyReceiptRequest[] = [];
 
     for (const payment of backupPayments) {
       const amount = Number(payment.amount || 0);
-      const method = payment.paymentName || 'DEFAULT';
+      const method = payment.paymentMethod || 'DEFAULT';
       
       if (amount === 0) continue;
 
+      const receiptNumber = `${method}-${order.odooOrderNumber}-${Date.now()}`;
+
       // Create standard receipt
-      standardReceipts.push({
+      const receipt: ReceiptRequest = {
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         saleDate,
-        receiptMethodId: 1,  // You may need to map this properly
-        receiptNumber: `${method}-${order.odooOrderNumber}-${Date.now()}`,
+        receiptMethodId: 1,
+        receiptNumber,
         remittanceBankAccountId: 1000,
         accountValue: invoiceHeader.billToAccountNumber,
         orgId: 1,
         receiptAmount: amount,
-      });
+      };
+      standardReceipts.push(receipt);
 
       // Create apply receipt
-      applyReceipts.push({
+      const applyReceipt: ApplyReceiptRequest = {
         transactionNumber: order.odooOrderNumber,
-        receiptNumber: `${method}-${order.odooOrderNumber}-${Date.now()}`,
+        receiptNumber,
         amountApplied: amount,
         receiptCurrency: invoiceHeader.invoiceCurrencyCode,
         transactionSource: invoiceHeader.transactionSource,
         accountingDate: saleDate,
         applicationDate: saleDate,
-      });
+      };
+      applyReceipts.push(applyReceipt);
     }
 
     // If no payments, create one from total
     if (standardReceipts.length === 0) {
       const total = Number(order.totalAmount || 0);
       if (total > 0) {
-        standardReceipts.push({
+        const receiptNumber = `DEFAULT-${order.odooOrderNumber}-${Date.now()}`;
+        
+        const receipt: ReceiptRequest = {
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
           receiptMethodId: 1,
-          receiptNumber: `DEFAULT-${order.odooOrderNumber}-${Date.now()}`,
+          receiptNumber,
           remittanceBankAccountId: 1000,
           accountValue: invoiceHeader.billToAccountNumber,
           orgId: 1,
           receiptAmount: total,
-        });
+        };
+        standardReceipts.push(receipt);
 
-        applyReceipts.push({
+        const applyReceipt: ApplyReceiptRequest = {
           transactionNumber: order.odooOrderNumber,
-          receiptNumber: `DEFAULT-${order.odooOrderNumber}-${Date.now()}`,
+          receiptNumber,
           amountApplied: total,
           receiptCurrency: invoiceHeader.invoiceCurrencyCode,
           transactionSource: invoiceHeader.transactionSource,
           accountingDate: saleDate,
           applicationDate: saleDate,
-        });
+        };
+        applyReceipts.push(applyReceipt);
       }
     }
 
@@ -193,52 +262,65 @@ export class OrderEnrichmentService {
     };
   }
 
-  private createMinimalPayloads(order: any, branchCode: string, region: string) {
+  private createMinimalPayloads(order: any, branchCode: string, region: string): EnrichedOrderData {
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
     const total = Number(order.totalAmount || 0);
 
-    return {
-      invoiceHeader: {
-        billToCustomerName: order.customerName || 'Default Customer',
-        billToLocation: '',
-        billToAccountNumber: '1000',
-        businessUnit: 'BU1',
-        outletName: order.branchName || branchCode,
-        saleDate,
-        transactionSource: 'Odoo',
-        transactionType: 'Invoice',
-        invoiceCurrencyCode: order.currency || 'AED',
-        conversionRateType: 'Corporate',
-        invoiceLines: [{
-          lineNumber: 1,
-          description: order.odooOrderNumber || 'Sale',
-          quantity: 1,
-          unitSellingPrice: total,
-          currencyCode: order.currency || 'AED',
-          salesOrder: order.odooOrderNumber,
-          salesOrderLine: '1',
-        }],
-      },
-      standardReceipts: total > 0 ? [{
+    const invoiceHeader: InvoiceHeader = {
+      billToCustomerName: order.customerName || 'Default Customer',
+      billToLocation: '',
+      billToAccountNumber: '1000',
+      businessUnit: 'BU1',
+      outletName: order.branchName || branchCode,
+      saleDate,
+      transactionSource: 'Odoo',
+      transactionType: 'Invoice',
+      invoiceCurrencyCode: order.currency || 'AED',
+      conversionRateType: 'Corporate',
+      invoiceLines: [{
+        lineNumber: 1,
+        description: order.odooOrderNumber || 'Sale',
+        quantity: 1,
+        unitSellingPrice: total,
+        currencyCode: order.currency || 'AED',
+        salesOrder: order.odooOrderNumber,
+        salesOrderLine: '1',
+      }],
+    };
+
+    const standardReceipts: ReceiptRequest[] = [];
+    const applyReceipts: ApplyReceiptRequest[] = [];
+
+    if (total > 0) {
+      const receiptNumber = `MINIMAL-${order.odooOrderNumber}-${Date.now()}`;
+      
+      standardReceipts.push({
         currencyCode: order.currency || 'AED',
         saleDate,
         receiptMethodId: 1,
-        receiptNumber: `MINIMAL-${order.odooOrderNumber}-${Date.now()}`,
+        receiptNumber,
         remittanceBankAccountId: 1000,
         accountValue: '1000',
         orgId: 1,
         receiptAmount: total,
-      }] : [],
-      miscReceipts: [],
-      applyReceipts: total > 0 ? [{
+      });
+
+      applyReceipts.push({
         transactionNumber: order.odooOrderNumber,
-        receiptNumber: `MINIMAL-${order.odooOrderNumber}-${Date.now()}`,
+        receiptNumber,
         amountApplied: total,
         receiptCurrency: order.currency || 'AED',
         transactionSource: 'Odoo',
         accountingDate: saleDate,
         applicationDate: saleDate,
-      }] : [],
+      });
+    }
+
+    return {
+      invoiceHeader,
+      standardReceipts,
+      miscReceipts: [],
+      applyReceipts,
       journalHeaders: [],
     };
   }
