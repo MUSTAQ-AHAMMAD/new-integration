@@ -134,8 +134,8 @@ export class OrderEnrichmentService {
     // Build invoice lines from backup data
     for (const line of backupLines) {
       const qty = Number(line.qty || 1);
-      const unitPrice = Number(line.unitPrice || 0);
-      const subtotal = Number(line.subtotal || 0);
+      const unitPrice = Number(line.priceUnit || 0);
+      const subtotal = Number(line.priceSubtotal || 0);
       
       // Skip discount items or zero amounts if needed
       if (qty === 0 && subtotal === 0) continue;
@@ -186,7 +186,7 @@ export class OrderEnrichmentService {
 
     for (const payment of backupPayments) {
       const amount = Number(payment.amount || 0);
-      const method = payment.paymentMethod || 'DEFAULT';
+      const method = payment.paymentName || 'DEFAULT';
       
       if (amount === 0) continue;
 
