@@ -483,7 +483,7 @@ export class ErrorResolutionService {
    * Determine if error type is retryable
    */
   private isRetryable(errorType: ErrorType): boolean {
-    const retryableTypes = [
+    const retryableTypes: ErrorType[] = [
       ErrorType.NETWORK_ERROR,
       ErrorType.TIMEOUT,
       ErrorType.RATE_LIMIT_ERROR,

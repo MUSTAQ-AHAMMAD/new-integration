@@ -210,7 +210,7 @@ export class EnhancedRetryService {
     }
 
     // Check circuit breaker state
-    if (this.circuitBreaker.isOpen()) {
+    if (await this.circuitBreaker.isOpen()) {
       this.logger.warn(
         `Circuit breaker is OPEN. Delaying retry for order ${odooOrderId}.`,
       );

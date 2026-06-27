@@ -23,8 +23,8 @@
     "seed:csv:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts"
   },
   "dependencies": {
-    "@as-integrations/express5": "^1.1.2",
     "@apollo/server": "^5.5.1",
+    "@as-integrations/express5": "^1.1.2",
     "@bull-board/api": "^7.2.1",
     "@bull-board/express": "^7.2.1",
     "@bull-board/nestjs": "^7.2.1",
@@ -56,6 +56,7 @@
     "compression": "^1.8.1",
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",
+    "decimal.js": "^10.6.0",
     "graphql": "^16.14.1",
     "helmet": "^8.2.0",
     "ioredis": "^5.11.1",
