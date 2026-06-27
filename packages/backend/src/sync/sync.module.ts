@@ -12,6 +12,7 @@ import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OdooTransformationService } from './odoo-transformation.service';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
+import { OrderEnrichmentService } from './order-enrichment.service';
 import { OrderSyncService } from './order-sync.service';
 import { PipelineSchedulerService } from './pipeline-scheduler.service';
 import { StalledOrdersService } from './stalled-orders.service';
@@ -40,6 +41,7 @@ import { ValidationService } from './validation.service';
     ValidationService,
     FusionTransformationService,
     OdooTransformationService,
+    OrderEnrichmentService,
     StalledOrdersService,
     OrderDiagnosticsService,
     AutoFixService,
@@ -55,6 +57,7 @@ import { ValidationService } from './validation.service';
     ValidationService,
     FusionTransformationService,
     OdooTransformationService,
+    OrderEnrichmentService,
     StalledOrdersService,
     OrderDiagnosticsService,
     AutoFixService,

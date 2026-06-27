@@ -5,6 +5,26 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { TimezoneService } from './timezone.service';
 
+export interface OrderLineData {
+  productId?: number;
+  productName?: string;
+  productCode?: string;
+  qty?: number;
+  priceUnit?: number;
+  priceSubtotal?: number;
+  priceSubtotalIncl?: number;
+  discount?: number;
+  taxName?: string;
+}
+
+export interface OrderPaymentData {
+  paymentId?: number;
+  paymentName?: string;
+  amount?: number;
+  currency?: string;
+  paymentDate?: Date;
+}
+
 export interface OdooOrderData {
   odooOrderId: string;
   odooOrderNumber: string;
@@ -28,6 +48,15 @@ export interface OdooOrderData {
   isRefund?: boolean;
   refundReferenceId?: string;
   negativeInventoryItems?: Array<{ sku: string; quantity: number }>;
+  // Direct order data for processing without backup tables
+  orderLines?: OrderLineData[];
+  orderPayments?: OrderPaymentData[];
+  warehouseName?: string;
+  posConfigName?: string;
+  customerType?: string;
+  amountUntaxed?: number;
+  amountTax?: number;
+  amountDiscount?: number;
 }
 
 @Injectable()
@@ -104,6 +133,25 @@ export class OrderSyncService {
         negativeInventoryItems: processedData.negativeInventoryItems
           ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
           : undefined,
+        // Store order lines and payments directly for processing without backup tables
+        orderLines: processedData.orderLines
+          ? (processedData.orderLines as unknown as Prisma.InputJsonValue)
+          : undefined,
+        orderPayments: processedData.orderPayments
+          ? (processedData.orderPayments as unknown as Prisma.InputJsonValue)
+          : undefined,
+        warehouseName: processedData.warehouseName,
+        posConfigName: processedData.posConfigName,
+        customerType: processedData.customerType,
+        amountUntaxed: processedData.amountUntaxed != null
+          ? new Prisma.Decimal(processedData.amountUntaxed)
+          : undefined,
+        amountTax: processedData.amountTax != null
+          ? new Prisma.Decimal(processedData.amountTax)
+          : undefined,
+        amountDiscount: processedData.amountDiscount != null
+          ? new Prisma.Decimal(processedData.amountDiscount)
+          : undefined,
         status:
           processedData.isPaid && !(processedData.isCancelled ?? false)
             ? SyncStatus.PENDING
@@ -129,6 +177,25 @@ export class OrderSyncService {
         negativeInventoryItems: processedData.negativeInventoryItems
           ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
           : Prisma.JsonNull,
+        // Update order lines and payments
+        orderLines: processedData.orderLines
+          ? (processedData.orderLines as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        orderPayments: processedData.orderPayments
+          ? (processedData.orderPayments as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+        warehouseName: processedData.warehouseName,
+        posConfigName: processedData.posConfigName,
+        customerType: processedData.customerType,
+        amountUntaxed: processedData.amountUntaxed != null
+          ? new Prisma.Decimal(processedData.amountUntaxed)
+          : null,
+        amountTax: processedData.amountTax != null
+          ? new Prisma.Decimal(processedData.amountTax)
+          : null,
+        amountDiscount: processedData.amountDiscount != null
+          ? new Prisma.Decimal(processedData.amountDiscount)
+          : null,
         status:
           processedData.isPaid && !(processedData.isCancelled ?? false)
             ? SyncStatus.PENDING

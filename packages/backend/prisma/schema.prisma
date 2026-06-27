@@ -61,18 +61,18 @@ enum JobStatus {
 }
 
 model SyncControl {
-  id          String   @id @default(cuid())
-  serviceName String   @unique
+  id          String    @id @default(cuid())
+  serviceName String    @unique
   displayName String
   description String?
-  enabled     Boolean  @default(true)
-  isRunning   Boolean  @default(false)
+  enabled     Boolean   @default(true)
+  isRunning   Boolean   @default(false)
   lastRunAt   DateTime?
   lastStatus  String?
-  runCount    Int      @default(0)
-  errorCount  Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  runCount    Int       @default(0)
+  errorCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([enabled])
   @@index([serviceName])
@@ -110,6 +110,24 @@ model OrderSyncQueue {
   oracleCreditMemoNumber String?
   negativeInventoryFlag  Boolean    @default(false)
   negativeInventoryItems Json?
+  /// Order lines stored as JSON array for direct processing without backup tables
+  /// Structure: [{ productId, productName, productCode, qty, priceUnit, priceSubtotal, priceSubtotalIncl, discount, taxName }]
+  orderLines             Json?
+  /// Payment entries stored as JSON array for direct processing without backup tables
+  /// Structure: [{ paymentId, paymentName, amount, currency, paymentDate }]
+  orderPayments          Json?
+  /// Warehouse/outlet name from the source system
+  warehouseName          String?
+  /// POS config/register name from the source system
+  posConfigName          String?
+  /// Customer type (e.g., NORMAL, HUNGERSTATION, TALABAT)
+  customerType           String?
+  /// Subtotal excluding tax (amount_untaxed)
+  amountUntaxed          Decimal?   @db.Decimal(15, 2)
+  /// Tax amount
+  amountTax              Decimal?   @db.Decimal(15, 2)
+  /// Discount/loyalty amount
+  amountDiscount         Decimal?   @db.Decimal(15, 2)
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
 
@@ -180,19 +198,19 @@ enum AuditStatus {
 }
 
 model PaymentMethodMapping {
-  id                      String   @id @default(cuid())
+  id                      String    @id @default(cuid())
   sourceSystem            String
   sourcePaymentName       String
   oracleReceiptMethodId   BigInt
   oracleReceiptMethodName String
   oracleBankAccountId     BigInt?
-  isActive                Boolean  @default(true)
-  requiresApproval        Boolean  @default(false)
+  isActive                Boolean   @default(true)
+  requiresApproval        Boolean   @default(false)
   approvedBy              String?
   approvedAt              DateTime?
   rejectionReason         String?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   @@unique([sourceSystem, sourcePaymentName])
   @@index([sourcePaymentName])
@@ -229,8 +247,8 @@ model RefundTracking {
 }
 
 model StoreConfiguration {
-  id                    String           @id @default(cuid())
-  branchCode            String           @unique
+  id                    String  @id @default(cuid())
+  branchCode            String  @unique
   branchName            String
   odooBranchId          BigInt
   oracleOperatingUnitId BigInt
@@ -241,9 +259,9 @@ model StoreConfiguration {
   cashAccountName       String
   paymentTermsName      String
   taxClassificationCode String?
-  transactionSource     String           @default("Manual")
-  transactionType       String           @default("PASA CONSULTING SALE")
-  invoiceCurrencyCode   String           @default("AED")
+  transactionSource     String  @default("Manual")
+  transactionType       String  @default("PASA CONSULTING SALE")
+  invoiceCurrencyCode   String  @default("AED")
   /// Region identifier (e.g. "AE", "KW", "OM") — matches OdooCredential.region
   /// and is used to link a store to its regional Oracle configuration.
   region                String?
@@ -258,20 +276,20 @@ model StoreConfiguration {
   serviceProviderJournalMapping Json?
 
   // Per-item quantity decimal precision rules
-  txnQuantityDecimals   Json?
+  txnQuantityDecimals Json?
 
   // Control flags
-  isActive                        Boolean  @default(true)
-  allowNegativeInventory          Boolean  @default(true)
-  autoCreateMissingPaymentMethods Boolean  @default(false)
+  isActive                        Boolean @default(true)
+  allowNegativeInventory          Boolean @default(true)
+  autoCreateMissingPaymentMethods Boolean @default(false)
 
-  lastValidatedAt       DateTime?
-  validationStatus      ValidationStatus @default(PENDING)
-  validationErrors      Json?
-  version               Int              @default(1)
-  createdBy             String
-  createdAt             DateTime         @default(now())
-  updatedAt             DateTime         @updatedAt
+  lastValidatedAt  DateTime?
+  validationStatus ValidationStatus @default(PENDING)
+  validationErrors Json?
+  version          Int              @default(1)
+  createdBy        String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@index([branchCode])
   @@index([validationStatus])
@@ -288,21 +306,21 @@ enum ValidationStatus {
 }
 
 model FailedTransaction {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   orderSyncQueueId String?
   originalPayload  Json
   errorType        ErrorType
   errorMessage     String
   errorStack       String?
   errorCode        String?
-  retryCount       Int      @default(0)
-  maxRetries       Int      @default(3)
+  retryCount       Int       @default(0)
+  maxRetries       Int       @default(3)
   nextRetryAt      DateTime?
-  isResolved       Boolean  @default(false)
+  isResolved       Boolean   @default(false)
   resolvedBy       String?
   resolvedAt       DateTime?
   resolutionNote   String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
   orderSyncQueue OrderSyncQueue? @relation(fields: [orderSyncQueueId], references: [id])
 
@@ -398,24 +416,24 @@ enum HealthStatus {
 }
 
 model NotificationRecipient {
-  id                     String           @id @default(cuid())
-  email                  String           @unique
-  name                   String
-  role                   NotificationRole
+  id    String           @id @default(cuid())
+  email String           @unique
+  name  String
+  role  NotificationRole
 
   // Alert preferences
-  receiveErrorAlerts     Boolean  @default(true)
-  receiveDailyReports    Boolean  @default(false)
-  receiveInventoryAlerts Boolean  @default(false)
-  receivePaymentAlerts   Boolean  @default(false)
-  receiveConfigAlerts    Boolean  @default(true)
+  receiveErrorAlerts     Boolean @default(true)
+  receiveDailyReports    Boolean @default(false)
+  receiveInventoryAlerts Boolean @default(false)
+  receivePaymentAlerts   Boolean @default(false)
+  receiveConfigAlerts    Boolean @default(true)
 
   // Escalation
-  escalationLevel        Int      @default(1)
-  backupRecipientId      String?
+  escalationLevel   Int     @default(1)
+  backupRecipientId String?
 
-  isActive               Boolean  @default(true)
-  createdAt              DateTime @default(now())
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   @@index([role])
   @@index([isActive])
@@ -489,14 +507,14 @@ model WebhookEvent {
 // ─────────────────────────────────────────────────────────────────
 
 model FusionCredential {
-  id         String   @id @default(cuid())
-  hostName   String   @unique
-  server     String
-  username   String
-  password   String
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  hostName  String   @unique
+  server    String
+  username  String
+  password  String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([active])
 }
@@ -548,15 +566,15 @@ model FusionBusinessUnitMap {
 }
 
 model FusionReceiptMethod {
-  id                  String   @id @default(cuid())
-  receiptMethodId     BigInt
-  receiptMethodName   String
-  receiptIsCash       Boolean  @default(false)
-  receiptBankCharge   Float    @default(0)
-  receiptMethodTax    Float    @default(0)
-  region              String
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                String   @id @default(cuid())
+  receiptMethodId   BigInt
+  receiptMethodName String
+  receiptIsCash     Boolean  @default(false)
+  receiptBankCharge Float    @default(0)
+  receiptMethodTax  Float    @default(0)
+  region            String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@unique([receiptMethodName, region])
   @@index([region])
@@ -564,67 +582,67 @@ model FusionReceiptMethod {
 }
 
 model FusionSalesMetadata {
-  id                   String   @id @default(cuid())
-  billToName           String   @unique
-  billToAccount        BigInt
-  siteNumber           String?
-  businessUnit         String
-  txnSource            String
-  txnType              String
-  rateIsCorporate      Boolean  @default(false)
-  recActivityNameBank  String?
-  subinventory         String?
-  integrationSource    String
-  distributionAccId    BigInt?
-  recActivityNameCash  String?
-  region               String
-  customerType         String
-  costCenterCode       String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  billToName          String   @unique
+  billToAccount       BigInt
+  siteNumber          String?
+  businessUnit        String
+  txnSource           String
+  txnType             String
+  rateIsCorporate     Boolean  @default(false)
+  recActivityNameBank String?
+  subinventory        String?
+  integrationSource   String
+  distributionAccId   BigInt?
+  recActivityNameCash String?
+  region              String
+  customerType        String
+  costCenterCode      String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@index([region])
   @@index([customerType])
 }
 
 model ServiceProviderJournalMeta {
-  id                String   @id @default(cuid())
-  region            String
-  ledgerId          BigInt
-  taxGroupId        BigInt?
-  chartOfAccountsId BigInt
-  serviceProvider   String   @unique
-  creditDebit       String?
-  costIssue         String?
-  costRma           String?
-  company           String?
-  account           String?
-  department        String?
-  productCategory   String?
-  interCompany      String?
-  futUsed           String?
-  extraSegment1     String?
-  extraSegment2     String?
-  extraSegment3     String?
-  jeCategory        String?
-  jeSource          String?
-  isCash            Boolean  @default(false)
-  summaryFlag       Boolean  @default(false)
-  fixedFreightCharge Float   @default(0)
-  bankChargeRate     Float   @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  region             String
+  ledgerId           BigInt
+  taxGroupId         BigInt?
+  chartOfAccountsId  BigInt
+  serviceProvider    String   @unique
+  creditDebit        String?
+  costIssue          String?
+  costRma            String?
+  company            String?
+  account            String?
+  department         String?
+  productCategory    String?
+  interCompany       String?
+  futUsed            String?
+  extraSegment1      String?
+  extraSegment2      String?
+  extraSegment3      String?
+  jeCategory         String?
+  jeSource           String?
+  isCash             Boolean  @default(false)
+  summaryFlag        Boolean  @default(false)
+  fixedFreightCharge Float    @default(0)
+  bankChargeRate     Float    @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@index([region])
   @@index([serviceProvider])
 }
 
 model SalesIntegrationStatus {
-  id         String   @id @default(cuid())
-  region     String
-  integMode  String
-  status     String
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(cuid())
+  region    String
+  integMode String
+  status    String
+  updatedAt DateTime @updatedAt
 
   @@unique([region, integMode])
   @@index([region])
@@ -632,39 +650,39 @@ model SalesIntegrationStatus {
 }
 
 model VendHqDiscountItem {
-  id               String   @id @default(cuid())
-  discountItemId   String
-  region           String
-  createdAt        DateTime @default(now())
+  id             String   @id @default(cuid())
+  discountItemId String
+  region         String
+  createdAt      DateTime @default(now())
 
   @@unique([discountItemId, region])
   @@index([region])
 }
 
 model VendHqTaxMeta {
-  id          String   @id @default(cuid())
-  taxId       String
-  taxName     String
-  version     BigInt   @default(1)
-  fusionName  String?
-  region      String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(cuid())
+  taxId      String
+  taxName    String
+  version    BigInt   @default(1)
+  fusionName String?
+  region     String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([taxId, region])
   @@index([region])
 }
 
 model VendHqOutlet {
-  id          String    @id @default(cuid())
-  outletId    String
-  outletName  String
-  currency    String    @default("AED")
-  version     BigInt    @default(1)
-  deletedAt   DateTime?
-  region      String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id         String    @id @default(cuid())
+  outletId   String
+  outletName String
+  currency   String    @default("AED")
+  version    BigInt    @default(1)
+  deletedAt  DateTime?
+  region     String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   registers VendHqRegister[]
 
@@ -698,42 +716,42 @@ model VendHqRegister {
 }
 
 model VendHqServiceProvider {
-  id              String   @id @default(cuid())
-  region          String
-  serviceProvider String   @unique
+  id               String   @id @default(cuid())
+  region           String
+  serviceProvider  String   @unique
   vendHqCustomerId String?
-  isCash          Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isCash           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([region])
   @@index([serviceProvider])
 }
 
 model VendHqItemMeta {
-  id              String    @id @default(cuid())
-  requestId       Int?
-  status          String?
-  message         String?
-  itemId          String
-  sourceId        Int?
-  uomCode         String?
-  handle          String?
-  itemType        String?
-  uomName         String?
-  active          Boolean   @default(true)
-  name            String
-  description     String?
-  sku             String?
-  brandId         String?
-  trackInventory  Boolean   @default(false)
-  retailPrice     Float?
-  taxId           String?
-  requestDate     DateTime?
-  lastUpdateDate  DateTime?
-  region          String
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  requestId      Int?
+  status         String?
+  message        String?
+  itemId         String
+  sourceId       Int?
+  uomCode        String?
+  handle         String?
+  itemType       String?
+  uomName        String?
+  active         Boolean   @default(true)
+  name           String
+  description    String?
+  sku            String?
+  brandId        String?
+  trackInventory Boolean   @default(false)
+  retailPrice    Float?
+  taxId          String?
+  requestDate    DateTime?
+  lastUpdateDate DateTime?
+  region         String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([itemId])
   @@index([sku])
@@ -773,26 +791,26 @@ model FusionInvoiceHeader {
 }
 
 model FusionInvoiceLine {
-  id              String    @id @default(cuid())
-  requestId       Int?
-  status          String    @default("PENDING")
-  message         String?
-  requestDate     DateTime?
-  invoiceNumber   String?
-  lineNumber      Int?
-  itemNumber      String?
-  description     String?
-  uom             String?
-  quantity        Float?
-  currencyCode    String    @default("AED")
-  taxCode         String?
-  version         Int       @default(1)
-  salesOrder      String?
-  salesOrderLine  Int?
-  region          String
-  headerId        String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  requestId      Int?
+  status         String    @default("PENDING")
+  message        String?
+  requestDate    DateTime?
+  invoiceNumber  String?
+  lineNumber     Int?
+  itemNumber     String?
+  description    String?
+  uom            String?
+  quantity       Float?
+  currencyCode   String    @default("AED")
+  taxCode        String?
+  version        Int       @default(1)
+  salesOrder     String?
+  salesOrderLine Int?
+  region         String
+  headerId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   header FusionInvoiceHeader? @relation(fields: [headerId], references: [id])
 
@@ -802,26 +820,26 @@ model FusionInvoiceLine {
 }
 
 model FusionStandardReceipt {
-  id                    String    @id @default(cuid())
-  requestId             Int?
-  status                String    @default("PENDING")
-  message               String?
-  requestDate           DateTime?
-  currencyCode          String    @default("AED")
-  receiptDate           DateTime?
-  glDate                DateTime?
-  exchangeDate          DateTime?
-  exchangeRateType      String?
-  receiptMethodId       BigInt?
-  receiptNumber         String?
-  remittanceBankAccId   String?
-  depositDate           DateTime?
-  customerId            Int?
-  orgId                 Int?
-  region                String
-  integMode             String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  requestId           Int?
+  status              String    @default("PENDING")
+  message             String?
+  requestDate         DateTime?
+  currencyCode        String    @default("AED")
+  receiptDate         DateTime?
+  glDate              DateTime?
+  exchangeDate        DateTime?
+  exchangeRateType    String?
+  receiptMethodId     BigInt?
+  receiptNumber       String?
+  remittanceBankAccId String?
+  depositDate         DateTime?
+  customerId          Int?
+  orgId               Int?
+  region              String
+  integMode           String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([status])
   @@index([region])
@@ -829,24 +847,24 @@ model FusionStandardReceipt {
 }
 
 model FusionMiscReceipt {
-  id                  String    @id @default(cuid())
-  requestId           Int?
-  status              String    @default("PENDING")
-  message             String?
-  requestDate         DateTime?
-  currencyCode        String    @default("AED")
-  glDate              DateTime?
-  exchangeDate        DateTime?
-  exchangeRateType    String?
-  receiptMethodName   String?
-  receiptNumber       String?
-  bankAccNumber       String?
-  recActivityName     String?
-  receiptDate         DateTime?
-  region              String
-  integMode           String?
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  requestId         Int?
+  status            String    @default("PENDING")
+  message           String?
+  requestDate       DateTime?
+  currencyCode      String    @default("AED")
+  glDate            DateTime?
+  exchangeDate      DateTime?
+  exchangeRateType  String?
+  receiptMethodName String?
+  receiptNumber     String?
+  bankAccNumber     String?
+  recActivityName   String?
+  receiptDate       DateTime?
+  region            String
+  integMode         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([status])
   @@index([region])
@@ -908,48 +926,48 @@ model FusionJournalHeader {
 }
 
 model FusionJournalLine {
-  id                       String    @id @default(cuid())
-  requestId                Int?
-  status                   String    @default("PENDING")
-  message                  String?
-  requestDate              DateTime?
-  region                   String
-  jeHeaderId               Int?
-  jeLineNum                Int?
-  ledgerId                 BigInt?
-  groupId                  Int?
-  chartOfAccountsId        BigInt?
-  enteredCrAmount          Float?
-  accountedCr              Float?
-  enteredDrAmount          Float?
-  accountedDr              Float?
-  currencyConversionRate   Float?
-  periodName               String?
-  accountingPeriodName     String?
-  userJeSourceName         String?
-  userJeCategoryName       String?
-  segment1                 String?
-  segment2                 String?
-  segment3                 String?
-  segment4                 String?
-  segment5                 String?
-  segment6                 String?
-  segment7                 String?
-  segment8                 String?
-  segment9                 String?
-  segment10                String?
-  currencyCode             String    @default("AED")
-  taxCode                  String?
-  recordType               String?
-  accountingDate           DateTime?
-  transactionDate          DateTime?
-  salesOrder               String?
-  txnNumber                Int?
-  customerType             String?
-  cashCredit               String?
-  headerId                 String?
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  id                     String    @id @default(cuid())
+  requestId              Int?
+  status                 String    @default("PENDING")
+  message                String?
+  requestDate            DateTime?
+  region                 String
+  jeHeaderId             Int?
+  jeLineNum              Int?
+  ledgerId               BigInt?
+  groupId                Int?
+  chartOfAccountsId      BigInt?
+  enteredCrAmount        Float?
+  accountedCr            Float?
+  enteredDrAmount        Float?
+  accountedDr            Float?
+  currencyConversionRate Float?
+  periodName             String?
+  accountingPeriodName   String?
+  userJeSourceName       String?
+  userJeCategoryName     String?
+  segment1               String?
+  segment2               String?
+  segment3               String?
+  segment4               String?
+  segment5               String?
+  segment6               String?
+  segment7               String?
+  segment8               String?
+  segment9               String?
+  segment10              String?
+  currencyCode           String    @default("AED")
+  taxCode                String?
+  recordType             String?
+  accountingDate         DateTime?
+  transactionDate        DateTime?
+  salesOrder             String?
+  txnNumber              Int?
+  customerType           String?
+  cashCredit             String?
+  headerId               String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   header FusionJournalHeader? @relation(fields: [headerId], references: [id])
 
@@ -984,7 +1002,7 @@ model FusionInvTxn {
 // ─── Backup / Archive Tables (read-only view) ─────────────────────
 
 model BackupVendHqSale {
-  id                String    @id @default(cuid())
+  id                String   @id @default(cuid())
   invoiceNumber     String
   /// VendHQ sale identifier / invoice number used as the Oracle sales-order reference
   saleNumber        String?
@@ -1002,14 +1020,14 @@ model BackupVendHqSale {
   customerType      String?
   /// Raw JSON payload received from VendHQ (preserved for debugging / re-processing)
   rawJson           Json?
-  createdAt         DateTime  @default(now())
+  createdAt         DateTime @default(now())
 
   /// Whether this sale has been successfully pushed to Oracle Fusion
-  fusionSynced      Boolean   @default(false)
+  fusionSynced    Boolean   @default(false)
   /// Timestamp of the last successful Oracle Fusion push
-  fusionSyncAt      DateTime?
+  fusionSyncAt    DateTime?
   /// Error message from the last failed Oracle Fusion push attempt
-  fusionSyncError   String?
+  fusionSyncError String?
 
   backupLineItems BackupVendHqLineItem[]
   backupPayments  BackupVendHqPayment[]
@@ -1106,16 +1124,16 @@ enum SaleStatus {
 }
 
 model SaleSyncStatus {
-  saleId           String
-  outletId         String
-  saleDate         DateTime
-  status           SaleStatus
-  syncAttempts     Int        @default(0)
-  lastSyncAt       DateTime?
-  errorMessage     String?
-  oracleInvoiceId  String?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  saleId          String
+  outletId        String
+  saleDate        DateTime
+  status          SaleStatus
+  syncAttempts    Int        @default(0)
+  lastSyncAt      DateTime?
+  errorMessage    String?
+  oracleInvoiceId String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   @@id([saleId, outletId, saleDate])
   @@index([status])
@@ -1267,7 +1285,7 @@ model OpencartSite {
   siteCode     String    @unique
   siteName     String
   baseUrl      String
-  apiKey       String    // Store encrypted at the application layer
+  apiKey       String // Store encrypted at the application layer
   branchCode   String
   isActive     Boolean   @default(true)
   lastSyncedAt DateTime?
@@ -1383,32 +1401,32 @@ model IbqCredential {
 
 /// Header-level record for each IBQ POS order fetched during backup.
 model BackupIbqOrder {
-  id             String    @id @default(cuid())
+  id            String    @id @default(cuid())
   /// IBQ / Odoo integer order id
-  orderId        Int
+  orderId       Int
   /// Human-readable order name, e.g. "Order 00001-001-0001"
-  orderName      String?
+  orderName     String?
   /// POS reference string from Odoo
-  posReference   String?
-  companyId      Int?
-  companyName    String?
-  branchId       Int?
-  branchName     String?
+  posReference  String?
+  companyId     Int?
+  companyName   String?
+  branchId      Int?
+  branchName    String?
   /// POS configuration id (maps to a terminal / branch)
-  posConfigId    Int?
-  posConfigName  String?
-  dateOrder      DateTime?
-  amountTotal    Float?
-  amountTax      Float?
-  amountPaid     Float?
+  posConfigId   Int?
+  posConfigName String?
+  dateOrder     DateTime?
+  amountTotal   Float?
+  amountTax     Float?
+  amountPaid    Float?
   /// Odoo order state: draft | paid | done | invoiced | cancel
-  state          String?
-  partnerId      Int?
-  partnerName    String?
-  region         String
+  state         String?
+  partnerId     Int?
+  partnerName   String?
+  region        String
   /// Full raw JSON payload preserved for debugging / re-processing
-  rawJson        Json?
-  createdAt      DateTime  @default(now())
+  rawJson       Json?
+  createdAt     DateTime  @default(now())
 
   orderLines    BackupIbqOrderLine[]
   orderPayments BackupIbqOrderPayment[]
@@ -1448,16 +1466,16 @@ model BackupIbqOrderLine {
 
 /// Payment entries belonging to a BackupIbqOrder.
 model BackupIbqOrderPayment {
-  id            String   @id @default(cuid())
+  id          String   @id @default(cuid())
   /// Parent IBQ order id (denormalised for fast queries)
-  orderId       Int
+  orderId     Int
   /// Odoo integer id of this payment / statement line
-  paymentId     Int?
+  paymentId   Int?
   /// Payment method name, e.g. "Cash", "Card"
-  paymentName   String?
-  amount        Float?
-  region        String
-  createdAt     DateTime @default(now())
+  paymentName String?
+  amount      Float?
+  region      String
+  createdAt   DateTime @default(now())
 
   /// FK to parent BackupIbqOrder
   parentOrderId String?
@@ -1473,14 +1491,14 @@ model BackupIbqOrderPayment {
 /// Stores API credentials for each Odoo instance (one per region/environment).
 /// Enables per-region Odoo fetches without relying solely on env vars.
 model OdooCredential {
-  id         String    @id @default(cuid())
+  id                    String    @id @default(cuid())
   /// Base URL of the Odoo instance, e.g. "https://mycompany.odoo.com"
-  baseUrl    String
+  baseUrl               String
   /// API key sent as the `x-api-key` header on every request
-  apiKey     String
+  apiKey                String
   /// Human-readable region identifier, e.g. "AE", "SA", "KW"
-  region     String
-  active     Boolean   @default(true)
+  region                String
+  active                Boolean   @default(true)
   /// Override the default REST endpoint path used when fetching orders.
   /// Defaults to "/api/pos/order" (Odoo POS REST API) when null.
   /// Set to "/api/sale.order" for Odoo instances that serve sale orders
@@ -1493,8 +1511,8 @@ model OdooCredential {
   rejectUnauthorizedSsl Boolean   @default(true)
   /// Timestamp watermark: next scheduled run fetches orders after this date
   lastSyncAt            DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@index([region])
   @@index([active])
@@ -1513,47 +1531,47 @@ model OdooBackupState {
 
 /// Header-level record for each order fetched from the main Odoo instance during backup.
 model BackupOdooOrder {
-  id           String    @id @default(cuid())
+  id                 String    @id @default(cuid())
   /// Odoo integer order id
-  orderId      Int       @unique
+  orderId            Int       @unique
   /// Human-readable order name / reference, e.g. "S00001" or "Order 00001"
-  orderName    String?
-  branchId     Int?
-  branchName   String?
-  dateOrder    DateTime?
+  orderName          String?
+  branchId           Int?
+  branchName         String?
+  dateOrder          DateTime?
   /// Grand total including tax (amount_total)
-  amountTotal  Float?
+  amountTotal        Float?
   /// Subtotal excluding tax (amount_untaxed) — maps to TOTAL_PRICE in old integration
-  amountUntaxed Float?
-  amountTax    Float?
+  amountUntaxed      Float?
+  amountTax          Float?
   /// Discount / loyalty amount (amount_discount) — maps to TOTAL_LOYALTY in old integration
-  amountDiscount Float?
+  amountDiscount     Float?
   /// Odoo order state: draft | sale | done | cancel | paid | posted etc.
-  state        String?
-  partnerId    Int?
-  partnerName  String?
+  state              String?
+  partnerId          Int?
+  partnerName        String?
   /// Warehouse id from warehouse_id Many2one field (outlet identifier)
-  warehouseId  Int?
+  warehouseId        Int?
   /// Warehouse/outlet name from warehouse_id[1] — maps to OUTLET_NAME in old integration
-  warehouseName String?
+  warehouseName      String?
   /// POS config id from pos_config_id Many2one field (register identifier)
-  posConfigId  Int?
+  posConfigId        Int?
   /// POS config/register name from pos_config_id[1] or session_id[1] — maps to REGISTER_NAME in old integration
-  posConfigName String?
+  posConfigName      String?
   /// Customer type derived from order tags or partner type (e.g. NORMAL, HUNGERSTATION, TALABAT)
-  customerType String?
+  customerType       String?
   /// Timezone string carried on the order, e.g. "Asia/Dubai"
-  timezone     String?
+  timezone           String?
   /// Region identifier (e.g. "AE", "KW") from the OdooCredential that fetched this order.
   /// Populated during per-region credential backup; null when fetched via global env-var path.
-  region       String?
+  region             String?
   /// Resolved StoreConfiguration.branchCode for this order (looked up by odooBranchId).
   /// Cached here so the processor doesn't need to re-query the store config table.
   resolvedBranchCode String?
   /// Full raw JSON payload preserved for debugging / re-processing
-  rawJson      Json?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  rawJson            Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   orderLines    BackupOdooOrderLine[]
   orderPayments BackupOdooOrderPayment[]
@@ -1596,19 +1614,19 @@ model BackupOdooOrderLine {
 
 /// Payment entries belonging to a BackupOdooOrder.
 model BackupOdooOrderPayment {
-  id            String    @id @default(cuid())
+  id          String    @id @default(cuid())
   /// Parent Odoo order id (denormalised for fast queries)
-  orderId       Int
+  orderId     Int
   /// Odoo integer id of this payment / statement line
-  paymentId     Int?
+  paymentId   Int?
   /// Payment method name, e.g. "Cash", "Card" — maps to PAYMENT_TYPE in old integration
-  paymentName   String?
-  amount        Float?
+  paymentName String?
+  amount      Float?
   /// ISO currency code, e.g. "AED", "SAR" — maps to CURRENCY in old integration
-  currency      String?
+  currency    String?
   /// Payment date — maps to PAYMENT_DATE in old integration
-  paymentDate   DateTime?
-  createdAt     DateTime  @default(now())
+  paymentDate DateTime?
+  createdAt   DateTime  @default(now())
 
   /// FK to parent BackupOdooOrder
   parentOrderId String?
@@ -1617,4 +1635,3 @@ model BackupOdooOrderPayment {
   @@index([orderId])
   @@index([parentOrderId])
 }
-
