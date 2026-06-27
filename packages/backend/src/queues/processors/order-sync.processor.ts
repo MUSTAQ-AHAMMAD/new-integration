@@ -18,6 +18,7 @@ import { StoreConfigService } from '../../store-config/store-config.service';
 import { FusionTransformationService } from '../../sync/fusion-transformation.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
 import { OdooTransformationService } from '../../sync/odoo-transformation.service';
+import { OrderEnrichmentService } from '../../sync/order-enrichment.service';
 import { ValidationService } from '../../sync/validation.service';
 import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
@@ -38,6 +39,7 @@ export class OrderSyncProcessor {
     private readonly soapClient: OracleSoapClient,
     private readonly transformationService: FusionTransformationService,
     private readonly odooTransformationService: OdooTransformationService,
+    private readonly enrichmentService: OrderEnrichmentService,
   ) {}
 
   @Process({ name: 'sync', concurrency: 10 })
@@ -506,63 +508,30 @@ export class OrderSyncProcessor {
         return txnNumber;
       };
 
-      // ── Path A: Odoo backup ───────────────────────────────────────
-      if (order.odooBackupOrderId) {
-        this.logger.log(
-          `Order ${odooOrderId}: using Odoo backup path (backupOrderId=${order.odooBackupOrderId})`,
-        );
-        const payloads =
-          await this.odooTransformationService.buildOrderPayloads(
-            order.odooBackupOrderId,
-            branchCode,
-            effectiveRegion,
-          );
-        const txnNumber = await pushToOracle(payloads);
-        if (order.isRefund) {
-          oracleCreditMemoNumber = txnNumber;
-        } else {
-          oracleInvoiceNumber = txnNumber;
-        }
+      // ── NEW APPROACH: Use Enrichment Service ──────────────────────────────────
+      // The enrichment service will:
+      // 1. Try to use direct order data from OrderSyncQueue (orderLines, orderPayments)
+      // 2. Fall back to backup tables if needed (BackupOdooOrder, BackupVendHqSale)
+      // 3. Create minimal viable payloads if neither are available
+      //
+      // This removes the hard dependency on backup tables and allows orders to
+      // sync directly when they have complete data.
+      
+      this.logger.log(
+        `[${odooOrderId}] Using enrichment service for flexible order processing...`,
+      );
+      
+      const payloads = await this.enrichmentService.enrichOrder(
+        order.id,
+        branchCode,
+        effectiveRegion,
+      );
+      
+      const txnNumber = await pushToOracle(payloads);
+      if (order.isRefund) {
+        oracleCreditMemoNumber = txnNumber;
       } else {
-        // ── Path B: VendHQ backup fallback ────────────────────────
-        const backupSale = await this.prisma.backupVendHqSale.findFirst({
-          where: {
-            OR: [
-              { saleNumber: order.odooOrderNumber ?? odooOrderId },
-              { invoiceNumber: order.odooOrderNumber ?? odooOrderId },
-            ],
-          },
-        });
-
-        if (backupSale) {
-          this.logger.log(
-            `Order ${odooOrderId}: using VendHQ backup path (saleId=${backupSale.id})`,
-          );
-          const payloads = await this.transformationService.buildSalePayloads(
-            backupSale.id,
-            effectiveRegion,
-          );
-          const txnNumber = await pushToOracle(payloads);
-          if (order.isRefund) {
-            oracleCreditMemoNumber = txnNumber;
-          } else {
-            oracleInvoiceNumber = txnNumber;
-          }
-        } else {
-          // ── Path C: No backup source available ───────────────────────────────
-          // Without backup data we cannot build the Oracle SOAP payload.
-          // Throw so the order is marked FAILED and remains retryable — the
-          // operator should configure OdooCredential or VendHqCredential, run
-          // the relevant backup job, and then use POST /sync/retry-failed to
-          // re-process the order.
-          throw new Error(
-            `No backup data found for order ${odooOrderId} (orderNumber=${order.odooOrderNumber ?? odooOrderId}): ` +
-              `odooBackupOrderId=${order.odooBackupOrderId ?? 'null'} and no matching BackupOdooOrder or BackupVendHqSale. ` +
-              `Ensure credentials are configured (POST /odoo-backup/credentials or POST /admin/vendhq-credentials), ` +
-              `run the relevant backup job (POST /odoo-backup/trigger or POST /vendhq-backup/trigger), ` +
-              `then retry this order via POST /sync/retry-failed.`,
-          );
-        }
+        oracleInvoiceNumber = txnNumber;
       }
 
       const oracleReference =
