@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AlertSeverity, AlertType, ValidationStatus } from '@prisma/client';
+import { AlertSeverity, AlertType, ValidationStatus, StoreConfiguration } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -13,11 +13,213 @@ interface BranchInfo {
 @Injectable()
 export class StoreConfigService {
   private readonly logger = new Logger(StoreConfigService.name);
+  
+  // In-memory cache for store configurations
+  private readonly configCache = new Map<string, {
+    config: StoreConfiguration;
+    timestamp: number;
+  }>();
+  
+  // Cache TTL: 5 minutes
+  private readonly CACHE_TTL = 5 * 60 * 1000;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly alertsService: AlertsService,
   ) {}
+
+  /**
+   * Get configuration from cache if available and fresh
+   */
+  private getCachedConfig(branchCode: string): StoreConfiguration | null {
+    const cached = this.configCache.get(branchCode);
+    if (!cached) return null;
+    
+    const age = Date.now() - cached.timestamp;
+    if (age > this.CACHE_TTL) {
+      this.configCache.delete(branchCode);
+      return null;
+    }
+    
+    return cached.config;
+  }
+  
+  /**
+   * Store configuration in cache
+   */
+  private cacheConfig(branchCode: string, config: StoreConfiguration): void {
+    this.configCache.set(branchCode, {
+      config,
+      timestamp: Date.now(),
+    });
+  }
+  
+  /**
+   * Clear cache for a specific branch or all branches
+   */
+  clearCache(branchCode?: string): void {
+    if (branchCode) {
+      this.configCache.delete(branchCode);
+    } else {
+      this.configCache.clear();
+    }
+  }
+
+  /**
+   * Get or create store configuration with caching and auto-creation
+   * This method NEVER throws - it always returns a config (created or fallback)
+   */
+  async getOrCreateStoreConfig(branchCode: string): Promise<StoreConfiguration> {
+    this.logger.log(`Getting store config for branch: ${branchCode}`);
+    
+    // 1. Try cache first
+    const cached = this.getCachedConfig(branchCode);
+    if (cached) {
+      this.logger.debug(`Cache hit for branch ${branchCode}`);
+      return cached;
+    }
+    
+    // 2. Try to get from database
+    let config = await this.prisma.storeConfiguration.findUnique({
+      where: { branchCode },
+    });
+    
+    // 3. If not found, try to create default config
+    if (!config) {
+      this.logger.warn(`Store config not found for branch ${branchCode}, creating default...`);
+      try {
+        config = await this.createDefaultConfig(branchCode);
+        this.logger.log(`✅ Created default config for branch ${branchCode}`);
+      } catch (error) {
+        this.logger.error(
+          `Failed to create default config for branch ${branchCode}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // 4. If creation fails, use fallback config (in-memory only, not persisted)
+        this.logger.warn(`Using fallback config for branch ${branchCode}`);
+        return this.getFallbackConfig(branchCode);
+      }
+    }
+    
+    // 5. Cache and return
+    this.cacheConfig(branchCode, config);
+    return config;
+  }
+  
+  /**
+   * Create default store configuration for a branch
+   */
+  async createDefaultConfig(branchCode: string): Promise<StoreConfiguration> {
+    this.logger.log(`Creating default configuration for branch: ${branchCode}`);
+    
+    // Try to get branch info from backup tables
+    const branchId = parseInt(branchCode, 10);
+    if (isNaN(branchId)) {
+      throw new Error(`Invalid branch code: ${branchCode}`);
+    }
+    
+    // Get branch info from Odoo backup
+    const odooOrder = await this.prisma.backupOdooOrder.findFirst({
+      where: { branchId },
+      select: { branchName: true, region: true },
+    });
+    
+    // Get branch info from IBQ backup
+    const ibqOrder = await this.prisma.backupIbqOrder.findFirst({
+      where: { branchId },
+      select: { branchName: true, region: true },
+    });
+    
+    const branchName = odooOrder?.branchName || ibqOrder?.branchName || `Branch-${branchCode}`;
+    const region = odooOrder?.region || ibqOrder?.region || 'AE';
+    
+    // Try to get Oracle config from FusionSalesMetadata
+    const fusionMetadata = await this.prisma.fusionSalesMetadata.findFirst({
+      where: { region },
+    });
+    
+    if (!fusionMetadata) {
+      this.logger.warn(`No FusionSalesMetadata found for region ${region}, using defaults`);
+    }
+    
+    // Create the configuration
+    const config = await this.prisma.storeConfiguration.create({
+      data: {
+        branchCode,
+        branchName,
+        odooBranchId: BigInt(branchId),
+        oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
+        oracleBusinessUnit: fusionMetadata?.businessUnit || 'DEFAULT_BU',
+        billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
+        billToLocation: fusionMetadata?.siteNumber || undefined,
+        bankAccountName: `BANK_${region}`,
+        cashAccountName: `CASH_${region}`,
+        paymentTermsName: 'IMMEDIATE',
+        taxClassificationCode: undefined,
+        transactionSource: fusionMetadata?.txnSource || 'Manual',
+        transactionType: fusionMetadata?.txnType || 'PASA CONSULTING SALE',
+        invoiceCurrencyCode: 'AED',
+        region,
+        isActive: true,
+        validationStatus: ValidationStatus.PARTIAL,
+        validationErrors: ['Auto-created config - requires manual validation'],
+        createdBy: 'SYSTEM_AUTO_CREATE',
+      },
+    });
+    
+    // Fire alert for manual review
+    await this.alertsService.createAlert({
+      alertType: AlertType.STORE_CONFIG_INVALID,
+      severity: AlertSeverity.WARNING,
+      title: 'Store configuration auto-created',
+      message: `Store configuration for branch ${branchCode} (${branchName}) was automatically created. Please review and update bank/cash account names and validate the configuration.`,
+      relatedEntityId: branchCode,
+      relatedEntityType: 'STORE_CONFIGURATION',
+    });
+    
+    return config;
+  }
+  
+  /**
+   * Get fallback configuration (used when DB creation fails)
+   * This config is NOT persisted - it's in-memory only
+   */
+  getFallbackConfig(branchCode: string): StoreConfiguration {
+    const branchId = parseInt(branchCode, 10);
+    const now = new Date();
+    
+    return {
+      id: `FALLBACK_${branchCode}`,
+      branchCode,
+      branchName: `FALLBACK-${branchCode}`,
+      odooBranchId: BigInt(isNaN(branchId) ? 0 : branchId),
+      oracleOperatingUnitId: BigInt(0),
+      oracleBusinessUnit: 'FALLBACK_BU',
+      billToSiteName: 'FALLBACK_SITE',
+      billToLocation: null,
+      bankAccountName: 'FALLBACK_BANK',
+      cashAccountName: 'FALLBACK_CASH',
+      paymentTermsName: 'IMMEDIATE',
+      taxClassificationCode: null,
+      transactionSource: 'Manual',
+      transactionType: 'PASA CONSULTING SALE',
+      invoiceCurrencyCode: 'AED',
+      region: 'AE',
+      bankAccountId: null,
+      cashAccountId: null,
+      serviceProviderJournalMapping: null,
+      txnQuantityDecimals: null,
+      isActive: true,
+      allowNegativeInventory: true,
+      autoCreateMissingPaymentMethods: false,
+      lastValidatedAt: null,
+      validationStatus: ValidationStatus.INVALID,
+      validationErrors: ['Fallback configuration - database creation failed'],
+      version: 1,
+      createdBy: 'SYSTEM_FALLBACK',
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
 
   async getRawConfig(branchCode: string) {
     const config = await this.prisma.storeConfiguration.findUnique({
