@@ -268,7 +268,7 @@ services:
       target: development
     container_name: integration_worker
     restart: unless-stopped
-    command: ['sh', '-c', 'set -e && pnpm exec prisma db push --skip-generate && pnpm run start:worker:dev']
+    command: ['sh', '-c', 'set -e && pnpm exec prisma db push --skip-generate --accept-data-loss && pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
