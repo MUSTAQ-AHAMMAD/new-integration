@@ -123,31 +123,38 @@ describe('ItemSyncService', () => {
 
     it('creates VendHqItemMeta when item is new', async () => {
       // First findFirst call = watermark (null → use fallback date)
-      // Second findFirst call = item-tracking lookup (null → create)
-      prisma.vendHqItemMeta.findFirst
-        .mockResolvedValueOnce(null) // watermark
-        .mockResolvedValueOnce(null); // item tracking
+      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce(null); // watermark
       const result = await service.syncItemsForRegion('AE');
       expect(result.synced).toBe(1);
-      expect(prisma.vendHqItemMeta.create).toHaveBeenCalledWith(
+      expect(prisma.vendHqItemMeta.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
+          where: {
+            itemId_region: expect.objectContaining({
+              itemId: expect.any(String),
+              region: 'AE',
+            }),
+          },
+          create: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
+          update: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
         }),
       );
     });
 
     it('updates VendHqItemMeta when item exists', async () => {
       // First call = watermark (null → use fallback date)
-      // Second call = item-tracking lookup → existing record
-      prisma.vendHqItemMeta.findFirst
-        .mockResolvedValueOnce(null) // watermark
-        .mockResolvedValueOnce({ id: 'meta-001' }); // item tracking
+      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce(null); // watermark
       const result = await service.syncItemsForRegion('AE');
       expect(result.synced).toBe(1);
-      expect(prisma.vendHqItemMeta.update).toHaveBeenCalledWith(
+      expect(prisma.vendHqItemMeta.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'meta-001' },
-          data: expect.objectContaining({ status: 'SUCCESS' }),
+          where: {
+            itemId_region: expect.objectContaining({
+              itemId: expect.any(String),
+              region: 'AE',
+            }),
+          },
+          create: expect.objectContaining({ status: 'SUCCESS' }),
+          update: expect.objectContaining({ status: 'SUCCESS' }),
         }),
       );
     });

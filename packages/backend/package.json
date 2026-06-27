@@ -19,6 +19,7 @@
     "db:studio": "prisma studio",
     "db:push": "prisma db push",
     "db:push:dev": "prisma db push --accept-data-loss",
+    "db:clean-duplicates": "ts-node -r tsconfig-paths/register src/scripts/remove-vendhq-item-meta-duplicates.ts",
     "seed:csv": "node dist/scripts/seed-csv.js",
     "seed:csv:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts",
     "populate:store-config": "node dist/scripts/populate-store-config.js",

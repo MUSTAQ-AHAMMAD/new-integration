@@ -175,12 +175,7 @@ export class ItemSyncService {
           is_active: isActive,
         });
 
-        // Track / update in VendHqItemMeta
-        const existing = await this.prisma.vendHqItemMeta.findFirst({
-          where: { itemId: vendProduct.id, region },
-          select: { id: true },
-        });
-
+        // Track / update in VendHqItemMeta using upsert to prevent duplicates
         const metaData = {
           itemId: vendProduct.id,
           sourceId: item.ItemId ?? null,
@@ -201,14 +196,16 @@ export class ItemSyncService {
           region,
         };
 
-        if (existing) {
-          await this.prisma.vendHqItemMeta.update({
-            where: { id: existing.id },
-            data: metaData,
-          });
-        } else {
-          await this.prisma.vendHqItemMeta.create({ data: metaData });
-        }
+        await this.prisma.vendHqItemMeta.upsert({
+          where: {
+            itemId_region: {
+              itemId: vendProduct.id,
+              region,
+            },
+          },
+          create: metaData,
+          update: metaData,
+        });
 
         result.synced++;
       } catch (err) {
@@ -221,10 +218,6 @@ export class ItemSyncService {
 
         // Track failure in VendHqItemMeta for observability
         try {
-          const existing = await this.prisma.vendHqItemMeta.findFirst({
-            where: { sku: item.ItemNumber, region },
-            select: { id: true },
-          });
           const failData = {
             itemId: item.ItemNumber,
             name: productName,
@@ -235,14 +228,17 @@ export class ItemSyncService {
             lastUpdateDate: new Date(),
             region,
           };
-          if (existing) {
-            await this.prisma.vendHqItemMeta.update({
-              where: { id: existing.id },
-              data: failData,
-            });
-          } else {
-            await this.prisma.vendHqItemMeta.create({ data: failData });
-          }
+          
+          await this.prisma.vendHqItemMeta.upsert({
+            where: {
+              itemId_region: {
+                itemId: item.ItemNumber,
+                region,
+              },
+            },
+            create: failData,
+            update: failData,
+          });
         } catch {
           // best-effort
         }
