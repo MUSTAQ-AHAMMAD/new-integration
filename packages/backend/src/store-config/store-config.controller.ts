@@ -104,4 +104,98 @@ export class StoreConfigController {
   async populateAllBranches() {
     return this.service.populateAllBranches();
   }
+
+  @Get('health/check')
+  @ApiOperation({
+    summary: 'Health check - verify store configurations for all branches',
+  })
+  async checkStoreConfigs() {
+    // Get all unique branches from backup tables
+    const odooBranches = await this.prisma.$queryRaw<Array<{ branchId: number; branchName: string | null }>>`
+      SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
+      FROM "BackupOdooOrder"
+      WHERE "branchId" IS NOT NULL
+      GROUP BY "branchId"
+      ORDER BY "branchId"
+    `;
+
+    const ibqBranches = await this.prisma.$queryRaw<Array<{ branchId: number; branchName: string | null }>>`
+      SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
+      FROM "BackupIbqOrder"
+      WHERE "branchId" IS NOT NULL
+      GROUP BY "branchId"
+      ORDER BY "branchId"
+    `;
+
+    // Merge and deduplicate
+    const branchMap = new Map<number, { branchId: number; branchName: string | null }>();
+    for (const branch of [...odooBranches, ...ibqBranches]) {
+      if (!branchMap.has(branch.branchId)) {
+        branchMap.set(branch.branchId, branch);
+      }
+    }
+
+    const allBranches = Array.from(branchMap.values()).sort((a, b) => a.branchId - b.branchId);
+
+    const results = [];
+    for (const branch of allBranches) {
+      const branchCode = String(branch.branchId);
+      
+      try {
+        const config = await this.service.getOrCreateStoreConfig(branchCode);
+        results.push({
+          branchId: branch.branchId,
+          branchCode,
+          storeName: branch.branchName,
+          hasConfig: true,
+          configStatus: config.validationStatus,
+          isActive: config.isActive,
+          config: {
+            branchName: config.branchName,
+            region: config.region,
+            taxRate: config.taxClassificationCode,
+            currency: config.invoiceCurrencyCode,
+            paymentTerms: config.paymentTermsName,
+            businessUnit: config.oracleBusinessUnit,
+            bankAccount: config.bankAccountName,
+            cashAccount: config.cashAccountName,
+          },
+        });
+      } catch (error) {
+        results.push({
+          branchId: branch.branchId,
+          branchCode,
+          storeName: branch.branchName,
+          hasConfig: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const summary = {
+      totalBranches: allBranches.length,
+      configsFound: results.filter(r => r.hasConfig).length,
+      configsMissing: results.filter(r => !r.hasConfig).length,
+      configsValid: results.filter(r => r.hasConfig && r.configStatus === 'VALIDATED').length,
+      configsPartial: results.filter(r => r.hasConfig && r.configStatus === 'PARTIAL').length,
+      configsInvalid: results.filter(r => r.hasConfig && r.configStatus === 'INVALID').length,
+      configsPending: results.filter(r => r.hasConfig && r.configStatus === 'PENDING').length,
+    };
+
+    return {
+      summary,
+      branches: results,
+    };
+  }
+
+  @Post('clear-cache')
+  @ApiOperation({ summary: 'Clear store configuration cache' })
+  clearCache(@Query('branchCode') branchCode?: string) {
+    this.service.clearCache(branchCode);
+    return {
+      message: branchCode
+        ? `Cache cleared for branch ${branchCode}`
+        : 'Cache cleared for all branches',
+    };
+  }
 }
