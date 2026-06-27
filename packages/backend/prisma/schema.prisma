@@ -753,6 +753,7 @@ model VendHqItemMeta {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  @@unique([itemId, region])
   @@index([itemId])
   @@index([sku])
   @@index([region])
