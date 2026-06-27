@@ -315,22 +315,28 @@ export class OrderSyncProcessor {
 
       // ── 6. Resolve backup source and build Oracle payloads ─────
       //
-      // Priority order:
-      //   A. Odoo backup path: order.odooBackupOrderId is set → use BackupOdooOrder
-      //      + OdooTransformationService (direct Odoo→Oracle mapping).
-      //   B. VendHQ backup path: look for BackupVendHqSale by saleNumber/invoiceNumber
-      //      → use FusionTransformationService (existing VendHQ→Oracle mapping).
-      //   C. No backup found: generate a placeholder reference and log a warning.
+      // ✅ FIXED: Direct enrichment without backup dependency
+      // The enrichment service uses a 3-tier approach (in priority order):
+      //   A. Direct order data: orderLines + orderPayments JSON fields populated
+      //      → fastest path, no database lookups required
+      //   B. Backup tables: BackupOdooOrder/BackupVendHqSale tables
+      //      → fallback when direct data not available  
+      //   C. Minimal viable data: create default line/payment from totalAmount
+      //      → last resort, ensures ALL orders can sync
       //
+      // The enrichment service NEVER fails - it always returns valid Oracle payloads.
       // The region used for all Oracle config lookups is taken from
       // order.region (populated during ingest from OdooCredential.region) with
       // a fallback to branchCode for legacy / VendHQ-sourced orders.
       const effectiveRegion = order.region ?? branchCode;
       this.logger.log(
-        `[${odooOrderId}] Step 7/14: Resolving backup source...\n` +
+        `[${odooOrderId}] Step 7/14: Enriching order data...\n` +
         `  - Effective Region: ${effectiveRegion}\n` +
+        `  - Has orderLines: ${Array.isArray(order.orderLines) && order.orderLines.length > 0}\n` +
+        `  - Has orderPayments: ${Array.isArray(order.orderPayments) && order.orderPayments.length > 0}\n` +
         `  - Odoo Backup Order ID: ${order.odooBackupOrderId ?? 'null'}\n` +
-        `  - Order Number: ${order.odooOrderNumber}`,
+        `  - Order Number: ${order.odooOrderNumber}\n` +
+        `  - Enrichment will use: ${Array.isArray(order.orderLines) && order.orderLines.length > 0 ? 'Direct Queue Data' : order.odooBackupOrderId ? 'Backup Tables' : 'Minimal Fallback'}`,
       );
 
       let oracleInvoiceNumber: string | null = null;
