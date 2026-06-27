@@ -2,21 +2,26 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Post,
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SyncStatus } from '@prisma/client';
 import {
   extractBranchCode,
   normalizeOrderForIngestion,
 } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
+import { DateFormatUtil } from '../common/utils/date-format.util';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { QueuesService } from '../queues/queues.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
+import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { SyncService } from './sync.service';
@@ -25,6 +30,8 @@ import { AutoFixService } from './auto-fix.service';
 @ApiTags('sync')
 @Controller('sync')
 export class SyncController {
+  private readonly logger = new Logger(SyncController.name);
+
   constructor(
     private readonly syncService: SyncService,
     private readonly orderSyncService: OrderSyncService,
@@ -33,6 +40,7 @@ export class SyncController {
     private readonly prisma: PrismaService,
     private readonly diagnosticsService: OrderDiagnosticsService,
     private readonly autoFixService: AutoFixService,
+    private readonly queuesService: QueuesService,
   ) {}
 
   @Post('jobs')
@@ -376,5 +384,172 @@ export class SyncController {
   })
   suggestStatesToAdd() {
     return this.autoFixService.suggestStatesToAdd();
+  }
+
+  /**
+   * GET /sync/orders - List orders with proper date formatting
+   * 
+   * Fixes "[object Ob]" issue by ensuring all dates are formatted as ISO strings
+   */
+  @Get('orders')
+  @ApiOperation({ 
+    summary: 'List orders with proper date formatting',
+    description: 'Returns orders from OrderSyncQueue with all dates formatted as ISO strings to fix UI display issues'
+  })
+  async getOrders(
+    @Query('skip') skip?: string,
+    @Query('take') take?: string,
+    @Query('status') status?: string,
+    @Query('branchCode') branchCode?: string,
+  ): Promise<OrderListResponseDto> {
+    const skipNum = Number(skip || 0);
+    const takeNum = Number(take || 20);
+
+    // Build where clause
+    const where: any = {};
+    if (status) {
+      where.status = status as SyncStatus;
+    }
+    if (branchCode) {
+      where.branchCode = branchCode;
+    }
+
+    // Fetch orders
+    const [orders, total] = await Promise.all([
+      this.prisma.orderSyncQueue.findMany({
+        where,
+        skip: skipNum,
+        take: takeNum,
+        orderBy: { orderDate: 'desc' },
+      }),
+      this.prisma.orderSyncQueue.count({ where }),
+    ]);
+
+    // Return with proper date formatting via DTO
+    return new OrderListResponseDto(orders, total, skipNum, takeNum);
+  }
+
+  /**
+   * POST /sync/fix-all-failed - Bulk fix all failed orders
+   * 
+   * Resets failed orders to PENDING status and triggers sync
+   */
+  @Post('fix-all-failed')
+  @ApiOperation({ 
+    summary: 'Fix all failed orders',
+    description: 'Resets all failed orders to PENDING status and triggers sync. Useful for bulk recovery after fixing issues.'
+  })
+  async fixAllFailedOrders() {
+    this.logger.log('🔧 FIXING ALL FAILED ORDERS...');
+
+    // Get all failed orders
+    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+      where: {
+        status: SyncStatus.FAILED,
+        syncAttempts: { lt: 5 },
+      },
+    });
+
+    this.logger.log(`Found ${failedOrders.length} failed orders`);
+
+    const results = {
+      total: failedOrders.length,
+      reset: 0,
+      requeued: 0,
+      errors: [] as any[],
+      orders: [] as any[],
+    };
+
+    for (const order of failedOrders) {
+      try {
+        // Reset order status to PENDING
+        await this.prisma.orderSyncQueue.update({
+          where: { id: order.id },
+          data: {
+            status: SyncStatus.PENDING,
+            syncAttempts: 0,
+            validationErrors: null,
+            lastSyncAt: null,
+          },
+        });
+
+        results.reset++;
+        results.orders.push({
+          id: order.id,
+          orderNumber: order.odooOrderNumber,
+          branchCode: order.branchCode,
+          status: 'RESET_TO_PENDING',
+        });
+
+        this.logger.log(`✅ Reset order ${order.id}: ${order.odooOrderNumber}`);
+
+        // Re-queue for processing
+        await this.queuesService.enqueueOrderSync({
+          odooOrderId: order.odooOrderId,
+          branchCode: order.branchCode,
+        });
+        
+        results.requeued++;
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        results.errors.push({
+          orderId: order.id,
+          orderNumber: order.odooOrderNumber,
+          error: errorMessage,
+        });
+        this.logger.error(`❌ Failed to reset order ${order.id}:`, errorMessage);
+      }
+    }
+
+    this.logger.log(`✅ Fix completed: ${results.reset} reset, ${results.requeued} requeued`);
+
+    return {
+      message: 'Fix completed',
+      results,
+      nextStep: 'Orders reset to PENDING and re-queued. Sync will process automatically.',
+    };
+  }
+
+  /**
+   * POST /sync/sync-direct/:orderId - Directly sync a specific order
+   * 
+   * Useful for testing and manual sync of individual orders
+   */
+  @Post('sync-direct/:orderId')
+  @ApiOperation({ 
+    summary: 'Directly sync a specific order',
+    description: 'Resets order to PENDING and immediately queues it for sync. Useful for testing.'
+  })
+  async syncDirectOrder(@Param('orderId') orderId: string) {
+    const order = await this.prisma.orderSyncQueue.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    // Reset to PENDING
+    await this.prisma.orderSyncQueue.update({
+      where: { id: orderId },
+      data: {
+        status: SyncStatus.PENDING,
+        syncAttempts: 0,
+        validationErrors: null,
+        lastSyncAt: null,
+      },
+    });
+
+    // Queue for sync
+    await this.queuesService.enqueueOrderSync({
+      odooOrderId: order.odooOrderId,
+      branchCode: order.branchCode,
+    });
+
+    return {
+      message: 'Order queued for sync',
+      order: new OrderResponseDto(order),
+    };
   }
 }
