@@ -54,7 +54,7 @@ DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pg
 
 Create a `.env` file and set:
 ```env
-DATABASE_URL=******pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
+DATABASE_URL=postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
 ```
 
 ### Step 3: Add PgBouncer dependency
