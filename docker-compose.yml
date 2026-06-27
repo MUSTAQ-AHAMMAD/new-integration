@@ -29,7 +29,10 @@ services:
       - integration_net
 
   # ─────────────────────────────────────────
-  # PgBouncer — connection pooler
+  # PgBouncer — connection pooler (OPTIONAL in development)
+  # By default, services connect directly to postgres:5432.
+  # To enable PgBouncer, uncomment the pgbouncer dependency in backend/worker/seeder
+  # and change DATABASE_URL to use @pgbouncer:5432
   # ─────────────────────────────────────────
   pgbouncer:
     image: edoburu/pgbouncer:v1.25.2-p0
@@ -53,6 +56,8 @@ services:
         condition: service_healthy
     networks:
       - integration_net
+    profiles:
+      - pgbouncer
 
   # ─────────────────────────────────────────
   # Redis — master node
@@ -182,7 +187,8 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
+      # Direct PostgreSQL connection (bypassing PgBouncer for development)
+      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       REDIS_HOST: redis-master
       REDIS_PORT: 6379
@@ -210,8 +216,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      pgbouncer:
-        condition: service_started
       redis-master:
         condition: service_healthy
     healthcheck:
@@ -239,7 +243,8 @@ services:
       dockerfile: packages/backend/Dockerfile
       target: development
     environment:
-      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
+      # Direct PostgreSQL connection (bypassing PgBouncer for development)
+      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
     # Use ts-node directly — devDependencies are installed in the development image,
     # so no build step is required. Prisma generate is needed for the Prisma client.
@@ -255,8 +260,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      pgbouncer:
-        condition: service_started
     networks:
       - integration_net
     profiles:
@@ -271,7 +274,8 @@ services:
     command: ['sh', '-c', 'set -e && pnpm exec prisma db push --skip-generate --accept-data-loss && pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
-      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=5
+      # Direct PostgreSQL connection (bypassing PgBouncer for development)
+      DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       REDIS_HOST: redis-master
       REDIS_PORT: 6379
@@ -281,8 +285,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      pgbouncer:
-        condition: service_started
       redis-master:
         condition: service_healthy
     networks:
