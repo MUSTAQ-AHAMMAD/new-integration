@@ -539,13 +539,14 @@ export class SyncController {
       data: {
         status: SyncStatus.PENDING,
         syncAttempts: 0,
-        validationErrors: null,
+        validationErrors: Prisma.JsonNull,
         lastSyncAt: null,
       },
     });
 
     // Queue for sync
     await this.queuesService.enqueueOrderSync({
+      orderSyncQueueId: order.id,
       odooOrderId: order.odooOrderId,
       branchCode: order.branchCode,
     });
