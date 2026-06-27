@@ -24,6 +24,7 @@ import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
+import { OrderEnrichmentService } from './order-enrichment.service';
 import { SyncService } from './sync.service';
 import { AutoFixService } from './auto-fix.service';
 
@@ -41,6 +42,7 @@ export class SyncController {
     private readonly diagnosticsService: OrderDiagnosticsService,
     private readonly autoFixService: AutoFixService,
     private readonly queuesService: QueuesService,
+    private readonly orderEnrichmentService: OrderEnrichmentService,
   ) {}
 
   @Post('jobs')
@@ -645,12 +647,8 @@ export class SyncController {
       throw new NotFoundException(`Order ${orderSyncQueueId} not found in OrderSyncQueue`);
     }
 
-    // Import OrderEnrichmentService dynamically to avoid circular dependencies
-    const { OrderEnrichmentService } = await import('./order-enrichment.service');
-    const enrichmentService = new OrderEnrichmentService(this.prisma);
-
     try {
-      const enriched = await enrichmentService.enrichOrder(
+      const enriched = await this.orderEnrichmentService.enrichOrder(
         orderSyncQueueId,
         order.branchCode,
         order.region || 'AE',

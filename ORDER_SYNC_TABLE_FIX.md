@@ -97,7 +97,7 @@ If `orderLinesCount > 0` and `paymentsCount > 0`, data exists in tables ✅
 ### Step 2: Test enrichment
 
 ```bash
-curl -X POST http://localhost:3000/api/v1/sync/order-data/test-enrich/168559
+curl -X POST http://localhost:3000/api/v1/sync/test-enrich/168559
 ```
 
 **Expected Response:**
