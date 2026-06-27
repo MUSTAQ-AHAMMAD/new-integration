@@ -226,41 +226,6 @@ export class OrderSyncProcessor {
         return;
       }
 
-      // ── 3. Idempotency guard ──────────────────────────────────
-      const idempotencyKey = this.idempotencyService.generateKey(
-        odooOrderId,
-        order.isRefund
-          ? AuditOperation.CREATE_CREDIT_MEMO
-          : AuditOperation.CREATE_INVOICE,
-        branchCode,
-      );
-
-      if (await this.idempotencyService.isDuplicate(idempotencyKey)) {
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: { status: SyncStatus.SYNCED },
-        });
-        await this.idempotencyService.recordOperation({
-          idempotencyKey,
-          externalId: odooOrderId,
-          externalSystem: 'ODOO',
-          targetSystem: 'ORACLE',
-          operation: order.isRefund
-            ? AuditOperation.CREATE_CREDIT_MEMO
-            : AuditOperation.CREATE_INVOICE,
-          status: AuditStatus.DUPLICATE,
-          requestPayload: order,
-          processingDurationMs: Date.now() - startedAt,
-        });
-        this.gateway.emitOrderStatus({
-          orderId: odooOrderId,
-          status: 'DUPLICATE',
-        });
-        if (syncJobId)
-          await this.incrementSyncJobCounters(syncJobId, 'success');
-        return;
-      }
-
       // ── 3. Mark as PROCESSING ─────────────────────────────────
       this.logger.log(`[${odooOrderId}] Step 4/14: Marking order as PROCESSING...`);
       await this.prisma.orderSyncQueue.update({
