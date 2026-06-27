@@ -1,6 +1,9 @@
 import { type ClassValue, clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+const DATE_NOT_AVAILABLE = 'N/A';
+const DATE_INVALID = 'Date unavailable';
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -10,16 +13,15 @@ export function formatNumber(n: number): string {
 }
 
 export function formatDate(date: string | Date | null | undefined): string {
-  // Use == to catch both null and undefined
-  if (date == null) {
-    return 'N/A';
+  if (date === null || date === undefined) {
+    return DATE_NOT_AVAILABLE;
   }
   
   const dateObj = new Date(date);
   
   // Check if the date is valid
   if (isNaN(dateObj.getTime())) {
-    return 'Date unavailable';
+    return DATE_INVALID;
   }
   
   return new Intl.DateTimeFormat('en-US', {
