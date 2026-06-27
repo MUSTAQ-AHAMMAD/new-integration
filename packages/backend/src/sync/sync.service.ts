@@ -453,4 +453,147 @@ export class SyncService {
       enqueued: skippedOrders.length,
     };
   }
+
+  /**
+   * Export failed transactions to CSV format
+   */
+  async exportFailedTransactionsCSV(): Promise<string> {
+    const failedTransactions = await this.prisma.failedTransaction.findMany({
+      where: { isResolved: false },
+      include: {
+        orderSyncQueue: {
+          select: {
+            odooOrderNumber: true,
+            branchCode: true,
+            totalAmount: true,
+            currency: true,
+            orderDate: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000, // Limit to prevent memory issues
+    });
+
+    // Build CSV header
+    const csvRows = [
+      [
+        'ID',
+        'Order Number',
+        'Branch Code',
+        'Amount',
+        'Currency',
+        'Order Date',
+        'Error Type',
+        'Error Message',
+        'Retry Count',
+        'Created At',
+      ].join(','),
+    ];
+
+    // Add data rows
+    for (const ft of failedTransactions) {
+      const row = [
+        ft.id,
+        ft.orderSyncQueue?.odooOrderNumber ?? 'N/A',
+        ft.orderSyncQueue?.branchCode ?? 'N/A',
+        ft.orderSyncQueue?.totalAmount?.toString() ?? '0',
+        ft.orderSyncQueue?.currency ?? 'AED',
+        ft.orderSyncQueue?.orderDate?.toISOString() ?? 'N/A',
+        ft.errorType,
+        `"${ft.errorMessage.replace(/"/g, '""')}"`, // Escape quotes in CSV
+        ft.retryCount.toString(),
+        ft.createdAt.toISOString(),
+      ].join(',');
+      csvRows.push(row);
+    }
+
+    return csvRows.join('\n');
+  }
+
+  /**
+   * List failed orders with details
+   */
+  async listFailedOrders(limit = 100) {
+    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+      where: { status: SyncStatus.FAILED },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+      include: {
+        failedTransactions: {
+          where: { isResolved: false },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    return failedOrders.map((order) => ({
+      id: order.id,
+      orderNumber: order.odooOrderNumber,
+      orderId: order.odooOrderId,
+      branchCode: order.branchCode,
+      branchName: order.branchName,
+      totalAmount: order.totalAmount,
+      currency: order.currency,
+      orderDate: order.orderDate,
+      syncAttempts: order.syncAttempts,
+      lastSyncAt: order.lastSyncAt,
+      customerName: order.customerName,
+      errorDetails: order.failedTransactions[0]
+        ? {
+            errorType: order.failedTransactions[0].errorType,
+            errorMessage: order.failedTransactions[0].errorMessage,
+            errorStack: order.failedTransactions[0].errorStack,
+            createdAt: order.failedTransactions[0].createdAt,
+          }
+        : null,
+    }));
+  }
+
+  /**
+   * Retry all failed orders
+   */
+  async retryAllFailedOrders(): Promise<{
+    updated: number;
+    enqueued: number;
+  }> {
+    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+      where: { status: SyncStatus.FAILED },
+      select: {
+        id: true,
+        odooOrderId: true,
+        branchCode: true,
+      },
+    });
+
+    if (failedOrders.length === 0) {
+      this.logger.log('No failed orders found to retry');
+      return { updated: 0, enqueued: 0 };
+    }
+
+    // Update status to PENDING
+    const updateResult = await this.prisma.orderSyncQueue.updateMany({
+      where: {
+        id: { in: failedOrders.map((o) => o.id) },
+      },
+      data: {
+        status: SyncStatus.PENDING,
+      },
+    });
+
+    // Enqueue for processing
+    await this.queues.enqueueOrderSyncBulk(
+      failedOrders.map((order) => ({
+        orderSyncQueueId: order.id,
+        odooOrderId: order.odooOrderId,
+        branchCode: order.branchCode,
+        isRetry: true,
+      })),
+    );
+
+    this.logger.log(`Re-queued ${updateResult.count} failed orders for retry`);
+
+    return { updated: updateResult.count, enqueued: failedOrders.length };
+  }
 }

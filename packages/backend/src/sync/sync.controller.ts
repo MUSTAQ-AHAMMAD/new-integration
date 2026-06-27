@@ -90,6 +90,24 @@ export class SyncController {
     return this.syncService.listFailedTransactions(parseLimit(limit, 50));
   }
 
+  @Get('failed-transactions/export-csv')
+  @ApiOperation({ summary: 'Export failed transactions to CSV' })
+  async exportFailedTransactionsCSV() {
+    return this.syncService.exportFailedTransactionsCSV();
+  }
+
+  @Get('failed-orders')
+  @ApiOperation({ summary: 'List failed orders with details' })
+  async listFailedOrders(@Query('limit') limit?: string) {
+    return this.syncService.listFailedOrders(parseLimit(limit, 100));
+  }
+
+  @Post('retry-all-failed')
+  @ApiOperation({ summary: 'Retry all failed orders' })
+  async retryAllFailedOrders() {
+    return this.syncService.retryAllFailedOrders();
+  }
+
   @Get('order-queue')
   @ApiOperation({
     summary: 'List OrderSyncQueue entries (individual ingested orders)',
