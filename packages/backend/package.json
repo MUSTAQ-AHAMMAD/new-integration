@@ -20,7 +20,9 @@
     "db:push": "prisma db push",
     "db:push:dev": "prisma db push --accept-data-loss",
     "seed:csv": "node dist/scripts/seed-csv.js",
-    "seed:csv:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts"
+    "seed:csv:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts",
+    "populate:store-config": "node dist/scripts/populate-store-config.js",
+    "populate:store-config:dev": "ts-node -r tsconfig-paths/register src/scripts/populate-store-config.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",
