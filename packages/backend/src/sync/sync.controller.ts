@@ -9,7 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { SyncStatus } from '@prisma/client';
+import { Prisma, SyncStatus } from '@prisma/client';
 import {
   extractBranchCode,
   normalizeOrderForIngestion,
@@ -470,7 +470,7 @@ export class SyncController {
           data: {
             status: SyncStatus.PENDING,
             syncAttempts: 0,
-            validationErrors: null,
+            validationErrors: Prisma.JsonNull,
             lastSyncAt: null,
           },
         });
@@ -487,6 +487,7 @@ export class SyncController {
 
         // Re-queue for processing
         await this.queuesService.enqueueOrderSync({
+          orderSyncQueueId: order.id,
           odooOrderId: order.odooOrderId,
           branchCode: order.branchCode,
         });
