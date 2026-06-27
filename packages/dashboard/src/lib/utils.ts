@@ -18,7 +18,7 @@ export function formatDate(date: string | Date | null | undefined): string {
   
   // Check if the date is valid
   if (isNaN(dateObj.getTime())) {
-    return 'Invalid Date';
+    return 'Date unavailable';
   }
   
   return new Intl.DateTimeFormat('en-US', {
