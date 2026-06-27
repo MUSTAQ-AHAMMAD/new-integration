@@ -10,7 +10,7 @@ export function formatNumber(n: number): string {
 }
 
 export function formatDate(date: string | Date | null | undefined): string {
-  if (!date) {
+  if (date == null) {
     return 'N/A';
   }
   
