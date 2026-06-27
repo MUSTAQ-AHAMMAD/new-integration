@@ -19,6 +19,7 @@ import {
 } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 export interface InventoryPushResult {
   region: string;
@@ -36,6 +37,7 @@ export class FusionInvToVendHqService {
     private readonly prisma: PrismaService,
     private readonly oracleClient: OracleClient,
     private readonly vendHqClient: VendHqClient,
+    private readonly syncControl: SyncControlService,
   ) {}
 
   /**
@@ -44,28 +46,44 @@ export class FusionInvToVendHqService {
    */
   @Cron('0 */30 * * * *')
   async runInventorySync(): Promise<void> {
-    const credentials = await this.prisma.vendHqCredential.findMany({
-      where: { active: true },
-    });
-
-    if (credentials.length === 0) {
-      this.logger.warn('No active VendHQ credentials — inventory sync skipped');
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('fusion-inv-to-vendhq');
+    if (!enabled) {
+      this.logger.debug('Fusion inventory sync is disabled, skipping cron run');
       return;
     }
 
-    for (const cred of credentials) {
-      try {
-        const result = await this.syncInventoryForRegion(cred.region);
-        this.logger.log(
-          `Inventory sync done for region=${result.region}: ` +
-            `synced=${result.synced} skipped=${result.skipped} failed=${result.failed}`,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error(
-          `Inventory sync failed for region=${cred.region}: ${msg}`,
-        );
+    await this.syncControl.markRunning('fusion-inv-to-vendhq');
+    try {
+      const credentials = await this.prisma.vendHqCredential.findMany({
+        where: { active: true },
+      });
+
+      if (credentials.length === 0) {
+        this.logger.warn('No active VendHQ credentials — inventory sync skipped');
+        await this.syncControl.markStopped('fusion-inv-to-vendhq', 'success');
+        return;
       }
+
+      for (const cred of credentials) {
+        try {
+          const result = await this.syncInventoryForRegion(cred.region);
+          this.logger.log(
+            `Inventory sync done for region=${result.region}: ` +
+              `synced=${result.synced} skipped=${result.skipped} failed=${result.failed}`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `Inventory sync failed for region=${cred.region}: ${msg}`,
+          );
+        }
+      }
+      await this.syncControl.markStopped('fusion-inv-to-vendhq', 'success');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Inventory sync cron failed: ${msg}`);
+      await this.syncControl.markStopped('fusion-inv-to-vendhq', 'error');
     }
   }
 

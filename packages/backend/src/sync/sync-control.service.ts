@@ -68,6 +68,12 @@ export class SyncControlService implements OnModuleInit {
         description: 'Checks for stalled orders daily at 1 AM',
         enabled: true,
       },
+      {
+        serviceName: 'fusion-inv-to-vendhq',
+        displayName: 'Fusion Inventory to VendHQ',
+        description: 'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes',
+        enabled: true,
+      },
     ];
 
     for (const service of services) {

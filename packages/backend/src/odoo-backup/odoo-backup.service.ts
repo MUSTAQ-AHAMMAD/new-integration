@@ -305,12 +305,19 @@ export class OdooBackupService {
 
   /**
    * Scheduled cron: backs up orders from every active per-region OdooCredential
-   * every 15 minutes, using the per-credential lastSyncAt watermark.
+   * every 15 minutes (offset by 7 minutes from the main backup job to avoid overlap).
    * Mirrors the IbqBackupService pattern so all regions are kept in sync
    * automatically without manual intervention.
    */
-  @Cron('0 */15 * * * *')
+  @Cron('0 7-59/15 * * * *')
   async runCredentialBackupJob(): Promise<void> {
+    // Check if sync control allows this service to run
+    const enabled = await this.syncControl.isEnabled('odoo-backup');
+    if (!enabled) {
+      this.logger.debug('Odoo credential backup is disabled, skipping cron run');
+      return;
+    }
+
     const credentials = await this.prisma.odooCredential.findMany({
       where: { active: true },
     });
