@@ -320,6 +320,39 @@ const MAPPINGS: OracleTableMapping[] = [
       },
     }),
   },
+  // VENDHQ_ITEM_META → VendHqItemMeta
+  {
+    oracleTable: 'VENDHQ_ITEM_META',
+    prismaDelegate: (p) => p.vendHqItemMeta,
+    mapRow: (r) => ({
+      requestId: optNum(r, 'REQUEST_ID'),
+      status: optStr(r, 'STATUS'),
+      message: optStr(r, 'MESSAGE'),
+      itemId: str(r, 'ITEM_ID'),
+      sourceId: optNum(r, 'SOURCE_ID'),
+      uomCode: optStr(r, 'UOM_CODE'),
+      handle: optStr(r, 'HANDLE'),
+      itemType: optStr(r, 'ITEM_TYPE'),
+      uomName: optStr(r, 'UOM_NAME'),
+      active: bool(r, 'ACTIVE'),
+      name: str(r, 'NAME'),
+      description: optStr(r, 'DESCRIPTION'),
+      sku: optStr(r, 'SKU'),
+      brandId: optStr(r, 'BRAND_ID'),
+      trackInventory: bool(r, 'TRACK_INVENTORY'),
+      retailPrice: optNum(r, 'RETAIL_PRICE'),
+      taxId: optStr(r, 'TAX_ID'),
+      requestDate: optStr(r, 'REQUEST_DATE'),
+      lastUpdateDate: optStr(r, 'LAST_UPDATE_DATE'),
+      region: str(r, 'REGION'),
+    }),
+    upsertWhere: (r) => ({
+      itemId_region: {
+        itemId: str(r, 'ITEM_ID'),
+        region: str(r, 'REGION'),
+      },
+    }),
+  },
 ];
 
 export interface OracleImportResult {

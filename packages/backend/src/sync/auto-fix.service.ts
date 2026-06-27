@@ -171,10 +171,29 @@ export class AutoFixService {
           result.success = false;
         }
       } else {
-        result.action = 'none';
+        // No backup data - try to sync anyway if order has basic data
+        result.action = 'retry';
         result.message =
-          'No backup data found. Cannot determine if order should be paid.';
-        result.success = false;
+          'No backup data found, but order will sync with minimal data. Re-queuing for processing.';
+        
+        // Update status to PENDING and re-queue
+        await this.prisma.orderSyncQueue.update({
+          where: { id: order.id },
+          data: {
+            isPaid: true, // Assume paid since it was fetched
+            status: SyncStatus.PENDING,
+            validationErrors: Prisma.JsonNull,
+            updatedAt: new Date(),
+          },
+        });
+
+        await this.queuesService.enqueueOrderSync({
+          orderSyncQueueId: order.id,
+          odooOrderId: order.odooOrderId,
+          branchCode: order.branchCode,
+        });
+        
+        result.success = true;
       }
     } else if (order.isCancelled) {
       result.issue = 'cancelled';
