@@ -168,10 +168,21 @@ export class OdooClient {
         let totalExpected: number | null = null;
         // Track IDs of the previous page to detect non-functioning offset pagination.
         const prevPageIds = new Set<number>();
+        // Track if offset pagination is broken
+        let offsetPaginationBroken = false;
+
+        this.logger.log(
+          `[Odoo Pagination] Starting order fetch: branchId=${params.branchId}, ` +
+          `startDate=${params.startDate}, endDate=${params.endDate}, limit=${params.limit}`,
+        );
 
         while (true) {
           let pageOrders: OdooOrder[];
           let rawData: unknown;
+
+          this.logger.debug(
+            `[Odoo Pagination] Fetching page at offset=${offset}, pageSize=${pageSize}`,
+          );
 
           if (this.apiKey) {
             // POS REST API — uses query parameters directly
@@ -210,13 +221,23 @@ export class OdooClient {
           if (offset === 0) {
             totalExpected = this.extractTotal(rawData);
             if (totalExpected !== null) {
-              this.logger.debug(
-                `Odoo getOrders: server reports ${totalExpected} total records`,
+              this.logger.log(
+                `[Odoo Pagination] Server reports ${totalExpected} total records`,
+              );
+            } else {
+              this.logger.warn(
+                `[Odoo Pagination] Server did not provide total count - will use short-page detection`,
               );
             }
           }
 
           pageOrders = this.extractList<OdooOrder>(rawData);
+
+          this.logger.log(
+            `[Odoo Pagination] Fetched page ${Math.floor(offset / pageSize) + 1}: ` +
+            `${pageOrders.length} orders, cumulative: ${allOrders.length + pageOrders.length}` +
+            (totalExpected !== null ? `/${totalExpected}` : ''),
+          );
 
           // ── Duplicate-page detection ─────────────────────────────────────
           // If the server returns the same IDs we saw on the previous page,
@@ -228,15 +249,17 @@ export class OdooClient {
               .filter((id): id is number => id !== null);
             const dupes = pageIds.filter((id) => prevPageIds.has(id));
             if (dupes.length === pageIds.length) {
-              this.logger.warn(
-                `Odoo getOrders: page at offset=${offset} is identical to the previous page — ` +
-                  `offset pagination is not supported by this endpoint; stopping.`,
+              this.logger.error(
+                `[Odoo Pagination] CRITICAL: page at offset=${offset} is identical to the previous page! ` +
+                  `Offset pagination is not supported by this endpoint. ` +
+                  `Fetched ${allOrders.length} of ${totalExpected ?? 'unknown'} records (${totalExpected !== null ? ((allOrders.length / totalExpected) * 100).toFixed(1) + '%' : 'unknown completion'}).`,
               );
+              offsetPaginationBroken = true;
               break;
             }
             if (dupes.length > 0) {
               this.logger.warn(
-                `Odoo getOrders: page at offset=${offset} contains ${dupes.length} duplicate IDs.`,
+                `[Odoo Pagination] page at offset=${offset} contains ${dupes.length} duplicate IDs from previous page.`,
               );
             }
             prevPageIds.clear();
@@ -250,23 +273,32 @@ export class OdooClient {
 
           allOrders.push(...pageOrders);
 
-          this.logger.debug(
-            `Odoo getOrders: offset=${offset}, page=${pageOrders.length}, cumulative=${allOrders.length}` +
-              (totalExpected !== null ? `, total=${totalExpected}` : ''),
-          );
-
           // ── Exit conditions ───────────────────────────────────────────────
           // 1. Count-verified: stop when we have at least as many records as the
           //    server advertised (handles short pages caused by deleted records).
-          if (totalExpected !== null && allOrders.length >= totalExpected) break;
+          if (totalExpected !== null && allOrders.length >= totalExpected) {
+            this.logger.log(
+              `[Odoo Pagination] ✅ Successfully fetched all ${allOrders.length}/${totalExpected} records`,
+            );
+            break;
+          }
 
           // 2. Short page: last page has fewer records than the page size.
           //    Used when the server does not report a total count.
-          if (totalExpected === null && pageOrders.length < pageSize) break;
+          if (totalExpected === null && pageOrders.length < pageSize) {
+            this.logger.log(
+              `[Odoo Pagination] ✅ Reached end of results (short page: ${pageOrders.length} < ${pageSize})`,
+            );
+            break;
+          }
 
           // 3. Caller-specified hard cap.
-          if (params.limit !== undefined && allOrders.length >= params.limit)
+          if (params.limit !== undefined && allOrders.length >= params.limit) {
+            this.logger.log(
+              `[Odoo Pagination] ✅ Reached caller-specified limit: ${params.limit}`,
+            );
             break;
+          }
 
           offset += pageSize;
         }
@@ -275,8 +307,17 @@ export class OdooClient {
           totalExpected !== null &&
           allOrders.length < totalExpected
         ) {
-          this.logger.warn(
-            `Odoo getOrders: fetched ${allOrders.length} of ${totalExpected} expected records — some may be missing.`,
+          const percentage = ((allOrders.length / totalExpected) * 100).toFixed(1);
+          this.logger.error(
+            `[Odoo Pagination] ⚠️  INCOMPLETE FETCH: got ${allOrders.length} of ${totalExpected} expected records (${percentage}%) — ` +
+            `${totalExpected - allOrders.length} records are MISSING! ` +
+            (offsetPaginationBroken 
+              ? 'Offset pagination is broken on this endpoint. Consider using date-range slicing or alternative API endpoints.'
+              : 'This may indicate deleted records or API limitations.'),
+          );
+        } else {
+          this.logger.log(
+            `[Odoo Pagination] ✅ Pagination complete: fetched ${allOrders.length} records`,
           );
         }
 

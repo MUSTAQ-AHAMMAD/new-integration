@@ -570,9 +570,14 @@ export class OdooBackupService {
     const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
 
     if (!sslVerify) {
-      this.logger.warn(
-        `OdooCredential region=${cred.region}: SSL certificate verification is DISABLED. ` +
+      this.logger.error(
+        `⚠️  SECURITY WARNING: OdooCredential region=${cred.region}: SSL certificate verification is DISABLED! ` +
+          `This is a security risk and should only be used for dev/staging environments. ` +
           `Set rejectUnauthorizedSsl=true once the server certificate covers this hostname.`,
+      );
+    } else {
+      this.logger.log(
+        `✅ SSL certificate verification is ENABLED for OdooCredential region=${cred.region}`,
       );
     }
 
