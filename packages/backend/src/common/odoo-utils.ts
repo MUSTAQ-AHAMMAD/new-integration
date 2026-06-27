@@ -54,6 +54,9 @@ export interface RawOdooOrderFields {
   branch_id?: number | [number, string] | null;
   date_order?: string | null;
   amount_total?: number | null;
+  amount_untaxed?: number | null;
+  amount_tax?: number | null;
+  amount_discount?: number | null;
   state?: string | null;
   /** Present on main-Odoo orders; absent on IBQ/multi-tenant instances. */
   timezone?: string | null;
@@ -61,6 +64,16 @@ export interface RawOdooOrderFields {
   statement_ids?: unknown[] | null;
   payment_ids?: unknown[] | null;
   payments?: unknown[] | null;
+  /** Order lines for direct processing */
+  lines?: unknown[] | null;
+  order_lines?: unknown[] | null;
+  /** Warehouse/outlet information */
+  warehouse_id?: number | [number, string] | null;
+  /** POS config/register information */
+  pos_config_id?: number | [number, string] | null;
+  session_id?: number | [number, string] | null;
+  /** Customer type (e.g., NORMAL, HUNGERSTATION, TALABAT) */
+  customer_type?: string | null;
 }
 
 /**
@@ -195,6 +208,31 @@ export function normalizeOrderForIngestion(
   isPaid: boolean;
   isCancelled: boolean;
   isRefund: boolean;
+  // New fields for direct processing
+  orderLines?: Array<{
+    productId?: number;
+    productName?: string;
+    productCode?: string;
+    qty?: number;
+    priceUnit?: number;
+    priceSubtotal?: number;
+    priceSubtotalIncl?: number;
+    discount?: number;
+    taxName?: string;
+  }>;
+  orderPayments?: Array<{
+    paymentId?: number;
+    paymentName?: string;
+    amount?: number;
+    currency?: string;
+    paymentDate?: Date;
+  }>;
+  warehouseName?: string;
+  posConfigName?: string;
+  customerType?: string;
+  amountUntaxed?: number;
+  amountTax?: number;
+  amountDiscount?: number;
 } | null {
   const branchCode = extractBranchCode(order.branch_id);
   if (!branchCode) return null;
@@ -286,6 +324,44 @@ export function normalizeOrderForIngestion(
     }
   }
 
+  // Extract order lines
+  const rawLines = order.lines || order.order_lines;
+  const orderLines = Array.isArray(rawLines) ? rawLines.map((line: any) => ({
+    productId: typeof line.product_id === 'number' ? line.product_id : 
+               Array.isArray(line.product_id) ? line.product_id[0] : undefined,
+    productName: line.product_name || line.name || undefined,
+    productCode: line.product_code || line.default_code || line.product_barcode || undefined,
+    qty: typeof line.qty === 'number' ? line.qty : undefined,
+    priceUnit: typeof line.price_unit === 'number' ? line.price_unit : undefined,
+    priceSubtotal: typeof line.price_subtotal === 'number' ? line.price_subtotal : undefined,
+    priceSubtotalIncl: typeof line.price_subtotal_incl === 'number' ? line.price_subtotal_incl : undefined,
+    discount: typeof line.discount === 'number' ? line.discount : undefined,
+    taxName: line.tax_name || line.tax_id ? 
+             (Array.isArray(line.tax_id) ? line.tax_id[1] : line.tax_name) : undefined,
+  })) : undefined;
+
+  // Extract payments
+  const rawPayments = order.payments || order.payment_ids || order.statement_ids;
+  const orderPayments = Array.isArray(rawPayments) ? rawPayments.map((pmt: any) => ({
+    paymentId: typeof pmt.id === 'number' ? pmt.id : undefined,
+    paymentName: pmt.payment_name || pmt.name || pmt.journal_name || 
+                 (Array.isArray(pmt.payment_method_id) ? pmt.payment_method_id[1] : undefined),
+    amount: typeof pmt.amount === 'number' ? pmt.amount : undefined,
+    currency: pmt.currency || pmt.currency_id ? 
+              (Array.isArray(pmt.currency_id) ? pmt.currency_id[1] : pmt.currency) : undefined,
+    paymentDate: pmt.payment_date ? new Date(pmt.payment_date) : undefined,
+  })) : undefined;
+
+  // Extract warehouse/outlet name
+  const warehouseName = order.warehouse_id ?
+    (Array.isArray(order.warehouse_id) ? order.warehouse_id[1] : undefined) : undefined;
+
+  // Extract POS config/register name
+  const posConfigName = order.pos_config_id ?
+    (Array.isArray(order.pos_config_id) ? order.pos_config_id[1] : undefined) :
+    order.session_id ?
+      (Array.isArray(order.session_id) ? order.session_id[1] : undefined) : undefined;
+
   return {
     odooOrderId: String(order.id),
     odooOrderNumber: String(order.name ?? order.pos_reference ?? order.id),
@@ -296,6 +372,14 @@ export function normalizeOrderForIngestion(
     isPaid,
     isCancelled,
     isRefund: amountTotal < 0,
+    orderLines,
+    orderPayments,
+    warehouseName,
+    posConfigName,
+    customerType: order.customer_type || undefined,
+    amountUntaxed: order.amount_untaxed != null ? Number(order.amount_untaxed) : undefined,
+    amountTax: order.amount_tax != null ? Number(order.amount_tax) : undefined,
+    amountDiscount: order.amount_discount != null ? Number(order.amount_discount) : undefined,
   };
 }
 
