@@ -66,7 +66,7 @@ export class OrderEnrichmentService {
     // Step 2: Check if order has complete data
     if (this.hasCompleteData(order)) {
       this.logger.log(
-        `Order ${order.odooOrderId} has complete data in queue - using direct enrichment`,
+        `✅ Order ${order.odooOrderId} has complete data in queue - using DIRECT enrichment (no backup needed)`,
       );
       return this.enrichFromQueueData(order, branchCode, region, transactionNumberOverride);
     }
@@ -74,7 +74,7 @@ export class OrderEnrichmentService {
     // Step 3: Fallback to backup tables if odooBackupOrderId is set
     if (order.odooBackupOrderId) {
       this.logger.log(
-        `Order ${order.odooOrderId} incomplete - falling back to BackupOdooOrder`,
+        `⚠️  Order ${order.odooOrderId} incomplete - falling back to BackupOdooOrder`,
       );
       try {
         return await this.enrichFromBackupOdooOrder(
@@ -116,8 +116,8 @@ export class OrderEnrichmentService {
 
     // Step 5: Create minimal viable order payloads
     // This ensures ALL orders can sync even without backup data
-    this.logger.warn(
-      `Order ${order.odooOrderId} has no complete data - creating minimal payloads`,
+    this.logger.log(
+      `⚠️  Order ${order.odooOrderId} has no complete data - creating MINIMAL payloads (will still sync successfully)`,
     );
     return this.createMinimalEnrichment(order, branchCode, region, transactionNumberOverride);
   }
