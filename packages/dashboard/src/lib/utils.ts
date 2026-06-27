@@ -10,6 +10,7 @@ export function formatNumber(n: number): string {
 }
 
 export function formatDate(date: string | Date | null | undefined): string {
+  // Use == to catch both null and undefined
   if (date == null) {
     return 'N/A';
   }
