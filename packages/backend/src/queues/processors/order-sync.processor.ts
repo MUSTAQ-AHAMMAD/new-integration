@@ -373,10 +373,13 @@ export class OrderSyncProcessor {
           await this.soapClient.createSimpleInvoice(invoiceHeader);
         
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
-        const txnNumber = 
+        // Convert to number since Prisma schema expects Int
+        const txnNumberOrOrderId = 
           invoiceResult.transactionNumber ?? 
           invoiceResult.customerTrxId ?? 
           odooOrderId;
+        const parsedTxnNumber = parseInt(txnNumberOrOrderId, 10);
+        const txnNumber = isNaN(parsedTxnNumber) ? null : parsedTxnNumber;
         
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
@@ -408,7 +411,7 @@ export class OrderSyncProcessor {
           data: invoiceHeader.invoiceLines.map((il) => ({
             status: invoiceResult.serviceStatus ?? 'SUCCESS',
             requestDate: new Date(),
-            invoiceNumber: txnNumber,
+            invoiceNumber: txnNumber ? String(txnNumber) : null,
             lineNumber: il.lineNumber,
             itemNumber: il.itemNumber ?? null,
             description: il.description,
@@ -535,10 +538,11 @@ export class OrderSyncProcessor {
       );
       
       const txnNumber = await pushToOracle(payloads);
+      const txnNumberStr = txnNumber ? String(txnNumber) : null;
       if (order.isRefund) {
-        oracleCreditMemoNumber = txnNumber;
+        oracleCreditMemoNumber = txnNumberStr;
       } else {
-        oracleInvoiceNumber = txnNumber;
+        oracleInvoiceNumber = txnNumberStr;
       }
 
       const oracleReference =
