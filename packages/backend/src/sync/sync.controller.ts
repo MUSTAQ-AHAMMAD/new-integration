@@ -580,7 +580,7 @@ export class SyncController {
     // Get backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
-        orderNumber: order.odooOrderNumber,
+        orderName: order.odooOrderNumber,
       },
     });
 
@@ -646,7 +646,7 @@ export class SyncController {
     // Get backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
-        orderNumber: order.odooOrderNumber,
+        orderName: order.odooOrderNumber,
       },
     });
 
@@ -714,7 +714,7 @@ export class SyncController {
     // First, find the backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
-        orderNumber: orderNumber,
+        orderName: orderNumber,
       },
     });
 
