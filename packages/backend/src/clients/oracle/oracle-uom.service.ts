@@ -116,11 +116,11 @@ export class OracleUomService {
           productId: parseInt(itemNumber, 10) || 0,
         },
         select: {
-          uomCode: true,
+          productUomName: true,
         },
       });
 
-      return backupLine?.uomCode ?? null;
+      return backupLine?.productUomName ?? null;
     } catch (error) {
       this.logger.warn(
         `Failed to query database for UOM code: ${error instanceof Error ? error.message : String(error)}`,

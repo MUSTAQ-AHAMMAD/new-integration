@@ -156,9 +156,9 @@ export class FusionTransformationService {
         salesOrder: invoiceNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
         // Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
-        uomCode: (await this.uomService.getUomCode(li.productId, region)) ?? '',
+        uomCode: (await this.uomService.getUomCode(li.productId ?? undefined, region)) ?? '',
         // Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
-        taxClassificationCode: (await this.taxService.getTaxClassificationCode(li.productId, region)) ?? '',
+        taxClassificationCode: (await this.taxService.getTaxClassificationCode(li.productId ?? undefined, region)) ?? '',
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
