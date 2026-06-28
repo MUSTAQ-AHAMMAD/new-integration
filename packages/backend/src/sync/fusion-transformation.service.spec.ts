@@ -1,5 +1,8 @@
 import { FusionTransformationService } from './fusion-transformation.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OracleUomService } from '../clients/oracle/oracle-uom.service';
+import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
+import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
 
 // ---------------------------------------------------------------------------
 // Minimal fake DB records
@@ -9,6 +12,7 @@ function makeSale(overrides: Record<string, unknown> = {}) {
   return {
     id: 'sale-1',
     saleNumber: 'SALE-001',
+    invoiceNumber: 'SALE-001',
     outletId: 'outlet-1',
     outletName: 'Dubai Store',
     saleDate: new Date('2024-01-15T10:00:00Z'),
@@ -155,11 +159,31 @@ function setupDefaultMocks(
 describe('FusionTransformationService', () => {
   let service: FusionTransformationService;
   let mockPrisma: ReturnType<typeof buildMockPrisma>;
+  let mockUomService: jest.Mocked<OracleUomService>;
+  let mockTaxService: jest.Mocked<OracleTaxService>;
+  let mockCustomerService: jest.Mocked<OracleCustomerService>;
 
   beforeEach(() => {
     mockPrisma = buildMockPrisma();
+    
+    // Mock the Oracle enrichment services
+    mockUomService = {
+      getUomCode: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<OracleUomService>;
+    
+    mockTaxService = {
+      getTaxClassificationCode: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<OracleTaxService>;
+    
+    mockCustomerService = {
+      getCustomerId: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<OracleCustomerService>;
+    
     service = new FusionTransformationService(
       mockPrisma as unknown as PrismaService,
+      mockUomService,
+      mockTaxService,
+      mockCustomerService,
     );
   });
 
