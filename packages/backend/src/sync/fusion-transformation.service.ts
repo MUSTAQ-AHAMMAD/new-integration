@@ -134,7 +134,6 @@ export class FusionTransformationService {
     // CRITICAL: Use invoiceNumber (VendHQ invoice/receipt number) as Oracle salesOrder reference
     // NOT saleNumber (internal sequence). Matches Java: BackupVendhqSales.invoiceNumber
     const invoiceNumber = sale.invoiceNumber;
-    const saleNumber = sale.saleNumber ?? '';
 
     for (const li of sale.backupLineItems) {
       const qty = Number(li.quantity ?? 1);
