@@ -529,8 +529,48 @@ export class OracleSoapClient implements OnModuleInit {
           extractTag(xml, 'customerTrxId') ||
           '';
         
+        // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response
+          const errorMessage = extractTag(xml, 'ErrorMessage') || 
+                               extractTag(xml, 'errorMessage') ||
+                               extractTag(xml, 'Message') ||
+                               extractTag(xml, 'message') ||
+                               'Unknown error';
+          
+          this.logger.error(
+            `❌ Invoice creation failed with Status E:\n` +
+            `  Transaction Number: ${transactionNumber || 'null'}\n` +
+            `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+            `  Status: ${serviceStatus}\n` +
+            `  Error Message: ${errorMessage}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          
+          throw new Error(
+            `Oracle invoice creation failed with Status E: ${errorMessage}. ` +
+            `Transaction Number: ${transactionNumber || 'null'}, ` +
+            `Customer Trx ID: ${customerTrxId || 'N/A'}`
+          );
+        }
+        
+        // ✅ Validate that we got a transaction number on success
+        if (!transactionNumber || transactionNumber.trim() === '') {
+          this.logger.error(
+            `❌ Invoice creation returned empty transaction number:\n` +
+            `  Status: ${serviceStatus}\n` +
+            `  Customer Trx ID: ${customerTrxId}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          
+          throw new Error(
+            `Oracle invoice creation succeeded but returned no transaction number. ` +
+            `Status: ${serviceStatus}, Customer Trx ID: ${customerTrxId || 'N/A'}`
+          );
+        }
+        
         this.logger.log(
-          `Invoice created: txn=${transactionNumber || 'N/A'}, status=${serviceStatus}`,
+          `✅ Invoice created successfully: txn=${transactionNumber}, status=${serviceStatus}`,
         );
         
         // Return properly parsed response
