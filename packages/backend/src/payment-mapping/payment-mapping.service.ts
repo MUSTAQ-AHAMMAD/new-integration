@@ -1,3 +1,4 @@
+import { numberToBigInt } from '../common/utils/bigint-utils';
 import { Injectable, Logger } from '@nestjs/common';
 import { AlertSeverity, AlertType } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
@@ -96,7 +97,7 @@ export class PaymentMappingService {
       data: {
         ...data,
         isActive: true,
-        oracleReceiptMethodId: BigInt(data.oracleReceiptMethodId),
+        oracleReceiptMethodId: numberToBigInt(data.oracleReceiptMethodId),
         oracleBankAccountId: data.oracleBankAccountId != null ? BigInt(data.oracleBankAccountId) : null,
       },
     });
