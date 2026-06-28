@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 
 // Define the types properly - matching Oracle client expectations
 export interface InvoiceLine {
@@ -61,7 +62,10 @@ export interface EnrichedOrderData {
 export class OrderEnrichmentService {
   private readonly logger = new Logger(OrderEnrichmentService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fusionMetadataService: FusionMetadataService,
+  ) {}
 
   /**
    * Convert Prisma Decimal or BigInt to number safely
@@ -147,31 +151,46 @@ export class OrderEnrichmentService {
     return this.buildPayloadsFromQueue(order, orderLines, orderPayments, branchCode, region);
   }
 
-  private buildPayloadsFromQueue(
+  private async buildPayloadsFromQueue(
     order: any,
     orderLines: any[],
     orderPayments: any[],
     branchCode: string,
     region: string,
-  ): EnrichedOrderData {
+  ): Promise<EnrichedOrderData> {
+    // ✅ FETCH from FusionSalesMetadata
+    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
+    
+    if (!metadata) {
+      throw new Error(`No FusionSalesMetadata found for region: ${region}`);
+    }
+
+    this.logger.log(`Using FusionSalesMetadata for region ${region}:`, {
+      billToName: metadata.billToName,
+      billToAccount: metadata.billToAccount,
+      businessUnit: metadata.businessUnit,
+      txnSource: metadata.txnSource,
+      txnType: metadata.txnType,
+    });
+
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
     const totalAmount = this.toNumber(order.totalAmount);
     const currency = order.currency || 'AED';
 
     this.logger.log(`Building payloads for order ${order.odooOrderNumber} with ${orderLines.length} lines`);
 
-    // Build invoice header
+    // ✅ BUILD FROM METADATA
     const invoiceHeader: InvoiceHeader = {
-      billToCustomerName: order.customerName || 'Default Customer',
-      billToLocation: '',
-      billToAccountNumber: '1000',
-      businessUnit: 'BU1',
+      billToCustomerName: metadata.billToName || 'Default Customer',
+      billToLocation: metadata.siteNumber || '',
+      billToAccountNumber: String(metadata.billToAccount || '1000'),
+      businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
       outletName: order.branchName || branchCode,
       saleDate,
-      transactionSource: 'Odoo',
-      transactionType: 'Invoice',
+      transactionSource: metadata.txnSource || 'Vend',
+      transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: currency,
-      conversionRateType: 'Corporate',
+      conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
       invoiceLines: [],
     };
 
@@ -291,27 +310,42 @@ export class OrderEnrichmentService {
     };
   }
 
-  private buildPayloadsFromBackup(
+  private async buildPayloadsFromBackup(
     order: any, 
     backupLines: any[], 
     backupPayments: any[],
     branchCode: string,
     region: string
-  ): EnrichedOrderData {
+  ): Promise<EnrichedOrderData> {
+    // ✅ FETCH from FusionSalesMetadata
+    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
+    
+    if (!metadata) {
+      throw new Error(`No FusionSalesMetadata found for region: ${region}`);
+    }
+
+    this.logger.log(`Using FusionSalesMetadata for region ${region}:`, {
+      billToName: metadata.billToName,
+      billToAccount: metadata.billToAccount,
+      businessUnit: metadata.businessUnit,
+      txnSource: metadata.txnSource,
+      txnType: metadata.txnType,
+    });
+
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
 
-    // Build invoice header with proper typing
+    // ✅ BUILD FROM METADATA
     const invoiceHeader: InvoiceHeader = {
-      billToCustomerName: order.customerName || 'Default Customer',
-      billToLocation: '',
-      billToAccountNumber: '1000',
-      businessUnit: 'BU1',
+      billToCustomerName: metadata.billToName || 'Default Customer',
+      billToLocation: metadata.siteNumber || '',
+      billToAccountNumber: String(metadata.billToAccount || '1000'),
+      businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
       outletName: order.branchName || branchCode,
       saleDate,
-      transactionSource: 'Odoo',
-      transactionType: 'Invoice',
+      transactionSource: metadata.txnSource || 'Vend',
+      transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
-      conversionRateType: 'Corporate',
+      conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
       invoiceLines: [],  // Now properly typed as InvoiceLine[]
     };
 
@@ -446,21 +480,37 @@ export class OrderEnrichmentService {
     };
   }
 
-  private createMinimalPayloads(order: any, branchCode: string, region: string): EnrichedOrderData {
+  private async createMinimalPayloads(order: any, branchCode: string, region: string): Promise<EnrichedOrderData> {
+    // ✅ FETCH from FusionSalesMetadata
+    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
+    
+    if (!metadata) {
+      throw new Error(`No FusionSalesMetadata found for region: ${region}`);
+    }
+
+    this.logger.log(`Using FusionSalesMetadata for region ${region}:`, {
+      billToName: metadata.billToName,
+      billToAccount: metadata.billToAccount,
+      businessUnit: metadata.businessUnit,
+      txnSource: metadata.txnSource,
+      txnType: metadata.txnType,
+    });
+
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
     const total = this.toNumber(order.totalAmount || 0);
 
+    // ✅ BUILD FROM METADATA
     const invoiceHeader: InvoiceHeader = {
-      billToCustomerName: order.customerName || 'Default Customer',
-      billToLocation: '',
-      billToAccountNumber: '1000',
-      businessUnit: 'BU1',
+      billToCustomerName: metadata.billToName || 'Default Customer',
+      billToLocation: metadata.siteNumber || '',
+      billToAccountNumber: String(metadata.billToAccount || '1000'),
+      businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
       outletName: order.branchName || branchCode,
       saleDate,
-      transactionSource: 'Odoo',
-      transactionType: 'Invoice',
+      transactionSource: metadata.txnSource || 'Vend',
+      transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
-      conversionRateType: 'Corporate',
+      conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
       invoiceLines: [{
         lineNumber: 1,
         description: order.odooOrderNumber || 'Sale',

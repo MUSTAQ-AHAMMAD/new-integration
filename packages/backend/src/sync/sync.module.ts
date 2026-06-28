@@ -7,6 +7,7 @@ import { OdooBackupModule } from '../odoo-backup/odoo-backup.module';
 import { PaymentMappingModule } from '../payment-mapping/payment-mapping.module';
 import { QueuesModule } from '../queues/queues.module';
 import { StoreConfigModule } from '../store-config/store-config.module';
+import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { SyncController } from './sync.controller';
 import { AutoFixService } from './auto-fix.service';
 import { FusionTransformationService } from './fusion-transformation.service';
@@ -50,6 +51,7 @@ import { ValidationService } from './validation.service';
     SyncResolver,
     PipelineSchedulerService,
     SyncControlService,
+    FusionMetadataService,
   ],
   exports: [
     SyncService,
@@ -65,6 +67,7 @@ import { ValidationService } from './validation.service';
     AutoFixService,
     PipelineSchedulerService,
     SyncControlService,
+    FusionMetadataService,
   ],
 })
 export class SyncModule {}

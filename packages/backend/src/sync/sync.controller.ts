@@ -21,6 +21,7 @@ import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { CircuitBreakerService, CircuitStatus } from '../clients/circuit-breaker.service';
+import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
@@ -45,6 +46,7 @@ export class SyncController {
     private readonly queuesService: QueuesService,
     private readonly orderEnrichmentService: OrderEnrichmentService,
     private readonly circuitBreakerService: CircuitBreakerService,
+    private readonly fusionMetadataService: FusionMetadataService,
   ) {}
 
   /**
@@ -829,6 +831,67 @@ export class SyncController {
       message: result.message,
       circuitBreaker: name,
       success: result.success,
+    };
+  }
+
+  /**
+   * Debug endpoint - Get FusionSalesMetadata by region
+   */
+  @Get('debug/metadata/:region')
+  @ApiOperation({
+    summary: 'Get FusionSalesMetadata by region',
+    description: 'Debug endpoint to check metadata configuration for a specific region'
+  })
+  async debugMetadata(@Param('region') region: string) {
+    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
+    const buMap = await this.fusionMetadataService.getBusinessUnitMap(region);
+    
+    return {
+      region,
+      metadata,
+      businessUnitMap: buMap,
+      hasMetadata: !!metadata,
+      hasBusinessUnitMap: !!buMap,
+    };
+  }
+
+  /**
+   * Debug endpoint - Test invoice building with metadata
+   */
+  @Post('debug/test-invoice/:region')
+  @ApiOperation({
+    summary: 'Test invoice building with metadata',
+    description: 'Debug endpoint to test invoice payload generation using FusionSalesMetadata'
+  })
+  async testInvoiceWithMetadata(@Param('region') region: string) {
+    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
+    
+    const testInvoice = {
+      billToCustomerName: metadata.billToName,
+      billToLocation: metadata.siteNumber || '',
+      billToAccountNumber: String(metadata.billToAccount),
+      businessUnit: metadata.businessUnit,
+      transactionSource: metadata.txnSource,
+      transactionType: metadata.txnType,
+      invoiceCurrencyCode: 'AED',
+      conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
+      saleDate: new Date(),
+      invoiceLines: [{
+        lineNumber: 1,
+        description: 'Test Line',
+        quantity: 1,
+        unitSellingPrice: 10,
+        currencyCode: 'AED',
+        salesOrder: 'TEST-001',
+        salesOrderLine: '1',
+      }],
+    };
+    
+    return {
+      region,
+      metadata,
+      testInvoice,
+      message: 'Test invoice built from metadata. Check logs for Oracle response.',
     };
   }
 }
