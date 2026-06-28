@@ -584,17 +584,17 @@ export class SyncController {
       },
     });
 
-    // Get backup lines - use numeric ID
+    // Get backup lines - use numeric orderId
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }
+        ? { orderId: backupOrder.orderId }
         : { orderId: 0 },
     });
 
-    // Get backup payments - use numeric ID
+    // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }
+        ? { orderId: backupOrder.orderId }
         : { orderId: 0 },
     });
 
@@ -650,17 +650,17 @@ export class SyncController {
       },
     });
 
-    // Get backup lines - use numeric ID
+    // Get backup lines - use numeric orderId
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }
+        ? { orderId: backupOrder.orderId }
         : { orderId: 0 },
     });
 
-    // Get backup payments - use numeric ID
+    // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }
+        ? { orderId: backupOrder.orderId }
         : { orderId: 0 },
     });
 
@@ -720,14 +720,14 @@ export class SyncController {
 
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }  // ✅ Use numeric ID
+        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
         : { orderId: 0 },  // No match
     });
 
     // 3. Find backup payments
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
       where: backupOrder 
-        ? { orderId: backupOrder.id }  // ✅ Use numeric ID
+        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
         : { orderId: 0 },  // No match
     });
 
