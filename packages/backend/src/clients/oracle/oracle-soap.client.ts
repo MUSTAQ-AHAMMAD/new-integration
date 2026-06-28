@@ -145,11 +145,6 @@ export interface JournalHeader {
   jeHeaderId?: number;
 }
 
-export interface CustomerProfileResult {
-  customerAccountId: number;
-  paymentTermsName: string;
-}
-
 export interface CustomerProfile {
   customerAccountId: number;
   paymentTermsName: string;
@@ -677,7 +672,7 @@ export class OracleSoapClient implements OnModuleInit {
    */
   async getCustomerProfile(
     accountNumber: string,
-  ): Promise<CustomerProfileResult> {
+  ): Promise<CustomerProfile> {
     return this.circuitBreaker.execute('oracle:getCustomerProfile', () =>
       this.withRetries(async () => {
         const body = buildCustomerProfileSoap(accountNumber);
