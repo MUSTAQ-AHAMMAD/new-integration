@@ -374,11 +374,12 @@ export class OrderSyncProcessor {
         
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
         // Convert to number since Prisma schema expects Int
-        const txnNumberStr = 
+        const txnNumberOrOrderId = 
           invoiceResult.transactionNumber ?? 
           invoiceResult.customerTrxId ?? 
           odooOrderId;
-        const txnNumber = parseInt(txnNumberStr, 10) || null;
+        const parsedTxnNumber = parseInt(txnNumberOrOrderId, 10);
+        const txnNumber = isNaN(parsedTxnNumber) ? null : parsedTxnNumber;
         
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
