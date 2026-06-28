@@ -42,6 +42,29 @@ export class FusionTransformationService {
   ) {}
 
   /**
+   * Convert Prisma Decimal or BigInt to number safely
+   * Handles various data types that can come from Prisma queries
+   */
+  private convertDecimal(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value);
+    // Handle Prisma Decimal with toNumber() method
+    if (value && typeof value === 'object' && 'toNumber' in value) {
+      return value.toNumber();
+    }
+    // Handle Decimal from Prisma (internal structure with s, e, d properties)
+    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+      try {
+        return parseFloat(value.toString());
+      } catch {
+        return 0;
+      }
+    }
+    return Number(value) || 0;
+  }
+
+  /**
    * Builds all SOAP payload objects for one VendHQ sale stored in the
    * backup tables, ready to be submitted to Oracle Fusion.
    *
@@ -195,7 +218,7 @@ export class FusionTransformationService {
         );
       }
 
-      const pmtAmount = Number(payment.amount ?? 0);
+      const pmtAmount = this.convertDecimal(payment.amount ?? 0);
 
       // Standard receipt for everything except cash rounding
       if (pmtMethod.toLowerCase() !== 'cash rounding') {
