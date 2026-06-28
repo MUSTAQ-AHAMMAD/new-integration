@@ -6,20 +6,21 @@
  * Java Reference: FusionStdReceiptMapping.java
  * - Queries Oracle Customer Profile service to get customer ID from account number
  * - Customer ID is required for standard receipt processing
- * 
- * TODO: Implement full Oracle Customer Profile service integration
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OracleSoapClient } from './oracle-soap.client';
 
 @Injectable()
 export class OracleCustomerService {
   private readonly logger = new Logger(OracleCustomerService.name);
   private readonly customerCache = new Map<string, number>();
+  private readonly profileCache = new Map<string, { customerAccountId: number; paymentTermsName: string }>();
 
-  // PrismaService will be used for caching customer IDs in the database
-  // once the full Oracle SOAP integration is implemented
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly soapClient: OracleSoapClient,
+  ) {}
 
   /**
    * Get customer ID from account number by querying Oracle Fusion.
@@ -49,17 +50,24 @@ export class OracleCustomerService {
     }
 
     try {
-      // TODO: Implement Oracle Customer Profile service SOAP call
-      // 1. Build SOAP request to Oracle CustomerProfileService
-      // 2. Query customer profile by account number
-      // 3. Parse response and extract customer ID (customerAccountId)
-      // 4. Cache result for future use
+      // Call Oracle Customer Profile service SOAP API
+      const profile = await this.soapClient.getCustomerProfile(accountValue);
+      
+      if (profile && profile.customerAccountId) {
+        // Cache the customer ID
+        this.customerCache.set(cacheKey, profile.customerAccountId);
+        
+        this.logger.debug(
+          `Customer ID resolved for account ${accountValue} in region ${region}: ${profile.customerAccountId}`,
+        );
+        
+        return profile.customerAccountId;
+      }
       
       this.logger.debug(
-        `Customer Profile service not yet implemented for account ${accountValue} in region ${region}`,
+        `No customer ID found for account ${accountValue} in region ${region}`,
       );
       
-      // For now, return null (customer ID not resolved)
       return null;
     } catch (error) {
       this.logger.error(
@@ -89,15 +97,33 @@ export class OracleCustomerService {
       return null;
     }
 
+    // Check profile cache first
+    const cacheKey = `${region}:${accountValue}`;
+    if (this.profileCache.has(cacheKey)) {
+      return this.profileCache.get(cacheKey)!;
+    }
+
     try {
-      // TODO: Implement Oracle Customer Profile service SOAP call
-      // 1. Build SOAP request to Oracle CustomerProfileService
-      // 2. Query customer profile by account number
-      // 3. Parse response and extract customer profile details
-      // 4. Return customer ID and payment terms
+      // Call Oracle Customer Profile service SOAP API
+      const profile = await this.soapClient.getCustomerProfile(accountValue);
+      
+      if (profile && profile.customerAccountId) {
+        // Cache the full profile
+        this.profileCache.set(cacheKey, profile);
+        
+        // Also cache the customer ID separately
+        this.customerCache.set(cacheKey, profile.customerAccountId);
+        
+        this.logger.debug(
+          `Customer profile resolved for account ${accountValue} in region ${region}: ` +
+          `ID=${profile.customerAccountId}, terms=${profile.paymentTermsName}`,
+        );
+        
+        return profile;
+      }
       
       this.logger.debug(
-        `Customer Profile service not yet implemented for account ${accountValue} in region ${region}`,
+        `No customer profile found for account ${accountValue} in region ${region}`,
       );
       
       return null;

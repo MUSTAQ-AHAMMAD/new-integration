@@ -150,6 +150,12 @@ export interface CustomerProfileResult {
   paymentTermsName: string;
 }
 
+export interface ItemMasterResult {
+  itemNumber: string;
+  uomCode?: string;
+  taxClassificationCode?: string;
+}
+
 // ──────────────────────────────────────────────────────────────
 // SOAP XML builders
 // ──────────────────────────────────────────────────────────────
@@ -357,6 +363,26 @@ function buildCustomerProfileSoap(accountNumber: string): string {
         <typ1:AccountNumber>${escapeXml(accountNumber)}</typ1:AccountNumber>
       </typ:customerProfile>
     </typ:getActiveCustomerProfile>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+function buildItemMasterSoap(itemNumber: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:typ="http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/types/"
+  xmlns:typ1="http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <typ:findItem>
+      <typ:findCriteria>
+        <typ1:ItemNumber>${escapeXml(itemNumber)}</typ1:ItemNumber>
+      </typ:findCriteria>
+      <typ:findControl>
+        <typ1:retrieveAllTranslations>false</typ1:retrieveAllTranslations>
+      </typ:findControl>
+    </typ:findItem>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -658,6 +684,53 @@ export class OracleSoapClient implements OnModuleInit {
           extractTag(xml, 'paymentTerms') ||
           'IMMEDIATE';
         return { customerAccountId, paymentTermsName };
+      }),
+    );
+  }
+
+  // ── Item Master Service ────────────────────────────────────
+
+  /**
+   * Calls Oracle Fusion ItemServiceV2.findItem
+   * WSDL: /fscmService/ItemServiceV2?WSDL
+   */
+  async getItemMaster(
+    itemNumber: string,
+  ): Promise<ItemMasterResult | null> {
+    return this.circuitBreaker.execute('oracle:getItemMaster', () =>
+      this.withRetries(async () => {
+        const body = buildItemMasterSoap(itemNumber);
+        const resp = await this.http.post(
+          '/fscmService/ItemServiceV2',
+          body,
+          {
+            headers: {
+              SOAPAction:
+                'http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/findItem',
+            },
+          },
+        );
+        const xml = resp.data as string;
+        this.assertNoFault(xml, 'findItem');
+        
+        // Extract item details from response
+        const itemNum = extractTag(xml, 'ItemNumber') || extractTag(xml, 'itemNumber');
+        if (!itemNum) {
+          this.logger.debug(`Item not found: ${itemNumber}`);
+          return null;
+        }
+        
+        const uomCode = extractTag(xml, 'PrimaryUOMCode') || 
+                       extractTag(xml, 'primaryUOMCode') || 
+                       extractTag(xml, 'UOMCode') ||
+                       extractTag(xml, 'uomCode') ||
+                       undefined;
+        const taxClassificationCode = extractTag(xml, 'TaxClassificationCode') || 
+                                     extractTag(xml, 'taxClassificationCode') ||
+                                     undefined;
+        
+        this.logger.debug(`Item found: ${itemNumber}, UOM: ${uomCode}, Tax: ${taxClassificationCode}`);
+        return { itemNumber: itemNum, uomCode, taxClassificationCode };
       }),
     );
   }

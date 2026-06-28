@@ -6,20 +6,20 @@
  * Java Reference: FusionInvoiceMapping.java
  * - Fetches tax codes based on product item configuration
  * - Determines tax applicability for invoice lines
- * 
- * TODO: Implement full Oracle Tax service integration
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OracleSoapClient } from './oracle-soap.client';
 
 @Injectable()
 export class OracleTaxService {
   private readonly logger = new Logger(OracleTaxService.name);
   private readonly taxCache = new Map<string, string>();
 
-  // PrismaService will be used for caching tax codes in the database
-  // once the full Oracle SOAP integration is implemented
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly soapClient: OracleSoapClient,
+  ) {}
 
   /**
    * Get tax classification code for a product item from Oracle Fusion.
@@ -49,22 +49,73 @@ export class OracleTaxService {
     }
 
     try {
-      // TODO: Implement Oracle Tax service SOAP call or REST API call
-      // 1. Build SOAP/REST request to Oracle Tax service
-      // 2. Query for tax classification based on itemNumber and region
-      // 3. Parse response and extract tax classification code
-      // 4. Cache result for future use
+      // First try to get from database cache (FusionInvoiceLine or StoreConfiguration)
+      const dbTaxCode = await this.getFromDatabase(itemNumber, region);
+      if (dbTaxCode) {
+        this.taxCache.set(cacheKey, dbTaxCode);
+        return dbTaxCode;
+      }
+
+      // Call Oracle Item Master service to get tax classification
+      const itemMaster = await this.soapClient.getItemMaster(itemNumber);
+      
+      if (itemMaster?.taxClassificationCode) {
+        // Cache the result
+        this.taxCache.set(cacheKey, itemMaster.taxClassificationCode);
+        
+        this.logger.debug(
+          `Tax code resolved for item ${itemNumber} in region ${region}: ${itemMaster.taxClassificationCode}`,
+        );
+        
+        return itemMaster.taxClassificationCode;
+      }
       
       this.logger.debug(
-        `Tax service not yet implemented for item ${itemNumber} in region ${region}`,
+        `No tax code found for item ${itemNumber} in region ${region}`,
       );
       
-      // For now, return null (no tax classification)
-      // Common tax codes: "VAT_STANDARD", "VAT_EXEMPT", "TAX_EXEMPT"
       return null;
     } catch (error) {
       this.logger.error(
         `Failed to fetch tax code for item ${itemNumber}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get tax code from database cache (StoreConfiguration or previous FusionInvoiceLine).
+   */
+  private async getFromDatabase(
+    itemNumber: string,
+    region: string,
+  ): Promise<string | null> {
+    try {
+      // Try to find from StoreConfiguration first
+      const storeConfig = await this.prisma.storeConfiguration.findFirst({
+        where: { region },
+        select: { taxClassificationCode: true },
+      });
+      
+      if (storeConfig?.taxClassificationCode) {
+        return storeConfig.taxClassificationCode;
+      }
+
+      // Fall back to searching recent FusionInvoiceLine records
+      const invoiceLine = await this.prisma.fusionInvoiceLine.findFirst({
+        where: {
+          itemNumber,
+          region,
+          taxCode: { not: null },
+        },
+        select: { taxCode: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return invoiceLine?.taxCode ?? null;
+    } catch (error) {
+      this.logger.warn(
+        `Failed to query database for tax code: ${error instanceof Error ? error.message : String(error)}`,
       );
       return null;
     }
