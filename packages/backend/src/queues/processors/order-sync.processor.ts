@@ -475,8 +475,8 @@ export class OrderSyncProcessor {
             data: {
               status: 'SUCCESS',
               requestDate: new Date(),
-              accountingDate: ar.accountingDate,
-              applicationDate: ar.applicationDate,
+              accountingDate: ar.receiptDate,
+              applicationDate: ar.receiptDate,
               txnNumber: arResult.customerTrxId ?? ar.transactionNumber,
               receiptNumber: arResult.receiptNumber ?? ar.receiptNumber,
               currencyCode: ar.receiptCurrency,
