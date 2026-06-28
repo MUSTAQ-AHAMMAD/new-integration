@@ -371,22 +371,23 @@ export class OrderSyncProcessor {
         this.logger.log(`[${odooOrderId}] Step 8a/14: Creating Oracle invoice...`);
         const invoiceResult =
           await this.soapClient.createSimpleInvoice(invoiceHeader);
-        const txnNumber = String(
-          invoiceResult.customerTrxId ??
-            invoiceResult.transactionNumber ??
-            odooOrderId,
-        );
+        
+        // Get the transaction number properly - prefer transactionNumber over customerTrxId
+        const txnNumber = 
+          invoiceResult.transactionNumber ?? 
+          invoiceResult.customerTrxId ?? 
+          odooOrderId;
         
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
           `  - Transaction Number: ${txnNumber}\n` +
-          `  - Customer Trx ID: ${invoiceResult.customerTrxId}\n` +
-          `  - Status: ${invoiceResult.serviceStatus ?? 'SUCCESS'}`,
+          `  - Customer Trx ID: ${invoiceResult.customerTrxId || 'N/A'}\n` +
+          `  - Status: ${invoiceResult.serviceStatus || 'SUCCESS'}`,
         );
 
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
           data: {
-            status: invoiceResult.serviceStatus ?? 'SUCCESS',
+            status: invoiceResult.serviceStatus || 'SUCCESS',
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
@@ -397,7 +398,7 @@ export class OrderSyncProcessor {
             txnDate: invoiceHeader.saleDate,
             glDate: invoiceHeader.saleDate,
             currencyCode: invoiceHeader.invoiceCurrencyCode,
-            txnNumber: Number(invoiceResult.customerTrxId) || null,
+            txnNumber: txnNumber,  // ✅ Store the actual transaction number
             customerTxnId: Number(invoiceResult.customerTrxId) || null,
             region: effectiveRegion,
           },

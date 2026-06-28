@@ -20,6 +20,7 @@ import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
+import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
@@ -43,6 +44,7 @@ export class SyncController {
     private readonly autoFixService: AutoFixService,
     private readonly queuesService: QueuesService,
     private readonly orderEnrichmentService: OrderEnrichmentService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {}
 
   /**
@@ -774,6 +776,59 @@ export class SyncController {
       summary: backupLines.length > 0 
         ? `✅ Found ${backupLines.length} lines and ${backupPayments.length} payments` 
         : '⚠️ No backup data found - will use minimal data',
+    };
+  }
+
+  /**
+   * Get all circuit breaker statuses
+   */
+  @Get('admin/circuit-breakers')
+  @ApiOperation({ 
+    summary: 'Get all circuit breaker statuses',
+    description: 'Returns status of all circuit breakers in the system'
+  })
+  async getCircuitBreakers() {
+    const statuses = await this.circuitBreakerService.getStatus();
+    return {
+      message: 'Circuit breaker statuses retrieved',
+      circuitBreakers: statuses,
+    };
+  }
+
+  /**
+   * Get status of a specific circuit breaker
+   */
+  @Get('admin/circuit-breaker/:name')
+  @ApiOperation({ 
+    summary: 'Get circuit breaker status by name',
+    description: 'Returns the status of a specific circuit breaker'
+  })
+  async getCircuitBreaker(@Param('name') name: string) {
+    const status = await this.circuitBreakerService.getStatus(name);
+    if (!status) {
+      throw new NotFoundException(`Circuit breaker ${name} not found`);
+    }
+    return {
+      message: `Circuit breaker ${name} status retrieved`,
+      circuitBreaker: status,
+    };
+  }
+
+  /**
+   * Reset a circuit breaker to CLOSED state
+   */
+  @Post('admin/circuit-breaker/reset/:name')
+  @ApiOperation({ 
+    summary: 'Reset circuit breaker for a service',
+    description: 'Manually reset a circuit breaker to CLOSED state. Use this to recover from OPEN state after fixing the underlying issue.'
+  })
+  async resetCircuitBreaker(@Param('name') name: string) {
+    this.logger.log(`Resetting circuit breaker: ${name}`);
+    const result = await this.circuitBreakerService.reset(name);
+    return {
+      message: result.message,
+      circuitBreaker: name,
+      success: result.success,
     };
   }
 }

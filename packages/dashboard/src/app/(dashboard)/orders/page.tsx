@@ -20,13 +20,21 @@ const PAGE_SIZE = 50;
 const TIMEZONES = ['UTC', 'Asia/Dubai', 'America/New_York', 'Europe/London'] as const;
 const STATUS_OPTIONS = ['ALL', 'PENDING', 'PROCESSING', 'SYNCED', 'FAILED', 'SKIPPED'] as const;
 
-function getDateKey(value: string, timezone: string): string {
+function getDateKey(value: string | null | undefined, timezone: string): string {
+  // Handle invalid, null, or undefined dates
+  if (!value) return '';
+  
+  const date = new Date(value);
+  
+  // Check if the date is valid
+  if (isNaN(date.getTime())) return '';
+  
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function downloadCsv(filename: string, headers: string[], rows: string[][]): void {

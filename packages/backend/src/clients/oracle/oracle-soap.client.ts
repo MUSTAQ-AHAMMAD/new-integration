@@ -501,6 +501,8 @@ export class OracleSoapClient implements OnModuleInit {
   async createSimpleInvoice(header: InvoiceHeader): Promise<InvoiceResponse> {
     return this.circuitBreaker.execute('oracle:createSimpleInvoice', () =>
       this.withRetries(async () => {
+        this.logger.log(`Creating invoice for ${header.billToCustomerName}...`);
+        
         const body = buildInvoiceSoap(header);
         const resp = await this.http.post(
           '/fscmService/RecInvoiceService',
@@ -514,17 +516,31 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createSimpleInvoice');
+        
+        // Parse the response properly - handle both case variations
         const serviceStatus =
-          extractTag(xml, 'ServiceStatus') || extractTag(xml, 'serviceStatus');
+          extractTag(xml, 'ServiceStatus') || 
+          extractTag(xml, 'serviceStatus') || 
+          'SUCCESS';
         const transactionNumber =
           extractTag(xml, 'TransactionNumber') ||
-          extractTag(xml, 'transactionNumber');
+          extractTag(xml, 'transactionNumber') ||
+          '';
         const customerTrxId =
-          extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
+          extractTag(xml, 'CustomerTrxId') || 
+          extractTag(xml, 'customerTrxId') ||
+          '';
+        
         this.logger.log(
-          `Invoice created: txn=${transactionNumber} status=${serviceStatus}`,
+          `Invoice created: txn=${transactionNumber || 'N/A'}, status=${serviceStatus}`,
         );
-        return { serviceStatus, transactionNumber, customerTrxId };
+        
+        // Return properly parsed response
+        return { 
+          serviceStatus, 
+          transactionNumber, 
+          customerTrxId 
+        };
       }),
     );
   }
