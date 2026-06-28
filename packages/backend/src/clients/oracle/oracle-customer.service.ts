@@ -17,6 +17,8 @@ export class OracleCustomerService {
   private readonly logger = new Logger(OracleCustomerService.name);
   private readonly customerCache = new Map<string, number>();
 
+  // PrismaService will be used for caching customer IDs in the database
+  // once the full Oracle SOAP integration is implemented
   constructor(private readonly prisma: PrismaService) {}
 
   /**

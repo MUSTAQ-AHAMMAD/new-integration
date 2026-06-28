@@ -17,6 +17,8 @@ export class OracleTaxService {
   private readonly logger = new Logger(OracleTaxService.name);
   private readonly taxCache = new Map<string, string>();
 
+  // PrismaService will be used for caching tax codes in the database
+  // once the full Oracle SOAP integration is implemented
   constructor(private readonly prisma: PrismaService) {}
 
   /**

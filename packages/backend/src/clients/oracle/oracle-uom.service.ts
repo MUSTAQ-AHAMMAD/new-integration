@@ -17,6 +17,8 @@ export class OracleUomService {
   private readonly logger = new Logger(OracleUomService.name);
   private readonly uomCache = new Map<string, string>();
 
+  // PrismaService will be used for caching UOM codes in the database
+  // once the full Oracle SOAP integration is implemented
   constructor(private readonly prisma: PrismaService) {}
 
   /**

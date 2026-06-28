@@ -212,7 +212,7 @@ export class FusionTransformationService {
           orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: pmtAmount,
           // Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
-          customerId: await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region) ?? undefined,
+          customerId: (await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region)) ?? undefined,
         });
       }
 
