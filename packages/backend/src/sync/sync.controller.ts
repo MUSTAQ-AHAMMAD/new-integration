@@ -45,6 +45,29 @@ export class SyncController {
     private readonly orderEnrichmentService: OrderEnrichmentService,
   ) {}
 
+  /**
+   * Convert Prisma Decimal or BigInt to number safely
+   * Handles various data types that can come from Prisma queries
+   */
+  private convertDecimal(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value);
+    // Handle Prisma Decimal with toNumber() method
+    if (value && typeof value === 'object' && 'toNumber' in value) {
+      return value.toNumber();
+    }
+    // Handle Decimal from Prisma (internal structure with s, e, d properties)
+    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+      try {
+        return parseFloat(value.toString());
+      } catch {
+        return 0;
+      }
+    }
+    return Number(value) || 0;
+  }
+
   @Post('jobs')
   @ApiOperation({ summary: 'Create a new sync job (selective sync)' })
   createJob(@Body() dto: CreateSyncJobDto) {
@@ -605,7 +628,7 @@ export class SyncController {
         odooOrderNumber: order.odooOrderNumber,
         branchCode: order.branchCode,
         branchName: order.branchName,
-        totalAmount: Number(order.totalAmount),
+        totalAmount: this.convertDecimal(order.totalAmount),
         currency: order.currency,
         status: order.status,
         syncAttempts: order.syncAttempts,
@@ -677,7 +700,7 @@ export class SyncController {
       orderNumber: order.odooOrderNumber,
       branchCode: order.branchCode,
       region: order.region || order.branchCode,
-      totalAmount: Number(order.totalAmount),
+      totalAmount: this.convertDecimal(order.totalAmount),
       currency: order.currency,
       customerName: order.customerName,
       backupOrderFound: !!backupOrder,

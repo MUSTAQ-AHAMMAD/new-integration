@@ -58,6 +58,28 @@ export class OrderResponseDto {
   @ApiProperty({ nullable: true })
   errorMessage: string | null;
 
+  /**
+   * Convert Prisma Decimal or BigInt to number safely
+   */
+  private static convertDecimal(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value);
+    // Handle Prisma Decimal with toNumber() method
+    if (value && typeof value === 'object' && 'toNumber' in value) {
+      return value.toNumber();
+    }
+    // Handle Decimal from Prisma (internal structure with s, e, d properties)
+    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+      try {
+        return parseFloat(value.toString());
+      } catch {
+        return 0;
+      }
+    }
+    return Number(value) || 0;
+  }
+
   constructor(order: any) {
     this.id = order.id;
     this.orderNumber = order.odooOrderNumber || order.orderNumber;
@@ -72,7 +94,7 @@ export class OrderResponseDto {
       ? new Date(order.orderDateUtc).toISOString()
       : this.orderDate;
     
-    this.totalAmount = Number(order.totalAmount || 0);
+    this.totalAmount = OrderResponseDto.convertDecimal(order.totalAmount || 0);
     this.currency = order.currency || 'AED';
     this.syncStatus = order.status || 'PENDING';
     this.customerName = order.customerName || null;

@@ -44,6 +44,29 @@ export class OdooTransformationService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Convert Prisma Decimal or BigInt to number safely
+   * Handles various data types that can come from Prisma queries
+   */
+  private convertDecimal(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value);
+    // Handle Prisma Decimal with toNumber() method
+    if (value && typeof value === 'object' && 'toNumber' in value) {
+      return value.toNumber();
+    }
+    // Handle Decimal from Prisma (internal structure with s, e, d properties)
+    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+      try {
+        return parseFloat(value.toString());
+      } catch {
+        return 0;
+      }
+    }
+    return Number(value) || 0;
+  }
+
+  /**
    * Builds all Oracle SOAP payloads for one Odoo order stored in the backup
    * tables, ready to be submitted to Oracle Fusion.
    *
@@ -117,14 +140,14 @@ export class OdooTransformationService {
       // Prefer price_subtotal_incl (tax-inclusive) → price_subtotal → derive
       const total =
         line.priceSubtotalIncl != null
-          ? Number(line.priceSubtotalIncl)
+          ? this.convertDecimal(line.priceSubtotalIncl)
           : line.priceSubtotal != null
-            ? Number(line.priceSubtotal)
-            : Number(line.priceUnit ?? 0) * qty;
+            ? this.convertDecimal(line.priceSubtotal)
+            : this.convertDecimal(line.priceUnit ?? 0) * qty;
 
       const unitPrice =
         line.priceUnit != null
-          ? Number(line.priceUnit)
+          ? this.convertDecimal(line.priceUnit)
           : qty !== 0
             ? Math.abs(total / qty)
             : 0;
@@ -159,8 +182,8 @@ export class OdooTransformationService {
       );
       const syntheticAmount =
         backup.amountUntaxed != null
-          ? Number(backup.amountUntaxed)
-          : Number(backup.amountTotal);
+          ? this.convertDecimal(backup.amountUntaxed)
+          : this.convertDecimal(backup.amountTotal);
       invoiceHeader.invoiceLines.push({
         lineNumber: 1,
         description: backup.orderName ?? 'Sale',
@@ -199,7 +222,7 @@ export class OdooTransformationService {
         ? (storeConfig.cashAccountId ?? null)
         : (storeConfig.bankAccountId ?? null);
 
-      const pmtAmount = Number(payment.amount ?? 0);
+      const pmtAmount = this.convertDecimal(payment.amount ?? 0);
       const lowerMethod = pmtMethod.toLowerCase();
 
       if (lowerMethod !== 'cash rounding') {
