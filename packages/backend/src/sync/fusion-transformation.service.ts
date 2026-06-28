@@ -21,6 +21,7 @@ import {
 import { OracleUomService } from '../clients/oracle/oracle-uom.service';
 import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
 import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
+import { FusionPayloadValidator } from './fusion-payload-validator';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -347,6 +348,30 @@ export class FusionTransformationService {
         summaryFlag: false,
         journalLines,
       });
+    }
+
+    // ── 9. Validate all payloads before returning ────────────
+    const validation = FusionPayloadValidator.validateTransaction(
+      invoiceHeader,
+      standardReceipts,
+      miscReceipts,
+      applyReceipts,
+      journalHeaders,
+    );
+
+    if (!validation.valid) {
+      this.logger.warn(
+        `Validation warnings for sale ${saleDbId}:`,
+        JSON.stringify(validation.errors, null, 2),
+      );
+      // Log detailed payload for debugging
+      this.logger.debug('Invoice:', JSON.stringify(invoiceHeader, null, 2));
+      this.logger.debug('Standard Receipts:', JSON.stringify(standardReceipts, null, 2));
+      this.logger.debug('Misc Receipts:', JSON.stringify(miscReceipts, null, 2));
+      this.logger.debug('Apply Receipts:', JSON.stringify(applyReceipts, null, 2));
+      this.logger.debug('Journal Headers:', JSON.stringify(journalHeaders, null, 2));
+    } else {
+      this.logger.debug(`All payloads validated successfully for sale ${saleDbId}`);
     }
 
     return {
