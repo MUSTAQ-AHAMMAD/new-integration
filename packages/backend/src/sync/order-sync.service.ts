@@ -116,8 +116,6 @@ export class OrderSyncService {
         odooOrderNumber: processedData.odooOrderNumber,
         branchCode: processedData.branchCode,
         branchName: processedData.branchName,
-        region: processedData.region,
-        odooBackupOrderId: processedData.odooBackupOrderId,
         orderDate: processedData.orderDate,
         orderDateUtc,
         originalTimezone: processedData.originalTimezone,
@@ -132,25 +130,6 @@ export class OrderSyncService {
         negativeInventoryFlag: hasNegativeInventory,
         negativeInventoryItems: processedData.negativeInventoryItems
           ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
-          : undefined,
-        // Store order lines and payments directly for processing without backup tables
-        orderLines: processedData.orderLines
-          ? (processedData.orderLines as unknown as Prisma.InputJsonValue)
-          : undefined,
-        orderPayments: processedData.orderPayments
-          ? (processedData.orderPayments as unknown as Prisma.InputJsonValue)
-          : undefined,
-        warehouseName: processedData.warehouseName,
-        posConfigName: processedData.posConfigName,
-        customerType: processedData.customerType,
-        amountUntaxed: processedData.amountUntaxed != null
-          ? new Prisma.Decimal(processedData.amountUntaxed)
-          : undefined,
-        amountTax: processedData.amountTax != null
-          ? new Prisma.Decimal(processedData.amountTax)
-          : undefined,
-        amountDiscount: processedData.amountDiscount != null
-          ? new Prisma.Decimal(processedData.amountDiscount)
           : undefined,
         status:
           processedData.isPaid && !(processedData.isCancelled ?? false)
@@ -160,8 +139,6 @@ export class OrderSyncService {
       update: {
         odooOrderNumber: processedData.odooOrderNumber,
         branchName: processedData.branchName,
-        region: processedData.region,
-        odooBackupOrderId: processedData.odooBackupOrderId,
         orderDate: processedData.orderDate,
         orderDateUtc,
         originalTimezone: processedData.originalTimezone,
@@ -177,25 +154,6 @@ export class OrderSyncService {
         negativeInventoryItems: processedData.negativeInventoryItems
           ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
           : Prisma.JsonNull,
-        // Update order lines and payments
-        orderLines: processedData.orderLines
-          ? (processedData.orderLines as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
-        orderPayments: processedData.orderPayments
-          ? (processedData.orderPayments as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
-        warehouseName: processedData.warehouseName,
-        posConfigName: processedData.posConfigName,
-        customerType: processedData.customerType,
-        amountUntaxed: processedData.amountUntaxed != null
-          ? new Prisma.Decimal(processedData.amountUntaxed)
-          : null,
-        amountTax: processedData.amountTax != null
-          ? new Prisma.Decimal(processedData.amountTax)
-          : null,
-        amountDiscount: processedData.amountDiscount != null
-          ? new Prisma.Decimal(processedData.amountDiscount)
-          : null,
         status:
           processedData.isPaid && !(processedData.isCancelled ?? false)
             ? SyncStatus.PENDING

@@ -106,198 +106,32 @@ export class OrderEnrichmentService {
       throw new Error(`Order not found: ${orderSyncQueueId}`);
     }
 
-    // 2. Get order lines from the queue (already stored)
-    const orderLines = order.orderLines as any[] || [];
-    
-    // 3. Get order payments from the queue (already stored)
-    const orderPayments = order.orderPayments as any[] || [];
+    this.logger.log(`Processing order ${order.odooOrderNumber}...`);
 
-    this.logger.log(
-      `Order ${order.odooOrderNumber}: ${orderLines.length} lines, ${orderPayments.length} payments found in queue`
-    );
-
-    // 4. If NO lines in queue, try backup tables
-    if (orderLines.length === 0) {
-      this.logger.log(`No lines in queue, checking backup tables...`);
-      const backupOrder = await this.prisma.backupOdooOrder.findFirst({
-        where: { orderName: order.odooOrderNumber },
-      });
-
-      if (backupOrder) {
-        const backupLines = await this.prisma.backupOdooOrderLine.findMany({
-          where: { orderId: backupOrder.orderId },
-        });
-        const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-          where: { orderId: backupOrder.orderId },
-        });
-        
-        if (backupLines.length > 0) {
-          this.logger.log(`Found ${backupLines.length} lines in backup tables`);
-          return this.buildPayloadsFromBackup(order, backupLines, backupPayments, branchCode, region);
-        }
-      }
-    }
-
-    // 5. Build payloads from queue data
-    return this.buildPayloadsFromQueue(order, orderLines, orderPayments, branchCode, region);
-  }
-
-  private async buildPayloadsFromQueue(
-    order: any,
-    orderLines: any[],
-    orderPayments: any[],
-    branchCode: string,
-    region: string,
-  ): Promise<EnrichedOrderData> {
-    // ✅ FETCH from FusionSalesMetadata
-    const metadata = await this.fusionMetadataService.getSalesMetadata(region);
-    
-    if (!metadata) {
-      throw new Error(`No FusionSalesMetadata found for region: ${region}`);
-    }
-
-    this.logger.log(`Using FusionSalesMetadata for region ${region}:`, {
-      billToName: metadata.billToName,
-      billToAccount: metadata.billToAccount,
-      businessUnit: metadata.businessUnit,
-      txnSource: metadata.txnSource,
-      txnType: metadata.txnType,
+    // 2. Try to get data from backup tables
+    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+      where: { orderName: order.odooOrderNumber },
     });
 
-    const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
-    const totalAmount = this.toNumber(order.totalAmount);
-    const currency = order.currency || 'AED';
-
-    this.logger.log(`Building payloads for order ${order.odooOrderNumber} with ${orderLines.length} lines`);
-
-    // ✅ BUILD FROM METADATA
-    const invoiceHeader: InvoiceHeader = {
-      billToCustomerName: metadata.billToName || 'Default Customer',
-      billToLocation: metadata.siteNumber || '',
-      billToAccountNumber: String(metadata.billToAccount || '1000'),
-      businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
-      outletName: order.branchName || branchCode,
-      saleDate,
-      transactionSource: metadata.txnSource || 'Vend',
-      transactionType: metadata.txnType || 'Vend Invoice',
-      invoiceCurrencyCode: currency,
-      conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
-      invoiceLines: [],
-    };
-
-    // Build invoice lines from queue data
-    for (const line of orderLines) {
-      const qty = this.toNumber(line.qty || line.quantity || 1);
-      if (qty === 0) continue;
-
-      const unitPrice = this.toNumber(line.priceUnit || line.unitPrice || 0);
-      const subtotal = this.toNumber(line.priceSubtotal || line.subtotal || 0);
-
-      // Extract product code from product name if it has pattern [CODE]
-      let productCode = line.productCode || '';
-      let productName = line.productName || 'Product';
-      const match = productName.match(/\[([^\]]+)\]/);
-      if (match) {
-        productCode = match[1];
-        productName = productName.replace(/\[[^\]]+\]\s*/, '');
+    if (backupOrder) {
+      const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+        where: { orderId: backupOrder.orderId },
+      });
+      const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+        where: { orderId: backupOrder.orderId },
+      });
+      
+      if (backupLines.length > 0) {
+        this.logger.log(`Found ${backupLines.length} lines in backup tables`);
+        return this.buildPayloadsFromBackup(order, backupLines, backupPayments, branchCode, region);
       }
-
-      invoiceHeader.invoiceLines.push({
-        lineNumber: invoiceHeader.invoiceLines.length + 1,
-        itemNumber: productCode || String(line.productId || ''),
-        description: productName,
-        quantity: qty,
-        unitSellingPrice: unitPrice || (qty > 0 ? subtotal / qty : 0),
-        currencyCode: currency,
-        salesOrder: order.odooOrderNumber || '',
-        salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
-      });
     }
 
-    // If no lines, create one from total
-    if (invoiceHeader.invoiceLines.length === 0) {
-      this.logger.warn(`No lines for order ${order.odooOrderNumber}, creating synthetic line`);
-      invoiceHeader.invoiceLines.push({
-        lineNumber: 1,
-        description: order.odooOrderNumber || 'Sale',
-        quantity: 1,
-        unitSellingPrice: totalAmount,
-        currencyCode: currency,
-        salesOrder: order.odooOrderNumber || '',
-        salesOrderLine: '1',
-      });
-    }
-
-    // Build receipts from payments
-    const standardReceipts: ReceiptRequest[] = [];
-    const applyReceipts: ApplyReceiptRequest[] = [];
-
-    for (const payment of orderPayments) {
-      const amount = this.toNumber(payment.amount || 0);
-      const method = payment.paymentName || payment.name || 'DEFAULT';
-      
-      if (amount === 0) continue;
-
-      const receiptNumber = `${method}-${order.odooOrderNumber}-${Date.now()}`;
-
-      standardReceipts.push({
-        currencyCode: currency,
-        saleDate,
-        receiptMethodId: 1,
-        receiptNumber,
-        remittanceBankAccountId: 1000,
-        accountValue: '1000',
-        orgId: 1,
-        receiptAmount: amount,
-      });
-
-      applyReceipts.push({
-        receiptDate: saleDate,
-        transactionNumber: order.odooOrderNumber,
-        receiptNumber,
-        amountApplied: amount,
-        receiptCurrency: currency,
-        transactionSource: 'Odoo',
-      });
-    }
-
-    // If no payments, create one from total
-    if (standardReceipts.length === 0 && totalAmount > 0) {
-      const receiptNumber = `DEFAULT-${order.odooOrderNumber}-${Date.now()}`;
-      
-      standardReceipts.push({
-        currencyCode: currency,
-        saleDate,
-        receiptMethodId: 1,
-        receiptNumber,
-        remittanceBankAccountId: 1000,
-        accountValue: '1000',
-        orgId: 1,
-        receiptAmount: totalAmount,
-      });
-
-      applyReceipts.push({
-        receiptDate: saleDate,
-        transactionNumber: order.odooOrderNumber,
-        receiptNumber,
-        amountApplied: totalAmount,
-        receiptCurrency: currency,
-        transactionSource: 'Odoo',
-      });
-    }
-
-    this.logger.log(
-      `Built ${invoiceHeader.invoiceLines.length} lines, ${standardReceipts.length} receipts for order ${order.odooOrderNumber}`
-    );
-
-    return {
-      invoiceHeader,
-      standardReceipts,
-      miscReceipts: [],
-      applyReceipts,
-      journalHeaders: [],
-    };
+    // 3. If no backup data found, create minimal payloads as fallback
+    this.logger.warn(`No backup data found for order ${order.odooOrderNumber}, using minimal fallback`);
+    return this.createMinimalPayloads(order, branchCode, region);
   }
+
 
   private async buildPayloadsFromBackup(
     order: any, 

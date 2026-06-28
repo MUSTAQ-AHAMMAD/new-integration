@@ -234,44 +234,63 @@ export class AutoFixService {
   async suggestStatesToAdd(): Promise<{
     suggestions: Array<{ state: string; count: number; sample: any }>;
   }> {
-    // Find skipped orders with backup data
+    // Find skipped orders
     const skippedOrders = await this.prisma.orderSyncQueue.findMany({
       where: {
         status: SyncStatus.SKIPPED,
         isPaid: false,
         isCancelled: false,
-        odooBackupOrderId: { not: null },
       },
       select: {
         id: true,
         odooOrderId: true,
+        odooOrderNumber: true,
         branchCode: true,
-        odooBackupOrderId: true,
       },
       take: 1000,
     });
 
-    // Get backup data
-    const backupIds = skippedOrders
-      .map((o) => o.odooBackupOrderId)
-      .filter((id): id is string => id !== null);
+    // Get backup data using order numbers
+    const orderNumbers = skippedOrders.map((o) => o.odooOrderNumber);
 
     const backups = await this.prisma.backupOdooOrder.findMany({
-      where: { id: { in: backupIds } },
+      where: { orderName: { in: orderNumbers } },
       select: {
         id: true,
         orderId: true,
         orderName: true,
         state: true,
         amountTotal: true,
-        orderPayments: true,
       },
     });
+
+    // Get payment data from backup tables
+    const backupOrderIds = backups.map((b) => b.orderId);
+    const payments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: { orderId: { in: backupOrderIds } },
+      select: { orderId: true, amount: true },
+    });
+
+    // Create a map of orderId to total payment amount
+    const paymentMap = new Map<number, number>();
+    for (const payment of payments) {
+      const current = paymentMap.get(payment.orderId) || 0;
+      const amount = typeof payment.amount === 'number' ? payment.amount :
+                     typeof payment.amount === 'string' ? parseFloat(payment.amount) :
+                     (payment.amount as any)?.toNumber?.() || 0;
+      paymentMap.set(payment.orderId, current + amount);
+    }
+
+    // Add payment data to backups
+    const backupsWithPayments = backups.map((b) => ({
+      ...b,
+      orderPayments: paymentMap.get(b.orderId) || 0,
+    }));
 
     // Group by state
     const stateGroups = new Map<string, any[]>();
 
-    for (const backup of backups) {
+    for (const backup of backupsWithPayments) {
       if (backup.state) {
         const normalized = backup.state.toLowerCase().trim();
         if (!stateGroups.has(normalized)) {
@@ -290,7 +309,7 @@ export class AutoFixService {
           orderId: orders[0].orderId,
           orderName: orders[0].orderName,
           amountTotal: orders[0].amountTotal,
-          hasPaymentData: (orders[0].orderPayments?.length ?? 0) > 0,
+          hasPaymentData: (orders[0].orderPayments ?? 0) > 0,
         },
       }))
       .sort((a, b) => b.count - a.count);
