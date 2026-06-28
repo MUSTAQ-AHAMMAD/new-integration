@@ -69,13 +69,12 @@ export interface StandardReceiptResponse {
 }
 
 export interface ApplyReceiptRequest {
+  receiptDate: Date;
   transactionNumber: string;
   receiptNumber: string;
   amountApplied: number;
   receiptCurrency: string;
   transactionSource: string;
-  accountingDate: Date;
-  applicationDate: Date;
 }
 
 export interface ApplyReceiptResponse {
@@ -250,13 +249,12 @@ function buildApplyReceiptSoap(req: ApplyReceiptRequest): string {
   <soapenv:Body>
     <typ:createApplyReceipt>
       <typ:applyReceipt>
+        <typ1:ReceiptDate>${xmlDate(req.receiptDate)}</typ1:ReceiptDate>
         <typ1:TransactionNumber>${escapeXml(req.transactionNumber)}</typ1:TransactionNumber>
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:AmountApplied>${req.amountApplied}</typ1:AmountApplied>
         <typ1:ReceiptCurrencyCode>${req.receiptCurrency}</typ1:ReceiptCurrencyCode>
         <typ1:TransactionSource>${escapeXml(req.transactionSource)}</typ1:TransactionSource>
-        <typ1:AccountingDate>${xmlDate(req.accountingDate)}</typ1:AccountingDate>
-        <typ1:ApplyDate>${xmlDate(req.applicationDate)}</typ1:ApplyDate>
       </typ:applyReceipt>
     </typ:createApplyReceipt>
   </soapenv:Body>

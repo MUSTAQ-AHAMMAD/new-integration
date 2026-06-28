@@ -836,6 +836,8 @@ model FusionStandardReceipt {
   remittanceBankAccId String?
   depositDate         DateTime?
   customerId          Int?
+  accountValue        String?
+  receiptAmount       Decimal?
   orgId               Int?
   region              String
   integMode           String?
@@ -857,11 +859,14 @@ model FusionMiscReceipt {
   glDate            DateTime?
   exchangeDate      DateTime?
   exchangeRateType  String?
+  receiptMethodId   BigInt?
   receiptMethodName String?
   receiptNumber     String?
   bankAccNumber     String?
   recActivityName   String?
   receiptDate       DateTime?
+  receiptAmount     Decimal?
+  orgId             Int?
   region            String
   integMode         String?
   createdAt         DateTime  @default(now())

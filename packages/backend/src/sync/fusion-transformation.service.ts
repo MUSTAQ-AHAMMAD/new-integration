@@ -21,6 +21,7 @@ import {
 import { OracleUomService } from '../clients/oracle/oracle-uom.service';
 import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
 import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
+import { FusionPayloadValidator } from './fusion-payload-validator';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -139,6 +140,13 @@ export class FusionTransformationService {
         ? sale.saleDate
         : new Date(String(sale.saleDate));
 
+    // Java equivalent: FusionInvoiceMapping.java line 41-54
+    // Fetch customer profile to get payment terms (if available)
+    const customerProfile = await this.customerService.getCustomerProfile(
+      String(salesMeta.billToAccount),
+      region,
+    );
+
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: salesMeta.billToName,
       billToLocation: salesMeta.siteNumber ?? '',
@@ -146,6 +154,8 @@ export class FusionTransformationService {
       businessUnit: salesMeta.businessUnit,
       outletName: sale.outletName ?? undefined,
       saleDate,
+      // Java: Fetched from CustomerProfileService
+      paymentTermsName: customerProfile?.paymentTermsName,
       transactionSource: salesMeta.txnSource,
       transactionType: salesMeta.txnType,
       invoiceCurrencyCode: outlet?.currency ?? 'AED',
@@ -278,21 +288,24 @@ export class FusionTransformationService {
 
     // ── 7. Apply receipts (wired after receipt creation) ─────
     const applyReceipts: ApplyReceiptRequest[] = standardReceipts.map((sr) => ({
+      receiptDate: saleDate,
       transactionNumber: txnNumber,
       receiptNumber: sr.receiptNumber,
       amountApplied: sr.receiptAmount,
       receiptCurrency: sr.currencyCode,
       transactionSource: invoiceHeader.transactionSource,
-      accountingDate: saleDate,
-      applicationDate: saleDate,
     }));
 
     // ── 8. Journal entries (non-NORMAL customers only) ───────
+    // Java equivalent: FusionJournalEntryMapping.java
     const journalHeaders: JournalHeader[] = [];
     if (customerType !== 'NORMAL' && journalMeta) {
+      const periodName = this.getPeriodName(saleDate);
+      
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
-        (il) => ({
+        (il, idx) => ({
           ledgerId: Number(journalMeta.ledgerId),
+          periodName,  // Java line 84: getPeriodName(invoice.getSaleDate())
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Vend',
           jeCategoryName: journalMeta.jeCategory ?? 'Vend',
@@ -301,30 +314,64 @@ export class FusionTransformationService {
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,
           segment4: salesMeta.costCenterCode ?? undefined,
+          segment5: '00',  // Java line 101
+          segment6: journalMeta.interCompany ?? undefined,
+          segment7: journalMeta.futUsed ?? undefined,
+          segment8: '00',  // Java line 104
+          segment9: '00',  // Java line 105
+          segment10: '00', // Java line 106
           currencyCode: invoiceHeader.invoiceCurrencyCode,
+          // Java logic (lines 109-115): CREDIT lines get Cr amounts, DEBIT lines get Dr amounts
           enteredCrAmount: il.unitSellingPrice * il.quantity,
           accountedCr: il.unitSellingPrice * il.quantity,
-          currencyConversionRate: 1,
-          currencyConversionType: invoiceHeader.conversionRateType,
-          currencyConversionDate: saleDate,
-          transactionDate: saleDate,
-          status: 'P',
-          taxCode: 'N',
+          currencyConversionRate: 1,  // Java line 119
+          currencyConversionType: 'Corporate',  // Java line 118
+          currencyConversionDate: saleDate,  // Java line 120
+          transactionDate: saleDate,  // Java line 107
+          taxCode: 'N',  // Java line 121
         }),
       );
 
       journalHeaders.push({
-        batchName: `${saleDate.toISOString().split('T')[0]}: ${customerType}`,
+        // Java line 153: getPeriodName(invoice.getSaleDate()) + ": " + journalMapping.getServiceProvider()
+        batchName: `${periodName}: ${customerType}`,
+        // Java line 154: "Journal Import: " + transactionNumber
         batchDescription: `Journal Import: ${txnNumber}`,
         ledgerId: Number(journalMeta.ledgerId),
-        accountingPeriodName: this.getPeriodName(saleDate),
+        // Java line 155: getPeriodName(invoice.getSaleDate())
+        accountingPeriodName: periodName,
         accountingDate: saleDate,
         userSourceName: journalMeta.jeSource ?? 'Vend',
         userCategoryName: journalMeta.jeCategory ?? 'Vend',
+        // Java lines 163-164
         errorToSuspenseFlag: false,
         summaryFlag: false,
         journalLines,
       });
+    }
+
+    // ── 9. Validate all payloads before returning ────────────
+    const validation = FusionPayloadValidator.validateTransaction(
+      invoiceHeader,
+      standardReceipts,
+      miscReceipts,
+      applyReceipts,
+      journalHeaders,
+    );
+
+    if (!validation.valid) {
+      this.logger.warn(
+        `Validation warnings for sale ${saleDbId}:`,
+        JSON.stringify(validation.errors, null, 2),
+      );
+      // Log detailed payload for debugging
+      this.logger.debug('Invoice:', JSON.stringify(invoiceHeader, null, 2));
+      this.logger.debug('Standard Receipts:', JSON.stringify(standardReceipts, null, 2));
+      this.logger.debug('Misc Receipts:', JSON.stringify(miscReceipts, null, 2));
+      this.logger.debug('Apply Receipts:', JSON.stringify(applyReceipts, null, 2));
+      this.logger.debug('Journal Headers:', JSON.stringify(journalHeaders, null, 2));
+    } else {
+      this.logger.debug(`All payloads validated successfully for sale ${saleDbId}`);
     }
 
     return {
