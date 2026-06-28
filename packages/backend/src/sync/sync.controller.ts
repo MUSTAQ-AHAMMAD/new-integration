@@ -20,7 +20,7 @@ import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
-import { CircuitBreakerService } from '../clients/circuit-breaker.service';
+import { CircuitBreakerService, CircuitStatus } from '../clients/circuit-breaker.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';

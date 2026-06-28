@@ -515,7 +515,7 @@ export class OrderSyncProcessor {
           });
         }
 
-        return txnNumber;
+        return String(txnNumber || '');
       };
 
       // ── NEW APPROACH: Use Enrichment Service ──────────────────────────────────

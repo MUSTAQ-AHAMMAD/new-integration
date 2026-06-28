@@ -31,7 +31,7 @@ interface CircuitSnapshot {
   lastFailureAt?: number;
 }
 
-interface CircuitStatus {
+export interface CircuitStatus {
   name: string;
   state: CircuitState;
   failureCount: number;
