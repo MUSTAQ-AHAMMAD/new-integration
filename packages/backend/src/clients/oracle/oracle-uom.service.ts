@@ -88,25 +88,39 @@ export class OracleUomService {
   }
 
   /**
-   * Get UOM code from database cache (FusionInvTxn).
+   * Get UOM code from database cache (vendHqItemMeta).
    */
   private async getFromDatabase(
     itemNumber: string,
     region: string,
   ): Promise<string | null> {
     try {
-      // Search recent FusionInvTxn records
-      const invTxn = await this.prisma.fusionInvTxn.findFirst({
+      // Try to get from vendHqItemMeta first
+      const itemMeta = await this.prisma.vendHqItemMeta.findFirst({
         where: {
           itemId: itemNumber,
-          region,
-          uomCode: { not: null },
+          region: region,
         },
-        select: { uomCode: true },
-        orderBy: { createdAt: 'desc' },
+        select: {
+          uomCode: true,
+        },
       });
 
-      return invTxn?.uomCode ?? null;
+      if (itemMeta?.uomCode) {
+        return itemMeta.uomCode;
+      }
+
+      // Fallback: try backupOdooOrderLine
+      const backupLine = await this.prisma.backupOdooOrderLine.findFirst({
+        where: {
+          productId: parseInt(itemNumber, 10) || 0,
+        },
+        select: {
+          uomCode: true,
+        },
+      });
+
+      return backupLine?.uomCode ?? null;
     } catch (error) {
       this.logger.warn(
         `Failed to query database for UOM code: ${error instanceof Error ? error.message : String(error)}`,
