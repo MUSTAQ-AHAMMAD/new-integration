@@ -63,6 +63,29 @@ export class OrderEnrichmentService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Convert Prisma Decimal or BigInt to number safely
+   * Handles various data types that can come from Prisma queries
+   */
+  private convertDecimal(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') return parseFloat(value);
+    // Handle Prisma Decimal with toNumber() method
+    if (value && typeof value === 'object' && 'toNumber' in value) {
+      return value.toNumber();
+    }
+    // Handle Decimal from Prisma (internal structure with s, e, d properties)
+    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+      try {
+        return parseFloat(value.toString());
+      } catch {
+        return 0;
+      }
+    }
+    return Number(value) || 0;
+  }
+
   async enrichOrder(
     orderSyncQueueId: string,
     branchCode: string,
@@ -134,9 +157,9 @@ export class OrderEnrichmentService {
 
     // Build invoice lines from backup data
     for (const line of backupLines) {
-      const qty = Number(line.qty || 1);
-      const unitPrice = Number(line.priceUnit || 0);
-      const subtotal = Number(line.priceSubtotal || 0);
+      const qty = this.convertDecimal(line.qty || 1);
+      const unitPrice = this.convertDecimal(line.priceUnit || 0);
+      const subtotal = this.convertDecimal(line.priceSubtotal || 0);
       
       // Skip discount items or zero amounts if needed
       if (qty === 0 && subtotal === 0) continue;
@@ -172,7 +195,7 @@ export class OrderEnrichmentService {
         lineNumber: 1,
         description: order.odooOrderNumber || 'Sale',
         quantity: 1,
-        unitSellingPrice: Number(order.totalAmount || 0),
+        unitSellingPrice: this.convertDecimal(order.totalAmount || 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
         salesOrderLine: '1',
@@ -186,7 +209,7 @@ export class OrderEnrichmentService {
     const applyReceipts: ApplyReceiptRequest[] = [];
 
     for (const payment of backupPayments) {
-      const amount = Number(payment.amount || 0);
+      const amount = this.convertDecimal(payment.amount || 0);
       const method = payment.paymentName || 'DEFAULT';
       
       if (amount === 0) continue;
@@ -221,7 +244,7 @@ export class OrderEnrichmentService {
 
     // If no payments, create one from total
     if (standardReceipts.length === 0) {
-      const total = Number(order.totalAmount || 0);
+      const total = this.convertDecimal(order.totalAmount || 0);
       if (total > 0) {
         const receiptNumber = `DEFAULT-${order.odooOrderNumber}-${Date.now()}`;
         
@@ -265,7 +288,7 @@ export class OrderEnrichmentService {
 
   private createMinimalPayloads(order: any, branchCode: string, region: string): EnrichedOrderData {
     const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
-    const total = Number(order.totalAmount || 0);
+    const total = this.convertDecimal(order.totalAmount || 0);
 
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: order.customerName || 'Default Customer',
