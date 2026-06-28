@@ -607,12 +607,27 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
+        
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
         const customerReceiptReference =
           extractTag(xml, 'CustomerReceiptReference') ||
           extractTag(xml, 'customerReceiptReference');
-        this.logger.log(`Standard receipt created: ${receiptNumber}`);
+        
+        // ✅ Validate receipt number was returned
+        if (!receiptNumber || receiptNumber.trim() === '') {
+          this.logger.error(
+            `❌ Standard receipt creation returned empty receipt number:\n` +
+            `  Requested Receipt Number: ${req.receiptNumber}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle standard receipt creation failed: no receipt number returned. ` +
+            `Requested: ${req.receiptNumber}`
+          );
+        }
+        
+        this.logger.log(`✅ Standard receipt created: ${receiptNumber}`);
         return { receiptNumber, customerReceiptReference };
       }),
     );
@@ -676,13 +691,29 @@ export class OracleSoapClient implements OnModuleInit {
           );
           const xml = resp.data as string;
           this.assertNoFault(xml, 'createMiscellaneousReceipt');
+          
           const receivablesTransactionId =
             extractTag(xml, 'ReceivablesTransactionId') ||
             extractTag(xml, 'receivablesTransactionId');
           const receiptNumber =
             extractTag(xml, 'ReceiptNumber') ||
             extractTag(xml, 'receiptNumber');
-          this.logger.log(`Misc receipt created: ${receiptNumber}`);
+          
+          // ✅ Validate receipt number was returned
+          if (!receiptNumber || receiptNumber.trim() === '') {
+            this.logger.error(
+              `❌ Misc receipt creation returned empty receipt number:\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Receipt Amount: ${req.receiptAmount}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+            throw new Error(
+              `Oracle misc receipt creation failed: no receipt number returned. ` +
+              `Requested: ${req.receiptNumber}`
+            );
+          }
+          
+          this.logger.log(`✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`);
           return { receivablesTransactionId, receiptNumber };
         }),
     );
