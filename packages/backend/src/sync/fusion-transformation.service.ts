@@ -123,7 +123,11 @@ export class FusionTransformationService {
     };
 
     // ── 5. Build InvoiceLines ────────────────────────────────
+    // CRITICAL: Use invoiceNumber (VendHQ invoice/receipt number) as Oracle salesOrder reference
+    // NOT saleNumber (internal sequence). Matches Java: BackupVendhqSales.invoiceNumber
+    const invoiceNumber = sale.invoiceNumber;
     const saleNumber = sale.saleNumber ?? '';
+
     for (const li of sale.backupLineItems) {
       const qty = Number(li.quantity ?? 1);
       if (qty === 0) continue;
@@ -141,14 +145,20 @@ export class FusionTransformationService {
         quantity: isDiscount && total > 0 ? 1 : qty,
         unitSellingPrice: unitPrice,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: saleNumber,
+        // FIXED: Use invoiceNumber instead of saleNumber to match Java implementation
+        salesOrder: invoiceNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
+        // TODO: Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
+        // uomCode: await this.uomService.getUomCode(li.productId, region),
+        // TODO: Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
+        // taxClassificationCode: await this.taxService.getTaxCode(li.productId, region),
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
 
     // ── 6. Build Standard Receipts ───────────────────────────
-    const txnNumber = transactionNumberOverride ?? saleNumber;
+    // Use invoiceNumber for transaction references, keep saleNumber for fallback
+    const txnNumber = transactionNumberOverride ?? invoiceNumber;
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
@@ -189,8 +199,12 @@ export class FusionTransformationService {
           receiptNumber: `${pmtMethod}-${txnNumber}`,
           remittanceBankAccountId: Number(bankAccountId!),
           accountValue: invoiceHeader.billToAccountNumber,
+          // FIXED: Add region field for duplicate checking in Oracle
+          region,
           orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: pmtAmount,
+          // TODO: Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
+          // customerId: await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region),
         });
       }
 
