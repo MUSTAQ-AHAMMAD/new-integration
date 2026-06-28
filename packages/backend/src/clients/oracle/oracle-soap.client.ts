@@ -150,6 +150,11 @@ export interface CustomerProfileResult {
   paymentTermsName: string;
 }
 
+export interface CustomerProfile {
+  customerAccountId: number;
+  paymentTermsName: string;
+}
+
 export interface ItemMasterResult {
   itemNumber: string;
   uomCode?: string;
@@ -407,6 +412,21 @@ function extractTag(xml: string, tag: string): string {
   );
   const m = re.exec(xml);
   return m ? m[1].trim() : '';
+}
+
+/**
+ * Extract tag with fallback to multiple variations.
+ * Oracle Fusion SOAP responses vary by API version and configuration:
+ * - Older versions use PascalCase (e.g., CustomerAccountId)
+ * - Newer versions use camelCase (e.g., customerAccountId)
+ * This helper tries all variations in order of preference.
+ */
+function extractTagWithFallback(xml: string, ...tags: string[]): string {
+  for (const tag of tags) {
+    const value = extractTag(xml, tag);
+    if (value) return value;
+  }
+  return '';
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -714,20 +734,24 @@ export class OracleSoapClient implements OnModuleInit {
         this.assertNoFault(xml, 'findItem');
         
         // Extract item details from response
-        const itemNum = extractTag(xml, 'ItemNumber') || extractTag(xml, 'itemNumber');
+        const itemNum = extractTagWithFallback(xml, 'ItemNumber', 'itemNumber');
         if (!itemNum) {
           this.logger.debug(`Item not found: ${itemNumber}`);
           return null;
         }
         
-        const uomCode = extractTag(xml, 'PrimaryUOMCode') || 
-                       extractTag(xml, 'primaryUOMCode') || 
-                       extractTag(xml, 'UOMCode') ||
-                       extractTag(xml, 'uomCode') ||
-                       undefined;
-        const taxClassificationCode = extractTag(xml, 'TaxClassificationCode') || 
-                                     extractTag(xml, 'taxClassificationCode') ||
-                                     undefined;
+        const uomCode = extractTagWithFallback(
+          xml,
+          'PrimaryUOMCode',
+          'primaryUOMCode',
+          'UOMCode',
+          'uomCode',
+        ) || undefined;
+        const taxClassificationCode = extractTagWithFallback(
+          xml,
+          'TaxClassificationCode',
+          'taxClassificationCode',
+        ) || undefined;
         
         this.logger.debug(`Item found: ${itemNumber}, UOM: ${uomCode}, Tax: ${taxClassificationCode}`);
         return { itemNumber: itemNum, uomCode, taxClassificationCode };

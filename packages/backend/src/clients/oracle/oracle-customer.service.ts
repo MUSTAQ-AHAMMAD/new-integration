@@ -9,13 +9,13 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { OracleSoapClient } from './oracle-soap.client';
+import { OracleSoapClient, CustomerProfile } from './oracle-soap.client';
 
 @Injectable()
 export class OracleCustomerService {
   private readonly logger = new Logger(OracleCustomerService.name);
   private readonly customerCache = new Map<string, number>();
-  private readonly profileCache = new Map<string, { customerAccountId: number; paymentTermsName: string }>();
+  private readonly profileCache = new Map<string, CustomerProfile>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -89,10 +89,7 @@ export class OracleCustomerService {
   async getCustomerProfile(
     accountValue: string,
     region: string,
-  ): Promise<{
-    customerAccountId: number;
-    paymentTermsName: string;
-  } | null> {
+  ): Promise<CustomerProfile | null> {
     if (!accountValue) {
       return null;
     }
