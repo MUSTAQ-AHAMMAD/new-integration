@@ -410,7 +410,7 @@ export class OrderSyncProcessor {
           data: invoiceHeader.invoiceLines.map((il) => ({
             status: invoiceResult.serviceStatus ?? 'SUCCESS',
             requestDate: new Date(),
-            invoiceNumber: txnNumber,
+            invoiceNumber: txnNumber ? String(txnNumber) : null,
             lineNumber: il.lineNumber,
             itemNumber: il.itemNumber ?? null,
             description: il.description,
@@ -537,10 +537,11 @@ export class OrderSyncProcessor {
       );
       
       const txnNumber = await pushToOracle(payloads);
+      const txnNumberStr = txnNumber ? String(txnNumber) : null;
       if (order.isRefund) {
-        oracleCreditMemoNumber = txnNumber;
+        oracleCreditMemoNumber = txnNumberStr;
       } else {
-        oracleInvoiceNumber = txnNumber;
+        oracleInvoiceNumber = txnNumberStr;
       }
 
       const oracleReference =
