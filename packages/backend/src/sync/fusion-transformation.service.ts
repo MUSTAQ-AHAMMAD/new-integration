@@ -18,6 +18,9 @@ import {
   MiscReceiptRequest,
   StandardReceiptRequest,
 } from '../clients/oracle/oracle-soap.client';
+import { OracleUomService } from '../clients/oracle/oracle-uom.service';
+import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
+import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -31,7 +34,12 @@ export interface TransformResult {
 export class FusionTransformationService {
   private readonly logger = new Logger(FusionTransformationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uomService: OracleUomService,
+    private readonly taxService: OracleTaxService,
+    private readonly customerService: OracleCustomerService,
+  ) {}
 
   /**
    * Builds all SOAP payload objects for one VendHQ sale stored in the
@@ -148,10 +156,10 @@ export class FusionTransformationService {
         // FIXED: Use invoiceNumber instead of saleNumber to match Java implementation
         salesOrder: invoiceNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
-        // TODO: Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
-        // uomCode: await this.uomService.getUomCode(li.productId, region),
-        // TODO: Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
-        // taxClassificationCode: await this.taxService.getTaxCode(li.productId, region),
+        // Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
+        uomCode: await this.uomService.getUomCode(li.productId, region) ?? undefined,
+        // Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
+        taxClassificationCode: await this.taxService.getTaxClassificationCode(li.productId, region) ?? undefined,
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
@@ -203,8 +211,8 @@ export class FusionTransformationService {
           region,
           orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: pmtAmount,
-          // TODO: Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
-          // customerId: await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region),
+          // Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
+          customerId: await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region) ?? undefined,
         });
       }
 
