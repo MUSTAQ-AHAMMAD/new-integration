@@ -695,7 +695,7 @@ export class SyncController {
     const enriched = await this.orderEnrichmentService.enrichOrder(
       order.id,
       order.branchCode,
-      order.region || order.branchCode,
+      order.branchCode,
     );
 
     return {
@@ -703,7 +703,6 @@ export class SyncController {
       orderId: order.id,
       orderNumber: order.odooOrderNumber,
       branchCode: order.branchCode,
-      region: order.region || order.branchCode,
       totalAmount: this.convertDecimal(order.totalAmount),
       currency: order.currency,
       customerName: order.customerName,

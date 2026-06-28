@@ -106,19 +106,17 @@ export class OrderDiagnosticsService {
 
     // Fetch related data in parallel
     const [backupOdoo, backupIbq, storeConfig] = await Promise.all([
-      queueEntry.odooBackupOrderId
-        ? this.prisma.backupOdooOrder.findUnique({
-            where: { id: queueEntry.odooBackupOrderId },
-            select: {
-              orderId: true,
-              orderName: true,
-              state: true,
-              amountTotal: true,
-              dateOrder: true,
-              branchId: true,
-            },
-          })
-        : null,
+      this.prisma.backupOdooOrder.findFirst({
+        where: { orderName: queueEntry.odooOrderNumber },
+        select: {
+          orderId: true,
+          orderName: true,
+          state: true,
+          amountTotal: true,
+          dateOrder: true,
+          branchId: true,
+        },
+      }),
       this.prisma.backupIbqOrder.findFirst({
         where: {
           OR: [

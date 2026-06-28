@@ -77,7 +77,6 @@ async function main() {
       console.log(`isRefund: ${entry.isRefund}`);
       console.log(`Total Amount: ${entry.totalAmount}`);
       console.log(`Currency: ${entry.currency}`);
-      console.log(`Region: ${entry.region}`);
       console.log(`Negative Inventory: ${entry.negativeInventoryFlag}`);
       console.log(`Sync Attempts: ${entry.syncAttempts}`);
       console.log(`Last Sync: ${entry.lastSyncAt}`);
@@ -98,41 +97,39 @@ async function main() {
         if (!entry.isPaid) {
           console.log('   Reason: Order is not marked as paid');
           
-          // Check backup for state
-          if (entry.odooBackupOrderId) {
-            const backup = await prisma.backupOdooOrder.findUnique({
-              where: { id: entry.odooBackupOrderId },
-            });
+          // Check backup for state using order number
+          const backup = await prisma.backupOdooOrder.findFirst({
+            where: { orderName: entry.odooOrderNumber },
+          });
+          
+          if (backup) {
+            console.log(`   Source State: "${backup.state}"`);
+            console.log(`   Amount Total: ${backup.amountTotal}`);
             
-            if (backup) {
-              console.log(`   Source State: "${backup.state}"`);
-              console.log(`   Amount Total: ${backup.amountTotal}`);
-              
-              // Check if state is in paid states
-              const PAID_STATES = ['paid', 'done', 'posted', 'invoiced', 'sale', 'invoice', 
-                                    'confirmed', 'validated', 'sent', 'open', 'to invoice', 
-                                    'to_invoice', 'progress', 'in_payment', 'in payment', 
-                                    'processing', 'complete', 'completed', 'closed', 
-                                    'finalized', 'finalised'];
-              const state = (backup.state || '').toLowerCase().trim();
-              
-              if (PAID_STATES.includes(state)) {
-                console.log('   ✅ State IS in supported paid states list');
-                console.log('   🐛 BUG: Payment detection may have failed during ingestion');
-              } else {
-                console.log(`   ❌ State "${backup.state}" is NOT in supported paid states`);
-                console.log('   RECOMMENDATION: Check if this state should be considered paid');
-                console.log('   If yes, it may need to be added to PAID_ORDER_STATES in odoo-utils.ts');
-              }
-              
-              // Check for payment data in rawJson
-              const rawData = backup.rawJson as Record<string, unknown>;
-              if (rawData?.statement_ids) {
-                console.log(`   Payment Data (statement_ids): ${JSON.stringify(rawData.statement_ids)}`);
-              }
-              if (rawData?.payment_ids) {
-                console.log(`   Payment Data (payment_ids): ${JSON.stringify(rawData.payment_ids)}`);
-              }
+            // Check if state is in paid states
+            const PAID_STATES = ['paid', 'done', 'posted', 'invoiced', 'sale', 'invoice', 
+                                  'confirmed', 'validated', 'sent', 'open', 'to invoice', 
+                                  'to_invoice', 'progress', 'in_payment', 'in payment', 
+                                  'processing', 'complete', 'completed', 'closed', 
+                                  'finalized', 'finalised'];
+            const state = (backup.state || '').toLowerCase().trim();
+            
+            if (PAID_STATES.includes(state)) {
+              console.log('   ✅ State IS in supported paid states list');
+              console.log('   🐛 BUG: Payment detection may have failed during ingestion');
+            } else {
+              console.log(`   ❌ State "${backup.state}" is NOT in supported paid states`);
+              console.log('   RECOMMENDATION: Check if this state should be considered paid');
+              console.log('   If yes, it may need to be added to PAID_ORDER_STATES in odoo-utils.ts');
+            }
+            
+            // Check for payment data in rawJson
+            const rawData = backup.rawJson as Record<string, unknown>;
+            if (rawData?.statement_ids) {
+              console.log(`   Payment Data (statement_ids): ${JSON.stringify(rawData.statement_ids)}`);
+            }
+            if (rawData?.payment_ids) {
+              console.log(`   Payment Data (payment_ids): ${JSON.stringify(rawData.payment_ids)}`);
             }
           }
         }

@@ -84,13 +84,6 @@ model OrderSyncQueue {
   odooOrderNumber        String
   branchCode             String
   branchName             String?
-  /// Region identifier (e.g. "AE", "KW") from the OdooCredential that fetched this order.
-  /// Populated during ingest so the processor can look up FusionSalesMetadata without
-  /// relying solely on the numeric branchCode.
-  region                 String?
-  /// FK to BackupOdooOrder.id — populated when the order was fetched via the Odoo
-  /// backup path. Lets the processor retrieve the full raw backup for transformation.
-  odooBackupOrderId      String?
   orderDate              DateTime
   orderDateUtc           DateTime
   originalTimezone       String
@@ -110,24 +103,6 @@ model OrderSyncQueue {
   oracleCreditMemoNumber String?
   negativeInventoryFlag  Boolean    @default(false)
   negativeInventoryItems Json?
-  /// Order lines stored as JSON array for direct processing without backup tables
-  /// Structure: [{ productId, productName, productCode, qty, priceUnit, priceSubtotal, priceSubtotalIncl, discount, taxName }]
-  orderLines             Json?
-  /// Payment entries stored as JSON array for direct processing without backup tables
-  /// Structure: [{ paymentId, paymentName, amount, currency, paymentDate }]
-  orderPayments          Json?
-  /// Warehouse/outlet name from the source system
-  warehouseName          String?
-  /// POS config/register name from the source system
-  posConfigName          String?
-  /// Customer type (e.g., NORMAL, HUNGERSTATION, TALABAT)
-  customerType           String?
-  /// Subtotal excluding tax (amount_untaxed)
-  amountUntaxed          Decimal?   @db.Decimal(15, 2)
-  /// Tax amount
-  amountTax              Decimal?   @db.Decimal(15, 2)
-  /// Discount/loyalty amount
-  amountDiscount         Decimal?   @db.Decimal(15, 2)
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
 
@@ -136,7 +111,6 @@ model OrderSyncQueue {
   @@unique([odooOrderId, branchCode])
   @@index([status])
   @@index([branchCode])
-  @@index([region])
   @@index([orderDate])
   @@index([orderDateUtc])
   @@index([isPaid])
