@@ -515,16 +515,16 @@ export class SyncController {
   }
 
   /**
-   * POST /sync/sync-direct/:orderId - Directly sync a specific order
-   * 
-   * Useful for testing and manual sync of individual orders
+   * Sync a specific order directly
    */
   @Post('sync-direct/:orderId')
   @ApiOperation({ 
     summary: 'Directly sync a specific order',
     description: 'Resets order to PENDING and immediately queues it for sync. Useful for testing.'
   })
-  async syncDirectOrder(@Param('orderId') orderId: string) {
+  async syncOrderDirect(@Param('orderId') orderId: string) {
+    this.logger.log(`Direct sync for order: ${orderId}`);
+
     const order = await this.prisma.orderSyncQueue.findUnique({
       where: { id: orderId },
     });
@@ -539,12 +539,11 @@ export class SyncController {
       data: {
         status: SyncStatus.PENDING,
         syncAttempts: 0,
-        validationErrors: Prisma.JsonNull,
-        lastSyncAt: null,
+        errorMessage: null,
       },
     });
 
-    // Queue for sync
+    // Enqueue for sync
     await this.queuesService.enqueueOrderSync({
       orderSyncQueueId: order.id,
       odooOrderId: order.odooOrderId,
@@ -552,15 +551,15 @@ export class SyncController {
     });
 
     return {
-      message: 'Order queued for sync',
-      order: new OrderResponseDto(order),
+      message: `Order ${orderId} queued for sync`,
+      orderId: order.id,
+      orderNumber: order.odooOrderNumber,
+      status: 'PENDING',
     };
   }
 
   /**
-   * GET /sync/order-data/:orderSyncQueueId - Get order data with lines and payments
-   * 
-   * Test endpoint to verify that order lines and payments exist in the backup tables
+   * Get order data with lines and payments
    */
   @Get('order-data/:orderSyncQueueId')
   @ApiOperation({
@@ -568,38 +567,29 @@ export class SyncController {
     description: 'Retrieves order along with its line items and payments from BackupOdooOrder tables. Use this to verify data exists before enrichment.'
   })
   async getOrderData(@Param('orderSyncQueueId') orderSyncQueueId: string) {
-    // Get order from OrderSyncQueue
+    this.logger.log(`Getting order data for: ${orderSyncQueueId}`);
+
     const order = await this.prisma.orderSyncQueue.findUnique({
       where: { id: orderSyncQueueId },
     });
 
     if (!order) {
-      throw new NotFoundException(`Order ${orderSyncQueueId} not found in OrderSyncQueue`);
+      throw new NotFoundException(`Order ${orderSyncQueueId} not found`);
     }
 
-    let orderLines: any[] = [];
-    let payments: any[] = [];
-    let backupOrder: any = null;
+    // Get backup lines
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: { 
+        orderId: order.odooOrderNumber,
+      },
+    });
 
-    // Try to get from backup tables if odooBackupOrderId is set
-    if (order.odooBackupOrderId) {
-      backupOrder = await this.prisma.backupOdooOrder.findUnique({
-        where: { id: order.odooBackupOrderId },
-        include: {
-          orderLines: true,
-          orderPayments: true,
-        },
-      });
-
-      if (backupOrder) {
-        orderLines = backupOrder.orderLines || [];
-        payments = backupOrder.orderPayments || [];
-      }
-    }
-
-    // Also check if data exists in JSON fields
-    const jsonOrderLines = order.orderLines ? (Array.isArray(order.orderLines) ? order.orderLines : []) : [];
-    const jsonPayments = order.orderPayments ? (Array.isArray(order.orderPayments) ? order.orderPayments : []) : [];
+    // Get backup payments
+    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: { 
+        orderId: order.odooOrderNumber,
+      },
+    });
 
     return {
       order: {
@@ -607,123 +597,143 @@ export class SyncController {
         odooOrderId: order.odooOrderId,
         odooOrderNumber: order.odooOrderNumber,
         branchCode: order.branchCode,
-        region: order.region,
-        odooBackupOrderId: order.odooBackupOrderId,
-        totalAmount: order.totalAmount,
+        branchName: order.branchName,
+        totalAmount: Number(order.totalAmount),
         currency: order.currency,
         status: order.status,
-        orderDate: order.orderDate,
+        syncAttempts: order.syncAttempts,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
       },
-      backupOrder: backupOrder ? {
-        id: backupOrder.id,
-        orderId: backupOrder.orderId,
-        name: backupOrder.name,
-        amountTotal: backupOrder.amountTotal,
-      } : null,
-      orderLinesCount: orderLines.length,
-      orderLines: orderLines.slice(0, 10), // Show first 10
-      paymentsCount: payments.length,
-      payments: payments.slice(0, 10), // Show first 10
-      jsonOrderLinesCount: jsonOrderLines.length,
-      jsonPaymentsCount: jsonPayments.length,
-      dataSource: orderLines.length > 0 ? 'backup_tables' : (jsonOrderLines.length > 0 ? 'json_fields' : 'none'),
+      backupLines: {
+        count: backupLines.length,
+        data: backupLines.slice(0, 10),
+      },
+      backupPayments: {
+        count: backupPayments.length,
+        data: backupPayments.slice(0, 10),
+      },
     };
   }
 
   /**
-   * POST /sync/test-enrich/:orderSyncQueueId - Test enrichment for a specific order
-   * 
-   * Test endpoint to verify that enrichment works with the backup table data
+   * Test enrichment - Build Oracle payloads without sending to Oracle
    */
   @Post('test-enrich/:orderSyncQueueId')
   @ApiOperation({
     summary: 'Test order enrichment with backup table data',
     description: 'Runs enrichment on a specific order to verify that lines and payments are being fetched correctly from backup tables.'
   })
-  async testEnrichOrder(@Param('orderSyncQueueId') orderSyncQueueId: string) {
+  async testEnrichOrder(@Param('orderSyncQueueId') orderSyncQueueId: string): Promise<any> {
+    this.logger.log(`Testing enrichment for order: ${orderSyncQueueId}`);
+
     const order = await this.prisma.orderSyncQueue.findUnique({
       where: { id: orderSyncQueueId },
     });
 
     if (!order) {
-      throw new NotFoundException(`Order ${orderSyncQueueId} not found in OrderSyncQueue`);
+      throw new NotFoundException(`Order ${orderSyncQueueId} not found`);
     }
 
-    try {
-      const enriched = await this.orderEnrichmentService.enrichOrder(
-        orderSyncQueueId,
-        order.branchCode,
-        order.region || 'AE',
-      );
+    // Get backup data
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: { 
+        orderId: order.odooOrderNumber,
+      },
+    });
 
-      return {
-        success: true,
-        message: 'Order enrichment successful',
-        order: {
-          id: order.id,
-          odooOrderId: order.odooOrderId,
-          odooOrderNumber: order.odooOrderNumber,
-          branchCode: order.branchCode,
-        },
-        enrichedData: {
-          invoiceLinesCount: enriched.invoiceHeader.invoiceLines.length,
-          invoiceLines: enriched.invoiceHeader.invoiceLines.slice(0, 5),
-          standardReceiptsCount: enriched.standardReceipts.length,
-          standardReceipts: enriched.standardReceipts.slice(0, 5),
-          miscReceiptsCount: enriched.miscReceipts.length,
-          applyReceiptsCount: enriched.applyReceipts.length,
-          journalHeadersCount: enriched.journalHeaders.length,
-        },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: 'Order enrichment failed',
-        error: error instanceof Error ? error.message : String(error),
-        order: {
-          id: order.id,
-          odooOrderId: order.odooOrderId,
-          odooOrderNumber: order.odooOrderNumber,
-          branchCode: order.branchCode,
-        },
-      };
-    }
+    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: { 
+        orderId: order.odooOrderNumber,
+      },
+    });
+
+    // Build enriched payloads
+    const enriched = await this.orderEnrichmentService.enrichOrder(
+      order.id,
+      order.branchCode,
+      order.region || order.branchCode,
+    );
+
+    return {
+      success: true,
+      orderId: order.id,
+      orderNumber: order.odooOrderNumber,
+      branchCode: order.branchCode,
+      region: order.region || order.branchCode,
+      totalAmount: Number(order.totalAmount),
+      currency: order.currency,
+      customerName: order.customerName,
+      backupLinesCount: backupLines.length,
+      backupPaymentsCount: backupPayments.length,
+      enriched: {
+        invoiceLines: enriched.invoiceHeader.invoiceLines.length,
+        invoiceLinesData: enriched.invoiceHeader.invoiceLines.slice(0, 5),
+        standardReceipts: enriched.standardReceipts.length,
+        applyReceipts: enriched.applyReceipts.length,
+        miscReceipts: enriched.miscReceipts.length,
+        journalHeaders: enriched.journalHeaders.length,
+      },
+      payload: enriched, // Full payload for inspection
+    };
   }
 
-  @Get('/debug-backup/:orderNumber')
+  /**
+   * Debug endpoint - Check if an order has backup data
+   */
+  @Get('debug-backup/:orderNumber')
   @ApiOperation({ summary: 'Debug backup data for an order by order number' })
   async debugBackup(@Param('orderNumber') orderNumber: string) {
-    // Get order
+    this.logger.log(`Debugging backup for order: ${orderNumber}`);
+
+    // 1. Find the order in OrderSyncQueue
     const order = await this.prisma.orderSyncQueue.findFirst({
-      where: { odooOrderNumber: orderNumber },
+      where: { 
+        odooOrderNumber: orderNumber,
+      },
     });
 
-    // Parse order number as integer for backup table queries
-    const orderIdInt = parseInt(orderNumber, 10);
-
-    // Get backup lines
-    const lines = await this.prisma.backupOdooOrderLine.findMany({
-      where: { orderId: orderIdInt },
+    // 2. Find backup lines
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: { 
+        orderId: orderNumber,
+      },
     });
 
-    // Get backup payments
-    const payments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: { orderId: orderIdInt },
+    // 3. Find backup payments
+    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: { 
+        orderId: orderNumber,
+      },
+    });
+
+    // 4. Find backup order
+    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+      where: { 
+        orderNumber: orderNumber,
+      },
     });
 
     return {
       orderNumber,
       orderExists: !!order,
       orderId: order?.id,
+      orderStatus: order?.status,
+      orderSyncAttempts: order?.syncAttempts,
+      backupOrderExists: !!backupOrder,
+      backupOrderId: backupOrder?.id,
       backupLines: {
-        count: lines.length,
-        sample: lines.slice(0, 3),
+        count: backupLines.length,
+        sample: backupLines.slice(0, 3),
       },
       backupPayments: {
-        count: payments.length,
-        sample: payments.slice(0, 3),
+        count: backupPayments.length,
+        sample: backupPayments.slice(0, 3),
       },
-      canSync: lines.length > 0 && payments.length > 0,
+      canSync: backupLines.length > 0 || backupPayments.length > 0 || !!backupOrder,
+      summary: backupLines.length > 0 
+        ? `✅ Found ${backupLines.length} lines and ${backupPayments.length} payments` 
+        : '⚠️ No backup data found - will use minimal data',
     };
   }
 }
