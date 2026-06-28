@@ -136,21 +136,31 @@ export class OracleCustomerService {
   }
 
   /**
-   * Clear the customer ID cache.
+   * Clear all customer caches.
    * Useful when customer data changes in Oracle.
    */
   clearCache(): void {
     this.customerCache.clear();
-    this.logger.log('Customer ID cache cleared');
+    this.profileCache.clear();
+    this.logger.log('Customer ID and profile caches cleared');
   }
 
   /**
-   * Get cache statistics.
+   * Get cache statistics for both customer ID and profile caches.
    */
-  getCacheStats(): { size: number; keys: string[] } {
+  getCacheStats(): { 
+    customerIdCache: { size: number; keys: string[] };
+    profileCache: { size: number; keys: string[] };
+  } {
     return {
-      size: this.customerCache.size,
-      keys: Array.from(this.customerCache.keys()),
+      customerIdCache: {
+        size: this.customerCache.size,
+        keys: Array.from(this.customerCache.keys()),
+      },
+      profileCache: {
+        size: this.profileCache.size,
+        keys: Array.from(this.profileCache.keys()),
+      },
     };
   }
 }
