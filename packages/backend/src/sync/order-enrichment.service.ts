@@ -260,13 +260,12 @@ export class OrderEnrichmentService {
       });
 
       applyReceipts.push({
+        receiptDate: saleDate,
         transactionNumber: order.odooOrderNumber,
         receiptNumber,
         amountApplied: amount,
         receiptCurrency: currency,
         transactionSource: 'Odoo',
-        accountingDate: saleDate,
-        applicationDate: saleDate,
       });
     }
 
@@ -286,13 +285,12 @@ export class OrderEnrichmentService {
       });
 
       applyReceipts.push({
+        receiptDate: saleDate,
         transactionNumber: order.odooOrderNumber,
         receiptNumber,
         amountApplied: totalAmount,
         receiptCurrency: currency,
         transactionSource: 'Odoo',
-        accountingDate: saleDate,
-        applicationDate: saleDate,
       });
     }
 
@@ -424,13 +422,12 @@ export class OrderEnrichmentService {
 
       // Create apply receipt
       const applyReceipt: ApplyReceiptRequest = {
+        receiptDate: saleDate,
         transactionNumber: order.odooOrderNumber,
         receiptNumber,
         amountApplied: amount,
         receiptCurrency: invoiceHeader.invoiceCurrencyCode,
         transactionSource: invoiceHeader.transactionSource,
-        accountingDate: saleDate,
-        applicationDate: saleDate,
       };
       applyReceipts.push(applyReceipt);
     }
@@ -454,13 +451,12 @@ export class OrderEnrichmentService {
         standardReceipts.push(receipt);
 
         const applyReceipt: ApplyReceiptRequest = {
+          receiptDate: saleDate,
           transactionNumber: order.odooOrderNumber,
           receiptNumber,
           amountApplied: total,
           receiptCurrency: invoiceHeader.invoiceCurrencyCode,
           transactionSource: invoiceHeader.transactionSource,
-          accountingDate: saleDate,
-          applicationDate: saleDate,
         };
         applyReceipts.push(applyReceipt);
       }
@@ -539,13 +535,12 @@ export class OrderEnrichmentService {
       });
 
       applyReceipts.push({
+        receiptDate: saleDate,
         transactionNumber: order.odooOrderNumber,
         receiptNumber,
         amountApplied: total,
         receiptCurrency: order.currency || 'AED',
         transactionSource: 'Odoo',
-        accountingDate: saleDate,
-        applicationDate: saleDate,
       });
     }
 
