@@ -373,10 +373,12 @@ export class OrderSyncProcessor {
           await this.soapClient.createSimpleInvoice(invoiceHeader);
         
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
-        const txnNumber = 
+        // Convert to number since Prisma schema expects Int
+        const txnNumberStr = 
           invoiceResult.transactionNumber ?? 
           invoiceResult.customerTrxId ?? 
           odooOrderId;
+        const txnNumber = parseInt(txnNumberStr, 10) || null;
         
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
