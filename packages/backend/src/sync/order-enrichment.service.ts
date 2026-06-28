@@ -41,13 +41,12 @@ export interface ReceiptRequest {
 }
 
 export interface ApplyReceiptRequest {
+  receiptDate: Date;
   transactionNumber: string;
   receiptNumber: string;
   amountApplied: number;
   receiptCurrency: string;
   transactionSource: string;
-  accountingDate: Date;
-  applicationDate: Date;
 }
 
 export interface EnrichedOrderData {
