@@ -539,7 +539,7 @@ export class SyncController {
       data: {
         status: SyncStatus.PENDING,
         syncAttempts: 0,
-        errorMessage: null,
+        validationErrors: Prisma.JsonNull,  // ✅ Fixed
       },
     });
 
@@ -577,18 +577,25 @@ export class SyncController {
       throw new NotFoundException(`Order ${orderSyncQueueId} not found`);
     }
 
-    // Get backup lines
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+    // Get backup order
+    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
-        orderId: order.odooOrderNumber,
+        orderNumber: order.odooOrderNumber,
       },
     });
 
-    // Get backup payments
+    // Get backup lines - use numeric orderId
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }
+        : { orderId: 0 },
+    });
+
+    // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: { 
-        orderId: order.odooOrderNumber,
-      },
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }
+        : { orderId: 0 },
     });
 
     return {
@@ -605,6 +612,7 @@ export class SyncController {
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
       },
+      backupOrderFound: !!backupOrder,
       backupLines: {
         count: backupLines.length,
         data: backupLines.slice(0, 10),
@@ -635,17 +643,25 @@ export class SyncController {
       throw new NotFoundException(`Order ${orderSyncQueueId} not found`);
     }
 
-    // Get backup data
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+    // Get backup order
+    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
-        orderId: order.odooOrderNumber,
+        orderNumber: order.odooOrderNumber,
       },
     });
 
+    // Get backup lines - use numeric orderId
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }
+        : { orderId: 0 },
+    });
+
+    // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: { 
-        orderId: order.odooOrderNumber,
-      },
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }
+        : { orderId: 0 },
     });
 
     // Build enriched payloads
@@ -664,6 +680,7 @@ export class SyncController {
       totalAmount: Number(order.totalAmount),
       currency: order.currency,
       customerName: order.customerName,
+      backupOrderFound: !!backupOrder,
       backupLinesCount: backupLines.length,
       backupPaymentsCount: backupPayments.length,
       enriched: {
@@ -693,25 +710,25 @@ export class SyncController {
       },
     });
 
-    // 2. Find backup lines
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
-      where: { 
-        orderId: orderNumber,
-      },
-    });
-
-    // 3. Find backup payments
-    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: { 
-        orderId: orderNumber,
-      },
-    });
-
-    // 4. Find backup order
+    // 2. Find backup lines - use the numeric order ID
+    // First, find the backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { 
         orderNumber: orderNumber,
       },
+    });
+
+    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
+        : { orderId: 0 },  // No match
+    });
+
+    // 3. Find backup payments
+    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+      where: backupOrder 
+        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
+        : { orderId: 0 },  // No match
     });
 
     return {
