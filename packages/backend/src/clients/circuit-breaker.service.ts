@@ -171,6 +171,27 @@ export class CircuitBreakerService {
     return snap.state === CircuitState.OPEN;
   }
 
+  /**
+   * Reset a circuit breaker to CLOSED state
+   * This can be used to manually recover from a OPEN state
+   */
+  async reset(name: string): Promise<{ success: boolean; message: string }> {
+    try {
+      await this.closeCircuit(name);
+      this.logger.log(`Circuit breaker ${name} has been manually reset to CLOSED state`);
+      return {
+        success: true,
+        message: `Circuit breaker ${name} has been reset to CLOSED state`,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to reset circuit breaker ${name}:`, error);
+      return {
+        success: false,
+        message: `Failed to reset circuit breaker ${name}: ${error.message}`,
+      };
+    }
+  }
+
   // ── Private helpers ──────────────────────────────────────────────
 
   private async circuitExists(name: string): Promise<boolean> {
