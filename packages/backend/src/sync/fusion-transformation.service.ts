@@ -278,13 +278,12 @@ export class FusionTransformationService {
 
     // ── 7. Apply receipts (wired after receipt creation) ─────
     const applyReceipts: ApplyReceiptRequest[] = standardReceipts.map((sr) => ({
+      receiptDate: saleDate,
       transactionNumber: txnNumber,
       receiptNumber: sr.receiptNumber,
       amountApplied: sr.receiptAmount,
       receiptCurrency: sr.currencyCode,
       transactionSource: invoiceHeader.transactionSource,
-      accountingDate: saleDate,
-      applicationDate: saleDate,
     }));
 
     // ── 8. Journal entries (non-NORMAL customers only) ───────
