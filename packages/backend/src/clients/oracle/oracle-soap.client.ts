@@ -655,11 +655,31 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
+        
         const customerTrxId =
           extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
-        this.logger.log(`Apply receipt created: receipt=${receiptNumber}`);
+        
+        // ✅ Validate response contains required data
+        if (!receiptNumber || receiptNumber.trim() === '') {
+          this.logger.error(
+            `❌ Apply receipt creation returned empty receipt number:\n` +
+            `  Transaction Number: ${req.transactionNumber}\n` +
+            `  Requested Receipt Number: ${req.receiptNumber}\n` +
+            `  Amount Applied: ${req.amountApplied}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle apply receipt creation failed: no receipt number returned. ` +
+            `Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`
+          );
+        }
+        
+        this.logger.log(
+          `✅ Apply receipt created: receipt=${receiptNumber}, ` +
+          `applied=${req.amountApplied} to invoice ${req.transactionNumber}`,
+        );
         return { customerTrxId, receiptNumber };
       }),
     );
@@ -741,9 +761,22 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'importJournals');
+        
         const result = extractTag(xml, 'result') || extractTag(xml, 'return');
         const jeHeaderId = result ? parseInt(result, 10) : null;
-        this.logger.log(`Journal imported: jeHeaderId=${String(jeHeaderId)}`);
+        
+        // ✅ Log warning if journal import failed but don't throw (journal is optional)
+        if (jeHeaderId === null || isNaN(jeHeaderId)) {
+          this.logger.warn(
+            `⚠️  Journal import did not return a valid JE Header ID:\n` +
+            `  Batch Name: ${header.batchName}\n` +
+            `  Result: ${result || 'null'}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+        } else {
+          this.logger.log(`✅ Journal imported successfully: jeHeaderId=${jeHeaderId}`);
+        }
+        
         return jeHeaderId !== null && !isNaN(jeHeaderId) ? jeHeaderId : null;
       }),
     );
