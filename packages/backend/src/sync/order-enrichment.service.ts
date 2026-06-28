@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
+import { ApplyReceiptRequest } from '../clients/oracle/oracle-soap.client';
 
 // Define the types properly - matching Oracle client expectations
 export interface InvoiceLine {
@@ -38,15 +39,6 @@ export interface ReceiptRequest {
   accountValue: string;
   orgId: number;
   receiptAmount: number;
-}
-
-export interface ApplyReceiptRequest {
-  receiptDate: Date;
-  transactionNumber: string;
-  receiptNumber: string;
-  amountApplied: number;
-  receiptCurrency: string;
-  transactionSource: string;
 }
 
 export interface EnrichedOrderData {

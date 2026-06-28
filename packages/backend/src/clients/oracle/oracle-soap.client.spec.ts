@@ -62,13 +62,12 @@ function makeApplyReceiptRequest(
   overrides: Partial<ApplyReceiptRequest> = {},
 ): ApplyReceiptRequest {
   return {
+    receiptDate: new Date('2024-01-15T10:00:00Z'),
     transactionNumber: 'SALE-001',
     receiptNumber: 'Cash-SALE-001',
     amountApplied: 100,
     receiptCurrency: 'AED',
     transactionSource: 'VendHQ',
-    accountingDate: new Date('2024-01-15T10:00:00Z'),
-    applicationDate: new Date('2024-01-15T10:00:00Z'),
     ...overrides,
   };
 }
