@@ -18,6 +18,9 @@ import {
   MiscReceiptRequest,
   StandardReceiptRequest,
 } from '../clients/oracle/oracle-soap.client';
+import { OracleUomService } from '../clients/oracle/oracle-uom.service';
+import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
+import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -31,7 +34,12 @@ export interface TransformResult {
 export class FusionTransformationService {
   private readonly logger = new Logger(FusionTransformationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uomService: OracleUomService,
+    private readonly taxService: OracleTaxService,
+    private readonly customerService: OracleCustomerService,
+  ) {}
 
   /**
    * Builds all SOAP payload objects for one VendHQ sale stored in the
@@ -123,7 +131,10 @@ export class FusionTransformationService {
     };
 
     // ── 5. Build InvoiceLines ────────────────────────────────
-    const saleNumber = sale.saleNumber ?? '';
+    // CRITICAL: Use invoiceNumber (VendHQ invoice/receipt number) as Oracle salesOrder reference
+    // NOT saleNumber (internal sequence). Matches Java: BackupVendhqSales.invoiceNumber
+    const invoiceNumber = sale.invoiceNumber;
+
     for (const li of sale.backupLineItems) {
       const qty = Number(li.quantity ?? 1);
       if (qty === 0) continue;
@@ -141,14 +152,20 @@ export class FusionTransformationService {
         quantity: isDiscount && total > 0 ? 1 : qty,
         unitSellingPrice: unitPrice,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: saleNumber,
+        // FIXED: Use invoiceNumber instead of saleNumber to match Java implementation
+        salesOrder: invoiceNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
+        // Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
+        uomCode: (await this.uomService.getUomCode(li.productId, region)) ?? undefined,
+        // Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
+        taxClassificationCode: (await this.taxService.getTaxClassificationCode(li.productId, region)) ?? undefined,
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
 
     // ── 6. Build Standard Receipts ───────────────────────────
-    const txnNumber = transactionNumberOverride ?? saleNumber;
+    // Use invoiceNumber for transaction references, keep saleNumber for fallback
+    const txnNumber = transactionNumberOverride ?? invoiceNumber;
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
@@ -189,8 +206,12 @@ export class FusionTransformationService {
           receiptNumber: `${pmtMethod}-${txnNumber}`,
           remittanceBankAccountId: Number(bankAccountId!),
           accountValue: invoiceHeader.billToAccountNumber,
+          // FIXED: Add region field for duplicate checking in Oracle
+          region,
           orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: pmtAmount,
+          // Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
+          customerId: await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region),
         });
       }
 

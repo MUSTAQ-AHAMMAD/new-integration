@@ -145,9 +145,15 @@ export interface JournalHeader {
   jeHeaderId?: number;
 }
 
-export interface CustomerProfileResult {
+export interface CustomerProfile {
   customerAccountId: number;
   paymentTermsName: string;
+}
+
+export interface ItemMasterResult {
+  itemNumber: string;
+  uomCode?: string;
+  taxClassificationCode?: string;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -361,6 +367,26 @@ function buildCustomerProfileSoap(accountNumber: string): string {
 </soapenv:Envelope>`;
 }
 
+function buildItemMasterSoap(itemNumber: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:typ="http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/types/"
+  xmlns:typ1="http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <typ:findItem>
+      <typ:findCriteria>
+        <typ1:ItemNumber>${escapeXml(itemNumber)}</typ1:ItemNumber>
+      </typ:findCriteria>
+      <typ:findControl>
+        <typ1:retrieveAllTranslations>false</typ1:retrieveAllTranslations>
+      </typ:findControl>
+    </typ:findItem>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -381,6 +407,21 @@ function extractTag(xml: string, tag: string): string {
   );
   const m = re.exec(xml);
   return m ? m[1].trim() : '';
+}
+
+/**
+ * Extract tag with fallback to multiple variations.
+ * Oracle Fusion SOAP responses vary by API version and configuration:
+ * - Older versions use PascalCase (e.g., CustomerAccountId)
+ * - Newer versions use camelCase (e.g., customerAccountId)
+ * This helper tries all variations in order of preference.
+ */
+function extractTagWithFallback(xml: string, ...tags: string[]): string {
+  for (const tag of tags) {
+    const value = extractTag(xml, tag);
+    if (value) return value;
+  }
+  return '';
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -631,7 +672,7 @@ export class OracleSoapClient implements OnModuleInit {
    */
   async getCustomerProfile(
     accountNumber: string,
-  ): Promise<CustomerProfileResult> {
+  ): Promise<CustomerProfile> {
     return this.circuitBreaker.execute('oracle:getCustomerProfile', () =>
       this.withRetries(async () => {
         const body = buildCustomerProfileSoap(accountNumber);
@@ -658,6 +699,57 @@ export class OracleSoapClient implements OnModuleInit {
           extractTag(xml, 'paymentTerms') ||
           'IMMEDIATE';
         return { customerAccountId, paymentTermsName };
+      }),
+    );
+  }
+
+  // ── Item Master Service ────────────────────────────────────
+
+  /**
+   * Calls Oracle Fusion ItemServiceV2.findItem
+   * WSDL: /fscmService/ItemServiceV2?WSDL
+   */
+  async getItemMaster(
+    itemNumber: string,
+  ): Promise<ItemMasterResult | null> {
+    return this.circuitBreaker.execute('oracle:getItemMaster', () =>
+      this.withRetries(async () => {
+        const body = buildItemMasterSoap(itemNumber);
+        const resp = await this.http.post(
+          '/fscmService/ItemServiceV2',
+          body,
+          {
+            headers: {
+              SOAPAction:
+                'http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/findItem',
+            },
+          },
+        );
+        const xml = resp.data as string;
+        this.assertNoFault(xml, 'findItem');
+        
+        // Extract item details from response
+        const itemNum = extractTagWithFallback(xml, 'ItemNumber', 'itemNumber');
+        if (!itemNum) {
+          this.logger.debug(`Item not found: ${itemNumber}`);
+          return null;
+        }
+        
+        const uomCode = extractTagWithFallback(
+          xml,
+          'PrimaryUOMCode',
+          'primaryUOMCode',
+          'UOMCode',
+          'uomCode',
+        ) || undefined;
+        const taxClassificationCode = extractTagWithFallback(
+          xml,
+          'TaxClassificationCode',
+          'taxClassificationCode',
+        ) || undefined;
+        
+        this.logger.debug(`Item found: ${itemNumber}, UOM: ${uomCode}, Tax: ${taxClassificationCode}`);
+        return { itemNumber: itemNum, uomCode, taxClassificationCode };
       }),
     );
   }

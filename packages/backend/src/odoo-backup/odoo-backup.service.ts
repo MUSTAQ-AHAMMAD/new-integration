@@ -117,6 +117,25 @@ function extractFirstTaxName(taxId: unknown): string | null {
 }
 
 /**
+ * Extract tax IDs from Odoo tax_ids or tax_id field and return as JSON string array.
+ * Handles both plain integer arrays and Many2one tuple arrays.
+ * 
+ * @example
+ *   extractTaxIdsJson([26, 27])           → "[26,27]"
+ *   extractTaxIdsJson([[26, "VAT 5%"]])   → "[26]"
+ *   extractTaxIdsJson(null)               → null
+ */
+function extractTaxIdsJson(taxField: unknown): string | null {
+  if (!Array.isArray(taxField) || taxField.length === 0) return null;
+  
+  const ids = taxField
+    .map((t) => (typeof t === 'number' ? t : Array.isArray(t) ? t[0] : null))
+    .filter((t) => t != null);
+  
+  return ids.length > 0 ? JSON.stringify(ids) : null;
+}
+
+/**
  * Extract the payment method name from an Odoo payment/statement record.
  *
  * Resolution order (matching the old integration's PAYMENT_TYPE logic):
@@ -1174,6 +1193,7 @@ export class OdooBackupService {
         // Prefer tax_ids (plural) which is what most Odoo variants return;
         // fall back to tax_id (singular) for older/non-standard variants.
         const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
+        const taxIds = extractTaxIdsJson(line.tax_ids ?? line.tax_id);
 
         const lineName =
           typeof line.name === 'string' ? line.name : null;
@@ -1195,6 +1215,11 @@ export class OdooBackupService {
               : null,
           discount: line.discount != null ? Number(line.discount) : null,
           taxName,
+          taxIds,
+          baseUomId: resolveId(line.base_uom_id),
+          baseUomName: resolveName(line.base_uom_id),
+          productUomId: resolveId(line.product_uom_id),
+          productUomName: resolveName(line.product_uom_id),
           parentOrderId: parentId,
         };
       });

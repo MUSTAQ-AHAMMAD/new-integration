@@ -1453,6 +1453,16 @@ model BackupIbqOrderLine {
   priceSubtotal     Float?
   priceSubtotalIncl Float?
   discount          Float?
+  /// Tax IDs array as JSON string (e.g. "[26]" or "[26, 27]")
+  taxIds            String?
+  /// Base unit of measure ID
+  baseUomId         Int?
+  /// Base unit of measure name (e.g. "Each", "kg")
+  baseUomName       String?
+  /// Product unit of measure ID
+  productUomId      Int?
+  /// Product unit of measure name (e.g. "Each", "kg")
+  productUomName    String?
   region            String
   createdAt         DateTime @default(now())
 
@@ -1603,6 +1613,16 @@ model BackupOdooOrderLine {
   discount          Float?
   /// Tax name / code from tax_id (e.g. "VAT 5%") — maps to TAX_NAME in old integration
   taxName           String?
+  /// Tax IDs array as JSON string (e.g. "[26]" or "[26, 27]")
+  taxIds            String?
+  /// Base unit of measure ID
+  baseUomId         Int?
+  /// Base unit of measure name (e.g. "Each", "kg")
+  baseUomName       String?
+  /// Product unit of measure ID
+  productUomId      Int?
+  /// Product unit of measure name (e.g. "Each", "kg")
+  productUomName    String?
   createdAt         DateTime @default(now())
 
   /// FK to parent BackupOdooOrder
