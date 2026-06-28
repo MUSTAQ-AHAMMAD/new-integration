@@ -1174,6 +1174,11 @@ export class OdooBackupService {
         // Prefer tax_ids (plural) which is what most Odoo variants return;
         // fall back to tax_id (singular) for older/non-standard variants.
         const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
+        const taxIds = Array.isArray(line.tax_ids)
+          ? JSON.stringify(line.tax_ids.map((t) => (typeof t === 'number' ? t : Array.isArray(t) ? t[0] : null)).filter((t) => t != null))
+          : Array.isArray(line.tax_id)
+            ? JSON.stringify(line.tax_id.map((t) => (typeof t === 'number' ? t : Array.isArray(t) ? t[0] : null)).filter((t) => t != null))
+            : null;
 
         const lineName =
           typeof line.name === 'string' ? line.name : null;
@@ -1195,6 +1200,11 @@ export class OdooBackupService {
               : null,
           discount: line.discount != null ? Number(line.discount) : null,
           taxName,
+          taxIds,
+          baseUomId: resolveId(line.base_uom_id),
+          baseUomName: resolveName(line.base_uom_id),
+          productUomId: resolveId(line.product_uom_id),
+          productUomName: resolveName(line.product_uom_id),
           parentOrderId: parentId,
         };
       });

@@ -42,6 +42,9 @@ interface IbqOrderLineRaw {
   price_subtotal?: number;
   price_subtotal_incl?: number;
   discount?: number;
+  tax_ids?: number[];
+  base_uom_id?: number | [number, string];
+  product_uom_id?: number | [number, string];
   [key: string]: unknown;
 }
 
@@ -523,6 +526,13 @@ export class IbqBackupService {
       priceSubtotal: line.price_subtotal ?? null,
       priceSubtotalIncl: line.price_subtotal_incl ?? null,
       discount: line.discount ?? null,
+      taxIds: Array.isArray(line.tax_ids)
+        ? JSON.stringify(line.tax_ids)
+        : null,
+      baseUomId: resolveId(line.base_uom_id),
+      baseUomName: resolveName(line.base_uom_id),
+      productUomId: resolveId(line.product_uom_id),
+      productUomName: resolveName(line.product_uom_id),
       region,
       parentOrderId: parentId,
     }));
