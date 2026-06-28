@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { ApplyReceiptRequest } from '../clients/oracle/oracle-soap.client';
+import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 
 // Define the types properly - matching Oracle client expectations
 export interface InvoiceLine {
@@ -61,33 +62,10 @@ export class OrderEnrichmentService {
   /**
    * Convert Prisma Decimal or BigInt to number safely
    * Handles various data types that can come from Prisma queries
+   * @deprecated Use toSafeNumber from bigint-utils instead
    */
   private toNumber(value: any): number {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value === 'string') return parseFloat(value) || 0;
-    
-    // Handle Prisma Decimal internal structure: { s: 1, e: 2, d: [299, 200000] }
-    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
-      try {
-        // Reconstruct the number from the Decimal structure
-        const decimalParts = value.d;
-        let result = 0;
-        for (let i = 0; i < decimalParts.length; i++) {
-          result += decimalParts[i] * Math.pow(10, (decimalParts.length - 1 - i) - (value.e || 0));
-        }
-        return result * (value.s || 1);
-      } catch {
-        return 0;
-      }
-    }
-    
-    // Handle Prisma Decimal with toNumber method
-    if (value && typeof value === 'object' && typeof value.toNumber === 'function') {
-      return value.toNumber();
-    }
-    
-    return Number(value) || 0;
+    return toSafeNumber(value);
   }
 
   async enrichOrder(

@@ -22,6 +22,7 @@ import { OracleUomService } from '../clients/oracle/oracle-uom.service';
 import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
 import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
 import { FusionPayloadValidator } from './fusion-payload-validator';
+import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -45,24 +46,10 @@ export class FusionTransformationService {
   /**
    * Convert Prisma Decimal or BigInt to number safely
    * Handles various data types that can come from Prisma queries
+   * @deprecated Use toSafeNumber from bigint-utils instead
    */
   private convertDecimal(value: any): number {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value === 'string') return parseFloat(value);
-    // Handle Prisma Decimal with toNumber() method
-    if (value && typeof value === 'object' && 'toNumber' in value) {
-      return value.toNumber();
-    }
-    // Handle Decimal from Prisma (internal structure with s, e, d properties)
-    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
-      try {
-        return parseFloat(value.toString());
-      } catch {
-        return 0;
-      }
-    }
-    return Number(value) || 0;
+    return toSafeNumber(value);
   }
 
   /**
@@ -235,7 +222,7 @@ export class FusionTransformationService {
         standardReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
           receiptNumber: `${pmtMethod}-${txnNumber}`,
           remittanceBankAccountId: Number(bankAccountId!),
           accountValue: invoiceHeader.billToAccountNumber,
@@ -261,7 +248,7 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.bankAccount ?? ''),
@@ -274,7 +261,7 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.cashAccount ?? ''),
@@ -304,12 +291,12 @@ export class FusionTransformationService {
       
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
         (il, idx) => ({
-          ledgerId: Number(journalMeta.ledgerId),
+          ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
           periodName,  // Java line 84: getPeriodName(invoice.getSaleDate())
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Vend',
           jeCategoryName: journalMeta.jeCategory ?? 'Vend',
-          chartOfAccountsId: Number(journalMeta.chartOfAccountsId),
+          chartOfAccountsId: bigIntToNumber(journalMeta.chartOfAccountsId, 'chartOfAccountsId'),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,
@@ -337,7 +324,7 @@ export class FusionTransformationService {
         batchName: `${periodName}: ${customerType}`,
         // Java line 154: "Journal Import: " + transactionNumber
         batchDescription: `Journal Import: ${txnNumber}`,
-        ledgerId: Number(journalMeta.ledgerId),
+        ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
         // Java line 155: getPeriodName(invoice.getSaleDate())
         accountingPeriodName: periodName,
         accountingDate: saleDate,

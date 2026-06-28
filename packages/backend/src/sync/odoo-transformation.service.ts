@@ -28,6 +28,7 @@ import {
   StandardReceiptRequest,
 } from '../clients/oracle/oracle-soap.client';
 import { PrismaService } from '../prisma/prisma.service';
+import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 
 export interface OdooTransformResult {
   invoiceHeader: InvoiceHeader;
@@ -46,24 +47,10 @@ export class OdooTransformationService {
   /**
    * Convert Prisma Decimal or BigInt to number safely
    * Handles various data types that can come from Prisma queries
+   * @deprecated Use toSafeNumber from bigint-utils instead
    */
   private convertDecimal(value: any): number {
-    if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value === 'string') return parseFloat(value);
-    // Handle Prisma Decimal with toNumber() method
-    if (value && typeof value === 'object' && 'toNumber' in value) {
-      return value.toNumber();
-    }
-    // Handle Decimal from Prisma (internal structure with s, e, d properties)
-    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
-      try {
-        return parseFloat(value.toString());
-      } catch {
-        return 0;
-      }
-    }
-    return Number(value) || 0;
+    return toSafeNumber(value);
   }
 
   /**
@@ -237,11 +224,11 @@ export class OdooTransformationService {
           standardReceipts.push({
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             saleDate,
-            receiptMethodId: Number(receiptMethod.receiptMethodId),
+            receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
             receiptNumber: `${pmtMethod}-${txnNumber}`,
             remittanceBankAccountId: numericAccountId,
             accountValue: invoiceHeader.billToAccountNumber,
-            orgId: Number(buMap?.businessUnitId ?? 0n),
+            orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
             receiptAmount: pmtAmount,
           });
         }
@@ -259,24 +246,24 @@ export class OdooTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.bankAccountName,
           receivableActivityName: 'Bank Charges',
-          orgId: Number(buMap?.businessUnitId ?? 0n),
+          orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
           receiptAmount: -miscAmount,
         });
       } else if (lowerMethod === 'cash rounding') {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: Number(receiptMethod.receiptMethodId),
+          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.cashAccountName,
           receivableActivityName: 'Cash Rounding',
-          orgId: Number(buMap?.businessUnitId ?? 0n),
+          orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
           receiptAmount: -pmtAmount,
         });
       }
@@ -297,11 +284,11 @@ export class OdooTransformationService {
     if (journalMeta && invoiceHeader.invoiceLines.length > 0) {
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
         (il) => ({
-          ledgerId: Number(journalMeta.ledgerId),
+          ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Odoo',
           jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
-          chartOfAccountsId: Number(journalMeta.chartOfAccountsId),
+          chartOfAccountsId: bigIntToNumber(journalMeta.chartOfAccountsId, 'chartOfAccountsId'),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,
@@ -320,7 +307,7 @@ export class OdooTransformationService {
       journalHeaders.push({
         batchName: `${saleDate.toISOString().split('T')[0]}: ${branchCode}`,
         batchDescription: `Odoo Journal Import: ${txnNumber}`,
-        ledgerId: Number(journalMeta.ledgerId),
+        ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
         accountingPeriodName: this.getPeriodName(saleDate),
         accountingDate: saleDate,
         userSourceName: journalMeta.jeSource ?? 'Odoo',
