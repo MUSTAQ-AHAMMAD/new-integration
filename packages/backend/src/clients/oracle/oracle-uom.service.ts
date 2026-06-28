@@ -110,17 +110,24 @@ export class OracleUomService {
         return itemMeta.uomCode;
       }
 
-      // Fallback: try backupOdooOrderLine
-      const backupLine = await this.prisma.backupOdooOrderLine.findFirst({
-        where: {
-          productId: parseInt(itemNumber, 10) || 0,
-        },
-        select: {
-          productUomName: true,
-        },
-      });
+      // Fallback: try backupOdooOrderLine (only if itemNumber is numeric)
+      const parsedProductId = parseInt(itemNumber, 10);
+      if (!isNaN(parsedProductId)) {
+        const backupLine = await this.prisma.backupOdooOrderLine.findFirst({
+          where: {
+            productId: parsedProductId,
+          },
+          select: {
+            productUomName: true,
+          },
+        });
 
-      return backupLine?.productUomName ?? null;
+        if (backupLine?.productUomName) {
+          return backupLine.productUomName;
+        }
+      }
+
+      return null;
     } catch (error) {
       this.logger.warn(
         `Failed to query database for UOM code: ${error instanceof Error ? error.message : String(error)}`,
