@@ -382,6 +382,77 @@ describe('OracleSoapClient', () => {
       await jest.runAllTimersAsync();
       await assertion;
     });
+
+    it('throws on Status E with ErrorMessage tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        ErrorMessage: 'Invalid receipt method',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle standard receipt creation failed with Status E: Invalid receipt method',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Detail tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        Detail: 'Bank account not found',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Bank account not found',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Text tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        Text: 'Receipt amount validation failed',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Receipt amount validation failed',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with no error message tags', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createStandardReceipt(
+        makeStandardReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle returned Status E without error details',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
   });
 
   // ── createApplyReceipt ────────────────────────────────────────
@@ -410,6 +481,70 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('SALE-001');
+    });
+
+    it('throws on Status E with ErrorMessage tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        CustomerTrxId: 'TRX-ERR',
+        ErrorMessage: 'Transaction not found',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createApplyReceipt(makeApplyReceiptRequest());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle apply receipt creation failed with Status E: Transaction not found',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Detail tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        Detail: 'Amount exceeds invoice balance',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createApplyReceipt(makeApplyReceiptRequest());
+      const assertion = expect(promise).rejects.toThrow(
+        'Amount exceeds invoice balance',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Text tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+        Text: 'Currency mismatch',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createApplyReceipt(makeApplyReceiptRequest());
+      const assertion = expect(promise).rejects.toThrow(
+        'Currency mismatch',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with no error message tags', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'REC-ERR',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createApplyReceipt(makeApplyReceiptRequest());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle returned Status E without error details',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
     });
   });
 
@@ -443,6 +578,77 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('-2.5');
+    });
+
+    it('throws on Status E with ErrorMessage tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'MISC-ERR',
+        ErrorMessage: 'Invalid receivable activity',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle misc receipt creation failed with Status E: Invalid receivable activity',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Detail tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'MISC-ERR',
+        Detail: 'Bank account not configured for this business unit',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Bank account not configured for this business unit',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Text tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'MISC-ERR',
+        Text: 'Receipt method not found',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Receipt method not found',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with no error message tags', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ReceiptNumber: 'MISC-ERR',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createMiscellaneousReceipt(
+        makeMiscReceiptRequest(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle returned Status E without error details',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
     });
   });
 
@@ -481,6 +687,65 @@ describe('OracleSoapClient', () => {
         expect.any(String),
         expect.any(Object),
       );
+    });
+
+    it('throws on Status E with ErrorMessage tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        ErrorMessage: 'Invalid accounting date',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.importJournalEntry(makeJournalHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle journal import failed with Status E: Invalid accounting date',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Detail tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        Detail: 'Accounting period is closed',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.importJournalEntry(makeJournalHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Accounting period is closed',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Text tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        Text: 'Invalid ledger ID',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.importJournalEntry(makeJournalHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Invalid ledger ID',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with no error message tags', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.importJournalEntry(makeJournalHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle returned Status E without error details',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
     });
   });
 
