@@ -141,12 +141,19 @@ export class FusionTransformationService {
       businessUnit: salesMeta.businessUnit,
       outletName: sale.outletName ?? undefined,
       saleDate,
+      trxDate: saleDate, // Transaction date same as sale date
       // Java: Fetched from CustomerProfileService
       paymentTermsName: customerProfile?.paymentTermsName,
       transactionSource: salesMeta.txnSource,
       transactionType: salesMeta.txnType,
       invoiceCurrencyCode: outlet?.currency ?? 'AED',
       conversionRateType: salesMeta.rateIsCorporate ? 'Corporate' : 'User',
+      conversionRate: salesMeta.rateIsCorporate ? 1 : undefined, // Default to 1 for Corporate, undefined for User (may need to fetch)
+      conversionDate: saleDate, // Conversion date same as transaction date
+      // Optional fields - can be populated from VendHQ data if available
+      purchaseOrder: undefined, // Could map from sale.note or custom field if needed
+      soldToCustomerName: undefined, // Could map from customer data if needed
+      billToContact: undefined, // Could map from customer contact if available
       invoiceLines: [],
     };
 

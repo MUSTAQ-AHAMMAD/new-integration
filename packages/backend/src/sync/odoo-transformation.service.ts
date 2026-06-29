@@ -112,10 +112,17 @@ export class OdooTransformationService {
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
       outletName: backup.warehouseName ?? backup.branchName ?? undefined,
       saleDate,
+      trxDate: saleDate, // Transaction date same as sale date
       transactionSource: storeConfig.transactionSource,
       transactionType: storeConfig.transactionType,
       invoiceCurrencyCode: storeConfig.invoiceCurrencyCode,
       conversionRateType: 'Corporate',
+      conversionRate: 1, // Default to 1 for Corporate rate type
+      conversionDate: saleDate, // Conversion date same as transaction date
+      // Optional fields - can be populated from backup data if available
+      purchaseOrder: undefined, // Could map from backup.clientOrderRef if needed
+      soldToCustomerName: undefined, // Could map from backup.partnerName if needed
+      billToContact: undefined, // Could map from contact data if available
       invoiceLines: [],
     };
 

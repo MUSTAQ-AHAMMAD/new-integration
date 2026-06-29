@@ -36,11 +36,17 @@ export interface InvoiceHeader {
   businessUnit: string;
   outletName?: string;
   saleDate: Date;
+  trxDate?: Date; // Transaction date (invoice date) - critical field
   paymentTermsName?: string;
   transactionSource: string;
   transactionType: string;
   invoiceCurrencyCode: string;
   conversionRateType: string;
+  conversionRate?: number; // Exchange rate value
+  conversionDate?: Date; // Exchange rate date
+  purchaseOrder?: string; // Purchase order reference
+  soldToCustomerName?: string; // Sold-to customer name
+  billToContact?: string; // Bill-to contact name
   invoiceLines: InvoiceLine[];
 }
 
@@ -200,13 +206,19 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
         <typ1:BillToCustomerName>${escapeXml(header.billToCustomerName)}</typ1:BillToCustomerName>
         <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
         <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
+        ${header.billToContact ? `<typ1:BillToContact>${escapeXml(header.billToContact)}</typ1:BillToContact>` : ''}
+        ${header.soldToCustomerName ? `<typ1:SoldToCustomerName>${escapeXml(header.soldToCustomerName)}</typ1:SoldToCustomerName>` : ''}
         <typ1:BusinessUnit>${escapeXml(header.businessUnit)}</typ1:BusinessUnit>
         <typ1:TransactionSource>${escapeXml(header.transactionSource)}</typ1:TransactionSource>
         <typ1:TransactionType>${escapeXml(header.transactionType)}</typ1:TransactionType>
+        <typ1:TrxDate>${xmlDate(header.trxDate ?? header.saleDate)}</typ1:TrxDate>
+        <typ1:GlDate>${xmlDate(header.saleDate)}</typ1:GlDate>
         <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
         <typ1:ConversionRateType>${header.conversionRateType}</typ1:ConversionRateType>
+        ${header.conversionRate !== undefined ? `<typ1:ConversionRate>${header.conversionRate}</typ1:ConversionRate>` : ''}
+        ${header.conversionDate ? `<typ1:ConversionDate>${xmlDate(header.conversionDate)}</typ1:ConversionDate>` : ''}
         ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
-        <typ1:GlDate>${xmlDate(header.saleDate)}</typ1:GlDate>
+        ${header.purchaseOrder ? `<typ1:PurchaseOrder>${escapeXml(header.purchaseOrder)}</typ1:PurchaseOrder>` : ''}
         ${linesXml}
       </typ:invoice>
     </typ:createSimpleInvoice>
