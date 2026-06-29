@@ -422,6 +422,72 @@ function extractTagWithFallback(xml: string, ...tags: string[]): string {
   return '';
 }
 
+/**
+ * Comprehensive error message extraction from Oracle SOAP responses.
+ * Oracle can return errors in various tag formats depending on the API version,
+ * service type, and error severity. This function checks all known error tags.
+ */
+function extractErrorMessage(xml: string): string {
+  // Try all known error message tags from Oracle Fusion SOAP responses
+  const errorTags = [
+    // Standard error message tags
+    'ErrorMessage',
+    'errorMessage',
+    'Message',
+    'message',
+    // Detailed error tags
+    'Detail',
+    'detail',
+    'Text',
+    'text',
+    'Reason',
+    'reason',
+    // Oracle-specific error tags
+    'ErrorDetail',
+    'errorDetail',
+    'ErrorDescription',
+    'errorDescription',
+    'FaultText',
+    'faultText',
+    'Description',
+    'description',
+    // Status-specific tags
+    'StatusMessage',
+    'statusMessage',
+    'StatusText',
+    'statusText',
+    'ValidationError',
+    'validationError',
+  ];
+
+  for (const tag of errorTags) {
+    const value = extractTag(xml, tag);
+    if (value && value !== '') {
+      return value;
+    }
+  }
+
+  // Fallback: Try to extract any text content between common error wrappers
+  const errorPatterns = [
+    /<error[^>]*>([\s\S]*?)<\/error>/i,
+    /<fault[^>]*>([\s\S]*?)<\/fault>/i,
+    /<exception[^>]*>([\s\S]*?)<\/exception>/i,
+  ];
+
+  for (const pattern of errorPatterns) {
+    const match = xml.match(pattern);
+    if (match && match[1]) {
+      // Extract just text content, removing nested tags
+      const textContent = match[1].replace(/<[^>]+>/g, ' ').trim();
+      if (textContent && textContent.length > 0) {
+        return textContent.substring(0, 500); // Limit to 500 chars
+      }
+    }
+  }
+
+  return ''; // Return empty string if no error message found
+}
+
 // ──────────────────────────────────────────────────────────────
 // Injectable service
 // ──────────────────────────────────────────────────────────────
@@ -531,24 +597,36 @@ export class OracleSoapClient implements OnModuleInit {
         
         // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
         if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
-          // Extract error details from response
-          const errorMessage = extractTag(xml, 'ErrorMessage') || 
-                               extractTag(xml, 'errorMessage') ||
-                               extractTag(xml, 'Message') ||
-                               extractTag(xml, 'message') ||
-                               'Unknown error';
+          // Extract error details from response using comprehensive extraction
+          const errorMessage = extractErrorMessage(xml);
           
-          this.logger.error(
-            `❌ Invoice creation failed with Status E:\n` +
-            `  Transaction Number: ${transactionNumber || 'null'}\n` +
-            `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
-            `  Status: ${serviceStatus}\n` +
-            `  Error Message: ${errorMessage}\n` +
-            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
-          );
+          // Log the full XML for debugging if error message is empty
+          if (!errorMessage || errorMessage === '') {
+            this.logger.error(
+              `⚠️  Status E detected but NO error message found in response!\n` +
+              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+              `  Transaction Number: ${transactionNumber || 'null'}\n` +
+              `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  FULL Response XML (for debugging):\n${xml}`,
+            );
+          } else {
+            this.logger.error(
+              `❌ Invoice creation failed with Status E:\n` +
+              `  Transaction Number: ${transactionNumber || 'null'}\n` +
+              `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Error Message: ${errorMessage}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+          }
+          
+          // Throw with appropriate error message
+          const displayError = errorMessage || 
+                              'Oracle returned Status E without error details. Check logs for full XML response.';
           
           throw new Error(
-            `Oracle invoice creation failed with Status E: ${errorMessage}. ` +
+            `Oracle invoice creation failed with Status E: ${displayError} ` +
             `Transaction Number: ${transactionNumber || 'null'}, ` +
             `Customer Trx ID: ${customerTrxId || 'N/A'}`
           );

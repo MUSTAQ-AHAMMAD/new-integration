@@ -270,6 +270,69 @@ describe('OracleSoapClient', () => {
       await assertion;
       expect(mockHttpPost).toHaveBeenCalledTimes(3);
     });
+
+    it('throws on Status E with standard ErrorMessage tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        TransactionNumber: 'INV-ERR',
+        ErrorMessage: 'Invalid customer account',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle invoice creation failed with Status E: Invalid customer account',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Detail tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        TransactionNumber: 'INV-ERR',
+        Detail: 'Payment terms not found for customer',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Payment terms not found for customer',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with Text tag', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        TransactionNumber: 'INV-ERR',
+        Text: 'Business unit validation failed',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Business unit validation failed',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws on Status E with no error message tags', async () => {
+      const errorXml = buildSuccessXml({
+        ServiceStatus: 'E',
+        TransactionNumber: 'INV-ERR',
+      });
+      mockHttpPost.mockResolvedValue({ data: errorXml });
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Oracle returned Status E without error details',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
   });
 
   // ── createStandardReceipt ─────────────────────────────────────
