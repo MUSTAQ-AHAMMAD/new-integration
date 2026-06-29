@@ -81,8 +81,21 @@ Improved error messages thrown to the application:
 
 ## Testing
 
-Added comprehensive test cases in `oracle-soap.client.spec.ts`:
+Added comprehensive test cases in `oracle-soap.client.spec.ts` for **all SOAP methods**:
 
+### Invoice Methods
+1. ✅ Status E with `ErrorMessage` tag
+2. ✅ Status E with `Detail` tag  
+3. ✅ Status E with `Text` tag
+4. ✅ Status E with **no error message tags** (tests fallback behavior)
+
+### Receipt Methods (Standard, Apply, Miscellaneous)
+1. ✅ Status E with `ErrorMessage` tag
+2. ✅ Status E with `Detail` tag  
+3. ✅ Status E with `Text` tag
+4. ✅ Status E with **no error message tags** (tests fallback behavior)
+
+### Journal Import Method
 1. ✅ Status E with `ErrorMessage` tag
 2. ✅ Status E with `Detail` tag  
 3. ✅ Status E with `Text` tag
@@ -180,8 +193,37 @@ If you encounter a Status E with no error message:
 
 ## Version History
 
+- **2026-06-29**: Extended Status E error handling to all SOAP methods
+  - Added Status E checking to `createStandardReceipt` method
+  - Added Status E checking to `createApplyReceipt` method
+  - Added Status E checking to `createMiscellaneousReceipt` method
+  - Added Status E checking to `importJournalEntry` method
+  - Added comprehensive test coverage for all receipt and journal methods
+  - Updated documentation to reflect complete coverage
+
 - **2026-06-29**: Initial implementation of comprehensive error extraction
   - Added 20+ error tag checks
   - Added pattern-based fallback
   - Enhanced logging for debugging
-  - Added comprehensive test coverage
+  - Added comprehensive test coverage for invoice method
+
+## Summary
+
+All Oracle Fusion SOAP methods now have **comprehensive Status E error handling**:
+
+✅ **Invoice Service**
+- `createSimpleInvoice` - Full Status E handling with error extraction
+
+✅ **Receipt Services**
+- `createStandardReceipt` - Full Status E handling with error extraction
+- `createApplyReceipt` - Full Status E handling with error extraction
+- `createMiscellaneousReceipt` - Full Status E handling with error extraction
+
+✅ **Journal Service**
+- `importJournalEntry` - Full Status E handling with error extraction
+
+✅ **Read-Only Services** (No Status E expected)
+- `getCustomerProfile` - Returns data or throws SOAP fault
+- `getItemMaster` - Returns data, null, or throws SOAP fault
+
+All methods use the same `extractErrorMessage()` function that checks 20+ XML tags and includes pattern-based fallback for maximum error detection coverage.

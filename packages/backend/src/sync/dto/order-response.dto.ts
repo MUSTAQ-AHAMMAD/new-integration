@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 /**
  * OrderResponseDto - DTO for order responses with proper date serialization
- * 
+ *
  * Fixes "[object Ob]" issue by converting Date objects to ISO strings
  * Adapted to work with OrderSyncQueue structure
  */
@@ -70,7 +70,13 @@ export class OrderResponseDto {
       return value.toNumber();
     }
     // Handle Decimal from Prisma (internal structure with s, e, d properties)
-    if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      's' in value &&
+      'e' in value &&
+      'd' in value
+    ) {
       try {
         return parseFloat(value.toString());
       } catch {
@@ -85,15 +91,15 @@ export class OrderResponseDto {
     this.orderNumber = order.odooOrderNumber || order.orderNumber;
     this.branchCode = order.branchCode;
     this.branchName = order.branchName || 'Unknown';
-    
+
     // FIX: Format dates properly to ISO strings
-    this.orderDate = order.orderDate 
-      ? new Date(order.orderDate).toISOString() 
+    this.orderDate = order.orderDate
+      ? new Date(order.orderDate).toISOString()
       : new Date().toISOString();
     this.orderDateUtc = order.orderDateUtc
       ? new Date(order.orderDateUtc).toISOString()
       : this.orderDate;
-    
+
     this.totalAmount = OrderResponseDto.convertDecimal(order.totalAmount || 0);
     this.currency = order.currency || 'AED';
     this.syncStatus = order.status || 'PENDING';
@@ -103,8 +109,8 @@ export class OrderResponseDto {
     this.isCancelled = order.isCancelled ?? false;
     this.isRefund = order.isRefund ?? false;
     this.syncAttempts = order.syncAttempts || 0;
-    this.lastSyncAt = order.lastSyncAt 
-      ? new Date(order.lastSyncAt).toISOString() 
+    this.lastSyncAt = order.lastSyncAt
+      ? new Date(order.lastSyncAt).toISOString()
       : null;
     this.errorMessage = order.errorMessage || null;
   }
@@ -127,7 +133,7 @@ export class OrderListResponseDto {
   take: number;
 
   constructor(orders: any[], total: number, skip: number, take: number) {
-    this.data = orders.map(order => new OrderResponseDto(order));
+    this.data = orders.map((order) => new OrderResponseDto(order));
     this.total = total;
     this.skip = skip;
     this.take = take;

@@ -231,7 +231,10 @@ export class IbqBackupService {
         }
       }
 
-      await this.syncControl.markStopped('ibq-backup', hasError ? 'error' : 'success');
+      await this.syncControl.markStopped(
+        'ibq-backup',
+        hasError ? 'error' : 'success',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`IBQ backup cron failed: ${msg}`);
@@ -526,9 +529,7 @@ export class IbqBackupService {
       priceSubtotal: line.price_subtotal ?? null,
       priceSubtotalIncl: line.price_subtotal_incl ?? null,
       discount: line.discount ?? null,
-      taxIds: Array.isArray(line.tax_ids)
-        ? JSON.stringify(line.tax_ids)
-        : null,
+      taxIds: Array.isArray(line.tax_ids) ? JSON.stringify(line.tax_ids) : null,
       baseUomId: resolveId(line.base_uom_id),
       baseUomName: resolveName(line.base_uom_id),
       productUomId: resolveId(line.product_uom_id),

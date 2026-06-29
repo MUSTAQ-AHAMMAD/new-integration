@@ -109,9 +109,7 @@ export class AutoFixService {
     };
   }
 
-  private async autoFixOrder(
-    order: any,
-  ): Promise<AutoFixResult> {
+  private async autoFixOrder(order: any): Promise<AutoFixResult> {
     const result: AutoFixResult = {
       orderSyncQueueId: order.id,
       odooOrderId: order.odooOrderId,
@@ -175,7 +173,7 @@ export class AutoFixService {
         result.action = 'retry';
         result.message =
           'No backup data found, but order will sync with minimal data. Re-queuing for processing.';
-        
+
         // Update status to PENDING and re-queue
         await this.prisma.orderSyncQueue.update({
           where: { id: order.id },
@@ -192,7 +190,7 @@ export class AutoFixService {
           odooOrderId: order.odooOrderId,
           branchCode: order.branchCode,
         });
-        
+
         result.success = true;
       }
     } else if (order.isCancelled) {
@@ -275,9 +273,12 @@ export class AutoFixService {
     const paymentMap = new Map<number, number>();
     for (const payment of payments) {
       const current = paymentMap.get(payment.orderId) || 0;
-      const amount = typeof payment.amount === 'number' ? payment.amount :
-                     typeof payment.amount === 'string' ? parseFloat(payment.amount) :
-                     (payment.amount as any)?.toNumber?.() || 0;
+      const amount =
+        typeof payment.amount === 'number'
+          ? payment.amount
+          : typeof payment.amount === 'string'
+            ? parseFloat(payment.amount)
+            : (payment.amount as any)?.toNumber?.() || 0;
       paymentMap.set(payment.orderId, current + amount);
     }
 

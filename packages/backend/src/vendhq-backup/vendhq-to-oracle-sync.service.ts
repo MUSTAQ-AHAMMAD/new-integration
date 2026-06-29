@@ -28,7 +28,9 @@ export class VendHqToOracleSyncService {
     // Check if sync control allows this service to run
     const enabled = await this.syncControl.isEnabled('vendhq-to-oracle');
     if (!enabled) {
-      this.logger.debug('VendHQ→Oracle sync service is disabled, skipping cron run');
+      this.logger.debug(
+        'VendHQ→Oracle sync service is disabled, skipping cron run',
+      );
       return;
     }
 
@@ -131,7 +133,10 @@ export class VendHqToOracleSyncService {
         requestDate: new Date(),
         billToCustName: invoiceHeader.billToCustomerName,
         billToLocation: invoiceHeader.billToLocation,
-        billToAccNumber: invoiceHeader.billToAccountNumber != null ? numberToBigInt(Number(invoiceHeader.billToAccountNumber)) : null,
+        billToAccNumber:
+          invoiceHeader.billToAccountNumber != null
+            ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+            : null,
         businessUnit: invoiceHeader.businessUnit,
         txnSource: invoiceHeader.transactionSource,
         txnType: invoiceHeader.transactionType,
@@ -252,7 +257,10 @@ export class VendHqToOracleSyncService {
           jeHeaderId: jeHeaderId ?? null,
           jeLineNum: idx + 1,
           ledgerId: numberToBigInt(jl.ledgerId),
-          chartOfAccountsId: jl.chartOfAccountsId != null ? numberToBigInt(jl.chartOfAccountsId) : null,
+          chartOfAccountsId:
+            jl.chartOfAccountsId != null
+              ? numberToBigInt(jl.chartOfAccountsId)
+              : null,
           currencyCode: jl.currencyCode,
           enteredCrAmount: jl.enteredCrAmount ?? null,
           accountedCr: jl.accountedCr ?? null,

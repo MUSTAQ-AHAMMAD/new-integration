@@ -1,6 +1,6 @@
 /**
  * DateFormatUtil - Utility for consistent date formatting across the application
- * 
+ *
  * Fixes the "[object Ob]" issue by ensuring dates are properly serialized to ISO strings
  */
 export class DateFormatUtil {

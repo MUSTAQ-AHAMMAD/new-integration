@@ -146,8 +146,14 @@ describe('ItemSyncService', () => {
               region: 'AE',
             }),
           },
-          create: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
-          update: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
+          create: expect.objectContaining({
+            status: 'SUCCESS',
+            sku: 'ITEM-001',
+          }),
+          update: expect.objectContaining({
+            status: 'SUCCESS',
+            sku: 'ITEM-001',
+          }),
         }),
       );
     });

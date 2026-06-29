@@ -1,6 +1,6 @@
 /**
  * Integration tests for Oracle Customer, Tax, and UOM services
- * 
+ *
  * These tests verify that the services can call the Oracle SOAP client
  * and handle responses correctly.
  */
@@ -88,9 +88,9 @@ describe('Oracle Services Integration', () => {
     });
 
     it('should return null on SOAP error', async () => {
-      jest.spyOn(soapClient, 'getCustomerProfile').mockRejectedValue(
-        new Error('SOAP fault'),
-      );
+      jest
+        .spyOn(soapClient, 'getCustomerProfile')
+        .mockRejectedValue(new Error('SOAP fault'));
 
       const result = await customerService.getCustomerId('CUST-001', 'AE');
       expect(result).toBeNull();
@@ -113,7 +113,10 @@ describe('Oracle Services Integration', () => {
         taxClassificationCode: 'VAT_STANDARD',
       });
 
-      const result = await taxService.getTaxClassificationCode('ITEM-001', 'AE');
+      const result = await taxService.getTaxClassificationCode(
+        'ITEM-001',
+        'AE',
+      );
       expect(result).toBe('VAT_STANDARD');
       expect(soapClient.getItemMaster).toHaveBeenCalledWith('ITEM-001');
     });
@@ -135,7 +138,10 @@ describe('Oracle Services Integration', () => {
         itemNumber: 'ITEM-001',
       });
 
-      const result = await taxService.getTaxClassificationCode('ITEM-001', 'AE');
+      const result = await taxService.getTaxClassificationCode(
+        'ITEM-001',
+        'AE',
+      );
       expect(result).toBeNull();
     });
   });
@@ -183,9 +189,9 @@ describe('Oracle Services Integration', () => {
     });
 
     it('should return default "EA" on SOAP error', async () => {
-      jest.spyOn(soapClient, 'getItemMaster').mockRejectedValue(
-        new Error('SOAP fault'),
-      );
+      jest
+        .spyOn(soapClient, 'getItemMaster')
+        .mockRejectedValue(new Error('SOAP fault'));
 
       const result = await uomService.getUomCode('ITEM-001', 'AE');
       expect(result).toBe('EA');

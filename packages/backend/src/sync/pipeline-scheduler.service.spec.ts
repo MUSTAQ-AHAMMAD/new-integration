@@ -83,7 +83,7 @@ describe('PipelineSchedulerService', () => {
       jest.spyOn(prisma.orderSyncQueue, 'count').mockResolvedValue(50);
       jest.spyOn(prisma.orderSyncQueue, 'updateMany').mockResolvedValue({
         count: 50,
-      } as any);
+      });
 
       await service.retryNegativeInventoryOrders();
 

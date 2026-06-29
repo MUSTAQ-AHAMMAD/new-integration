@@ -312,7 +312,9 @@ export class EnhancedOracleHealthService {
       this.logger.debug('SOAP authentication test passed');
     } catch (error) {
       this.logger.error('SOAP authentication test failed', error);
-      throw new Error(`SOAP authentication failed: ${(error as Error).message}`);
+      throw new Error(
+        `SOAP authentication failed: ${(error as Error).message}`,
+      );
     }
   }
 
@@ -370,7 +372,10 @@ export class EnhancedOracleHealthService {
 
     // Emit real-time update
     this.gateway.emitHealthUpdate({
-      service: serviceType === 'REST' ? ServiceName.ORACLE_REST : ServiceName.ORACLE_SOAP,
+      service:
+        serviceType === 'REST'
+          ? ServiceName.ORACLE_REST
+          : ServiceName.ORACLE_SOAP,
       status:
         result.status === 'HEALTHY'
           ? HealthStatus.HEALTHY
@@ -471,7 +476,8 @@ export class EnhancedOracleHealthService {
 
       if (!username || !password) {
         result.isValid = false;
-        result.errorMessage = 'Oracle credentials not configured in environment';
+        result.errorMessage =
+          'Oracle credentials not configured in environment';
         return result;
       }
 
@@ -486,7 +492,8 @@ export class EnhancedOracleHealthService {
 
       if (restTest.status === 'rejected' || soapTest.status === 'rejected') {
         result.isValid = false;
-        result.errorMessage = 'Authentication failed - invalid credentials or permissions';
+        result.errorMessage =
+          'Authentication failed - invalid credentials or permissions';
         result.details.permissionsValid = false;
         return result;
       }
@@ -583,7 +590,10 @@ export class EnhancedOracleHealthService {
   /**
    * Get health history for charting
    */
-  getHealthHistory(service?: 'REST' | 'SOAP', limit = 100): OracleHealthCheckResult[] {
+  getHealthHistory(
+    service?: 'REST' | 'SOAP',
+    limit = 100,
+  ): OracleHealthCheckResult[] {
     let history = this.healthHistory;
 
     if (service) {

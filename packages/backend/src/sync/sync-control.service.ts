@@ -10,7 +10,7 @@ export interface SyncServiceConfig {
 
 /**
  * SyncControlService - Centralized control for all sync operations
- * 
+ *
  * Provides admin-level control to enable/disable sync cron jobs at runtime.
  * Each sync service (Odoo, IBQ, VendHQ backup, etc.) checks with this service
  * before running to ensure it's enabled.
@@ -71,7 +71,8 @@ export class SyncControlService implements OnModuleInit {
       {
         serviceName: 'fusion-inv-to-vendhq',
         displayName: 'Fusion Inventory to VendHQ',
-        description: 'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes',
+        description:
+          'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes',
         enabled: true,
       },
     ];

@@ -78,10 +78,10 @@ export interface RawOdooOrderFields {
 
 /**
  * Odoo/IBQ order states that indicate the order is completed and ready for Oracle sync.
- * 
+ *
  * This list is comprehensive and includes all known states across different Odoo/IBQ versions
  * that indicate an order is finalized and should be synced to Oracle.
- * 
+ *
  * Supported states (case-insensitive):
  * - 'paid': Payment completed (POS orders)
  * - 'done': Order fulfilled/completed
@@ -100,7 +100,7 @@ export interface RawOdooOrderFields {
  * - 'complete': Order is complete
  * - 'closed': Order is closed/completed
  * - 'finalized': Order is finalized
- * 
+ *
  * Excluded states (will be marked as unpaid):
  * - 'draft': Order not yet finalized
  * - 'cancel'/'cancelled': Order cancelled
@@ -152,25 +152,25 @@ function hasPaymentData(order: RawOdooOrderFields): boolean {
   if (Array.isArray(order.statement_ids) && order.statement_ids.length > 0) {
     // Filter out integer-only entries (ID references without data)
     const hasObjects = order.statement_ids.some(
-      (item) => typeof item === 'object' && item !== null
+      (item) => typeof item === 'object' && item !== null,
     );
     if (hasObjects) return true;
   }
-  
+
   if (Array.isArray(order.payment_ids) && order.payment_ids.length > 0) {
     const hasObjects = order.payment_ids.some(
-      (item) => typeof item === 'object' && item !== null
+      (item) => typeof item === 'object' && item !== null,
     );
     if (hasObjects) return true;
   }
-  
+
   if (Array.isArray(order.payments) && order.payments.length > 0) {
     const hasObjects = order.payments.some(
-      (item) => typeof item === 'object' && item !== null
+      (item) => typeof item === 'object' && item !== null,
     );
     if (hasObjects) return true;
   }
-  
+
   return false;
 }
 
@@ -248,56 +248,65 @@ export function normalizeOrderForIngestion(
 
   // Normalize state for comparison (handle null state)
   const normalizedState = state ? state.toLowerCase().trim() : null;
-  
+
   // Check if order is explicitly cancelled
-  const isCancelled = normalizedState === 'cancel' || normalizedState === 'cancelled';
-  
+  const isCancelled =
+    normalizedState === 'cancel' || normalizedState === 'cancelled';
+
   // Determine if order is paid using multi-layered logic:
   let isPaid = false;
   let paymentDetectionReason = 'not_determined';
-  
+
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
     // The explicit null check ensures null states skip this check and fall through to payment detection
-    const isExplicitlyUnpaid = normalizedState !== null && 
+    const isExplicitlyUnpaid =
+      normalizedState !== null &&
       (UNPAID_ORDER_STATES as readonly string[]).includes(normalizedState);
-    
+
     if (isExplicitlyUnpaid) {
       // Order is in draft or quotation state - definitely not paid
       isPaid = false;
       paymentDetectionReason = `unpaid_state:${normalizedState}`;
-      
+
       if (DEBUG_PAYMENT_DETECTION) {
-        console.log(`[odoo-utils] Order ${order.id}: isPaid=false - state "${normalizedState}" is in UNPAID_ORDER_STATES`);
+        console.log(
+          `[odoo-utils] Order ${order.id}: isPaid=false - state "${normalizedState}" is in UNPAID_ORDER_STATES`,
+        );
       }
     } else {
       // 2. Check if state is in the known paid states list
-      const stateIndicatesPaid = normalizedState !== null &&
+      const stateIndicatesPaid =
+        normalizedState !== null &&
         (PAID_ORDER_STATES as readonly string[]).includes(normalizedState);
-      
+
       if (stateIndicatesPaid) {
         // State explicitly indicates payment
         isPaid = true;
         paymentDetectionReason = `paid_state:${normalizedState}`;
-        
+
         if (DEBUG_PAYMENT_DETECTION) {
-          console.log(`[odoo-utils] Order ${order.id}: isPaid=true - state "${normalizedState}" is in PAID_ORDER_STATES`);
+          console.log(
+            `[odoo-utils] Order ${order.id}: isPaid=true - state "${normalizedState}" is in PAID_ORDER_STATES`,
+          );
         }
       } else {
         // 3. Fallback: check for payment data
         // If the state is unknown/null but there are payments, assume it's paid
         const hasPayments = hasPaymentData(order);
-        
+
         if (hasPayments) {
           // Has payment data, so likely paid even if state is unusual/null
           isPaid = true;
-          paymentDetectionReason = normalizedState 
+          paymentDetectionReason = normalizedState
             ? `payment_data_found:${normalizedState}`
             : 'payment_data_found:null_state';
-          
+
           if (DEBUG_PAYMENT_DETECTION) {
             const stateMsg = normalizedState || 'null';
-            console.log(`[odoo-utils] Order ${order.id}: isPaid=true - ${stateMsg} state but has payment data`);
+            console.log(
+              `[odoo-utils] Order ${order.id}: isPaid=true - ${stateMsg} state but has payment data`,
+            );
           }
         } else {
           // Unknown/null state and no payments - mark as unpaid to be safe
@@ -305,12 +314,16 @@ export function normalizeOrderForIngestion(
           paymentDetectionReason = normalizedState
             ? `unknown_state_no_payment:${normalizedState}`
             : 'null_state_no_payment';
-          
+
           if (DEBUG_PAYMENT_DETECTION) {
             const stateMsg = normalizedState || 'null';
-            console.log(`[odoo-utils] Order ${order.id}: isPaid=false - ${stateMsg} state with no payment data`);
+            console.log(
+              `[odoo-utils] Order ${order.id}: isPaid=false - ${stateMsg} state with no payment data`,
+            );
             if (normalizedState) {
-              console.log(`[odoo-utils] Order ${order.id}: Consider adding "${normalizedState}" to PAID_ORDER_STATES if this state indicates payment`);
+              console.log(
+                `[odoo-utils] Order ${order.id}: Consider adding "${normalizedState}" to PAID_ORDER_STATES if this state indicates payment`,
+              );
             }
           }
         }
@@ -318,49 +331,92 @@ export function normalizeOrderForIngestion(
     }
   } else {
     paymentDetectionReason = 'cancelled';
-    
+
     if (DEBUG_PAYMENT_DETECTION) {
-      console.log(`[odoo-utils] Order ${order.id}: cancelled - will be skipped`);
+      console.log(
+        `[odoo-utils] Order ${order.id}: cancelled - will be skipped`,
+      );
     }
   }
 
   // Extract order lines
   const rawLines = order.lines || order.order_lines;
-  const orderLines = Array.isArray(rawLines) ? rawLines.map((line: any) => ({
-    productId: typeof line.product_id === 'number' ? line.product_id : 
-               Array.isArray(line.product_id) ? line.product_id[0] : undefined,
-    productName: line.product_name || line.name || undefined,
-    productCode: line.product_code || line.default_code || line.product_barcode || undefined,
-    qty: typeof line.qty === 'number' ? line.qty : undefined,
-    priceUnit: typeof line.price_unit === 'number' ? line.price_unit : undefined,
-    priceSubtotal: typeof line.price_subtotal === 'number' ? line.price_subtotal : undefined,
-    priceSubtotalIncl: typeof line.price_subtotal_incl === 'number' ? line.price_subtotal_incl : undefined,
-    discount: typeof line.discount === 'number' ? line.discount : undefined,
-    taxName: line.tax_name || line.tax_id ? 
-             (Array.isArray(line.tax_id) ? line.tax_id[1] : line.tax_name) : undefined,
-  })) : undefined;
+  const orderLines = Array.isArray(rawLines)
+    ? rawLines.map((line: any) => ({
+        productId:
+          typeof line.product_id === 'number'
+            ? line.product_id
+            : Array.isArray(line.product_id)
+              ? line.product_id[0]
+              : undefined,
+        productName: line.product_name || line.name || undefined,
+        productCode:
+          line.product_code ||
+          line.default_code ||
+          line.product_barcode ||
+          undefined,
+        qty: typeof line.qty === 'number' ? line.qty : undefined,
+        priceUnit:
+          typeof line.price_unit === 'number' ? line.price_unit : undefined,
+        priceSubtotal:
+          typeof line.price_subtotal === 'number'
+            ? line.price_subtotal
+            : undefined,
+        priceSubtotalIncl:
+          typeof line.price_subtotal_incl === 'number'
+            ? line.price_subtotal_incl
+            : undefined,
+        discount: typeof line.discount === 'number' ? line.discount : undefined,
+        taxName:
+          line.tax_name || line.tax_id
+            ? Array.isArray(line.tax_id)
+              ? line.tax_id[1]
+              : line.tax_name
+            : undefined,
+      }))
+    : undefined;
 
   // Extract payments
-  const rawPayments = order.payments || order.payment_ids || order.statement_ids;
-  const orderPayments = Array.isArray(rawPayments) ? rawPayments.map((pmt: any) => ({
-    paymentId: typeof pmt.id === 'number' ? pmt.id : undefined,
-    paymentName: pmt.payment_name || pmt.name || pmt.journal_name || 
-                 (Array.isArray(pmt.payment_method_id) ? pmt.payment_method_id[1] : undefined),
-    amount: typeof pmt.amount === 'number' ? pmt.amount : undefined,
-    currency: pmt.currency || pmt.currency_id ? 
-              (Array.isArray(pmt.currency_id) ? pmt.currency_id[1] : pmt.currency) : undefined,
-    paymentDate: pmt.payment_date ? new Date(pmt.payment_date) : undefined,
-  })) : undefined;
+  const rawPayments =
+    order.payments || order.payment_ids || order.statement_ids;
+  const orderPayments = Array.isArray(rawPayments)
+    ? rawPayments.map((pmt: any) => ({
+        paymentId: typeof pmt.id === 'number' ? pmt.id : undefined,
+        paymentName:
+          pmt.payment_name ||
+          pmt.name ||
+          pmt.journal_name ||
+          (Array.isArray(pmt.payment_method_id)
+            ? pmt.payment_method_id[1]
+            : undefined),
+        amount: typeof pmt.amount === 'number' ? pmt.amount : undefined,
+        currency:
+          pmt.currency || pmt.currency_id
+            ? Array.isArray(pmt.currency_id)
+              ? pmt.currency_id[1]
+              : pmt.currency
+            : undefined,
+        paymentDate: pmt.payment_date ? new Date(pmt.payment_date) : undefined,
+      }))
+    : undefined;
 
   // Extract warehouse/outlet name
-  const warehouseName = order.warehouse_id ?
-    (Array.isArray(order.warehouse_id) ? order.warehouse_id[1] : undefined) : undefined;
+  const warehouseName = order.warehouse_id
+    ? Array.isArray(order.warehouse_id)
+      ? order.warehouse_id[1]
+      : undefined
+    : undefined;
 
   // Extract POS config/register name
-  const posConfigName = order.pos_config_id ?
-    (Array.isArray(order.pos_config_id) ? order.pos_config_id[1] : undefined) :
-    order.session_id ?
-      (Array.isArray(order.session_id) ? order.session_id[1] : undefined) : undefined;
+  const posConfigName = order.pos_config_id
+    ? Array.isArray(order.pos_config_id)
+      ? order.pos_config_id[1]
+      : undefined
+    : order.session_id
+      ? Array.isArray(order.session_id)
+        ? order.session_id[1]
+        : undefined
+      : undefined;
 
   return {
     odooOrderId: String(order.id),
@@ -377,9 +433,11 @@ export function normalizeOrderForIngestion(
     warehouseName,
     posConfigName,
     customerType: order.customer_type || undefined,
-    amountUntaxed: order.amount_untaxed != null ? Number(order.amount_untaxed) : undefined,
+    amountUntaxed:
+      order.amount_untaxed != null ? Number(order.amount_untaxed) : undefined,
     amountTax: order.amount_tax != null ? Number(order.amount_tax) : undefined,
-    amountDiscount: order.amount_discount != null ? Number(order.amount_discount) : undefined,
+    amountDiscount:
+      order.amount_discount != null ? Number(order.amount_discount) : undefined,
   };
 }
 

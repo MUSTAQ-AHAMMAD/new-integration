@@ -1,6 +1,6 @@
 /**
  * Order Diagnostics Service - Helper service to troubleshoot Oracle sync issues
- * 
+ *
  * Provides detailed diagnostics on why orders are being skipped or failed during
  * the Oracle sync process.
  */
@@ -226,9 +226,11 @@ export class OrderDiagnosticsService {
       reasons.push(
         `Order failed during Oracle sync (${queue.syncAttempts} attempts)`,
       );
-      
+
       if (queue.validationErrors) {
-        reasons.push(`Validation errors: ${JSON.stringify(queue.validationErrors)}`);
+        reasons.push(
+          `Validation errors: ${JSON.stringify(queue.validationErrors)}`,
+        );
       }
 
       recommendations.push(
@@ -249,7 +251,10 @@ export class OrderDiagnosticsService {
     } else if (queue.status === SyncStatus.PROCESSING) {
       primaryIssue = 'CURRENTLY_PROCESSING';
       reasons.push('Order is currently being processed');
-      recommendations.push('Wait for processing to complete', 'Check logs for progress');
+      recommendations.push(
+        'Wait for processing to complete',
+        'Check logs for progress',
+      );
       canRetry = false;
     } else if (queue.status === SyncStatus.SYNCED) {
       primaryIssue = 'ALREADY_SYNCED';
@@ -299,9 +304,7 @@ export class OrderDiagnosticsService {
 
     // Check if backup data is missing
     if (!backupOdoo && !backupIbq && queue.odooBackupOrderId) {
-      reasons.push(
-        'Backup order data is missing or has been purged',
-      );
+      reasons.push('Backup order data is missing or has been purged');
       recommendations.push(
         'Re-fetch the order from source system',
         'The order may need to be re-ingested',
@@ -334,11 +337,15 @@ export class OrderDiagnosticsService {
       this.prisma.orderSyncQueue.count({
         where: { status: SyncStatus.SKIPPED },
       }),
-      this.prisma.orderSyncQueue.count({ where: { status: SyncStatus.FAILED } }),
+      this.prisma.orderSyncQueue.count({
+        where: { status: SyncStatus.FAILED },
+      }),
       this.prisma.orderSyncQueue.count({
         where: { status: SyncStatus.PENDING },
       }),
-      this.prisma.orderSyncQueue.count({ where: { status: SyncStatus.SYNCED } }),
+      this.prisma.orderSyncQueue.count({
+        where: { status: SyncStatus.SYNCED },
+      }),
       this.prisma.orderSyncQueue.count({
         where: { status: SyncStatus.NEGATIVE_INVENTORY_HOLD },
       }),

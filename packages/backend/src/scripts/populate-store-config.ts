@@ -53,7 +53,9 @@ async function main() {
       ORDER BY "orderCount" DESC, "branchId"
     `;
 
-    console.log(`Found ${odooBranches.length} unique branches in BackupOdooOrder:`);
+    console.log(
+      `Found ${odooBranches.length} unique branches in BackupOdooOrder:`,
+    );
     for (const branch of odooBranches) {
       console.log(
         `  - Branch ${branch.branchId}: ${branch.branchName || 'N/A'} ` +
@@ -135,7 +137,7 @@ async function main() {
 
     let created = 0;
     let skipped = 0;
-    let updated = 0;
+    const updated = 0;
 
     for (const branch of allBranches) {
       const branchCode = String(branch.branchId);
@@ -222,7 +224,9 @@ async function main() {
       console.log('✓ StoreConfiguration records created successfully!\n');
       console.log('Next steps:');
       console.log('  1. Review the created configurations in the admin UI');
-      console.log('  2. Update bankAccountName and cashAccountName with actual values');
+      console.log(
+        '  2. Update bankAccountName and cashAccountName with actual values',
+      );
       console.log(
         '  3. Validate each configuration: POST /store-config/:branchCode/validate',
       );

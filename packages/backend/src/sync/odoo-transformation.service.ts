@@ -112,10 +112,17 @@ export class OdooTransformationService {
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
       outletName: backup.warehouseName ?? backup.branchName ?? undefined,
       saleDate,
+      trxDate: saleDate, // Transaction date same as sale date
       transactionSource: storeConfig.transactionSource,
       transactionType: storeConfig.transactionType,
       invoiceCurrencyCode: storeConfig.invoiceCurrencyCode,
       conversionRateType: 'Corporate',
+      conversionRate: 1, // Default to 1 for Corporate rate type
+      conversionDate: saleDate, // Conversion date same as transaction date
+      // Optional fields - can be populated from backup data if available
+      purchaseOrder: undefined, // Could map from backup.clientOrderRef if needed
+      soldToCustomerName: undefined, // Could map from backup.partnerName if needed
+      billToContact: undefined, // Could map from contact data if available
       invoiceLines: [],
     };
 
@@ -224,11 +231,17 @@ export class OdooTransformationService {
           standardReceipts.push({
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             saleDate,
-            receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+            receiptMethodId: bigIntToNumber(
+              receiptMethod.receiptMethodId,
+              'receiptMethodId',
+            ),
             receiptNumber: `${pmtMethod}-${txnNumber}`,
             remittanceBankAccountId: numericAccountId,
             accountValue: invoiceHeader.billToAccountNumber,
-            orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
+            orgId: bigIntToNumber(
+              buMap?.businessUnitId ?? 0n,
+              'businessUnitId',
+            ),
             receiptAmount: pmtAmount,
           });
         }
@@ -246,7 +259,10 @@ export class OdooTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.bankAccountName,
@@ -258,7 +274,10 @@ export class OdooTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.cashAccountName,
@@ -288,7 +307,10 @@ export class OdooTransformationService {
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Odoo',
           jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
-          chartOfAccountsId: bigIntToNumber(journalMeta.chartOfAccountsId, 'chartOfAccountsId'),
+          chartOfAccountsId: bigIntToNumber(
+            journalMeta.chartOfAccountsId,
+            'chartOfAccountsId',
+          ),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,

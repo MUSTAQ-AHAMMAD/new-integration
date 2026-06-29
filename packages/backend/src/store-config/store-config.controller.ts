@@ -111,7 +111,9 @@ export class StoreConfigController {
   })
   async checkStoreConfigs() {
     // Get all unique branches from backup tables
-    const odooBranches = await this.prisma.$queryRaw<Array<{ branchId: number; branchName: string | null }>>`
+    const odooBranches = await this.prisma.$queryRaw<
+      Array<{ branchId: number; branchName: string | null }>
+    >`
       SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
       FROM "BackupOdooOrder"
       WHERE "branchId" IS NOT NULL
@@ -119,7 +121,9 @@ export class StoreConfigController {
       ORDER BY "branchId"
     `;
 
-    const ibqBranches = await this.prisma.$queryRaw<Array<{ branchId: number; branchName: string | null }>>`
+    const ibqBranches = await this.prisma.$queryRaw<
+      Array<{ branchId: number; branchName: string | null }>
+    >`
       SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
       FROM "BackupIbqOrder"
       WHERE "branchId" IS NOT NULL
@@ -128,19 +132,24 @@ export class StoreConfigController {
     `;
 
     // Merge and deduplicate
-    const branchMap = new Map<number, { branchId: number; branchName: string | null }>();
+    const branchMap = new Map<
+      number,
+      { branchId: number; branchName: string | null }
+    >();
     for (const branch of [...odooBranches, ...ibqBranches]) {
       if (!branchMap.has(branch.branchId)) {
         branchMap.set(branch.branchId, branch);
       }
     }
 
-    const allBranches = Array.from(branchMap.values()).sort((a, b) => a.branchId - b.branchId);
+    const allBranches = Array.from(branchMap.values()).sort(
+      (a, b) => a.branchId - b.branchId,
+    );
 
     const results = [];
     for (const branch of allBranches) {
       const branchCode = String(branch.branchId);
-      
+
       try {
         const config = await this.service.getOrCreateStoreConfig(branchCode);
         results.push({
@@ -174,12 +183,20 @@ export class StoreConfigController {
 
     const summary = {
       totalBranches: allBranches.length,
-      configsFound: results.filter(r => r.hasConfig).length,
-      configsMissing: results.filter(r => !r.hasConfig).length,
-      configsValid: results.filter(r => r.hasConfig && r.configStatus === 'VALIDATED').length,
-      configsPartial: results.filter(r => r.hasConfig && r.configStatus === 'PARTIAL').length,
-      configsInvalid: results.filter(r => r.hasConfig && r.configStatus === 'INVALID').length,
-      configsPending: results.filter(r => r.hasConfig && r.configStatus === 'PENDING').length,
+      configsFound: results.filter((r) => r.hasConfig).length,
+      configsMissing: results.filter((r) => !r.hasConfig).length,
+      configsValid: results.filter(
+        (r) => r.hasConfig && r.configStatus === 'VALIDATED',
+      ).length,
+      configsPartial: results.filter(
+        (r) => r.hasConfig && r.configStatus === 'PARTIAL',
+      ).length,
+      configsInvalid: results.filter(
+        (r) => r.hasConfig && r.configStatus === 'INVALID',
+      ).length,
+      configsPending: results.filter(
+        (r) => r.hasConfig && r.configStatus === 'PENDING',
+      ).length,
     };
 
     return {

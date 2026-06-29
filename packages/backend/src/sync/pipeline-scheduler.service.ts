@@ -8,19 +8,19 @@ import { SyncControlService } from './sync-control.service';
 
 /**
  * PipelineSchedulerService - Automatic pipeline that mimics the Java Quartz scheduler
- * 
+ *
  * Similar to VendHQIntegrationScheduler in the Java implementation, this service
  * runs scheduled jobs to automatically process orders that have been ingested
  * into the OrderSyncQueue but not yet synced to Oracle.
- * 
+ *
  * Runs every 5 minutes to:
  * 1. Find all PENDING orders in OrderSyncQueue
  * 2. Create a sync job to process them
  * 3. Let the BullMQ processor handle the actual Oracle integration
- * 
+ *
  * This creates an automatic pipeline: Odoo → Backup → Queue → Oracle
  * instead of requiring manual sync job creation.
- * 
+ *
  * Configuration via environment variables:
  * - PIPELINE_ENABLED: Set to "false" to disable (default: "true")
  * - PIPELINE_MIN_BATCH_SIZE: Minimum orders before creating job (default: 1)
@@ -39,10 +39,15 @@ export class PipelineSchedulerService {
   ) {
     // Configuration from environment variables
     this.enabled = process.env.PIPELINE_ENABLED !== 'false';
-    this.minBatchSize = parseInt(process.env.PIPELINE_MIN_BATCH_SIZE || '1', 10);
+    this.minBatchSize = parseInt(
+      process.env.PIPELINE_MIN_BATCH_SIZE || '1',
+      10,
+    );
 
     if (!this.enabled) {
-      this.logger.warn('🚫 Automatic pipeline is DISABLED (PIPELINE_ENABLED=false)');
+      this.logger.warn(
+        '🚫 Automatic pipeline is DISABLED (PIPELINE_ENABLED=false)',
+      );
     } else {
       this.logger.log(
         `✅ Automatic pipeline is ENABLED (min batch size: ${this.minBatchSize})`,
@@ -57,7 +62,8 @@ export class PipelineSchedulerService {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async runAutomaticPipeline(): Promise<void> {
     // Check if sync control allows this service to run
-    const controlEnabled = await this.syncControl.isEnabled('pipeline-scheduler');
+    const controlEnabled =
+      await this.syncControl.isEnabled('pipeline-scheduler');
     if (!controlEnabled) {
       this.logger.debug('Pipeline scheduler is disabled, skipping cron run');
       return;

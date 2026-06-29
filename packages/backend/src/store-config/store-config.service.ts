@@ -1,6 +1,11 @@
 import { numberToBigInt } from '../common/utils/bigint-utils';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AlertSeverity, AlertType, ValidationStatus, StoreConfiguration } from '@prisma/client';
+import {
+  AlertSeverity,
+  AlertType,
+  ValidationStatus,
+  StoreConfiguration,
+} from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -14,13 +19,16 @@ interface BranchInfo {
 @Injectable()
 export class StoreConfigService {
   private readonly logger = new Logger(StoreConfigService.name);
-  
+
   // In-memory cache for store configurations
-  private readonly configCache = new Map<string, {
-    config: StoreConfiguration;
-    timestamp: number;
-  }>();
-  
+  private readonly configCache = new Map<
+    string,
+    {
+      config: StoreConfiguration;
+      timestamp: number;
+    }
+  >();
+
   // Cache TTL: 5 minutes
   private readonly CACHE_TTL = 5 * 60 * 1000;
 
@@ -35,16 +43,16 @@ export class StoreConfigService {
   private getCachedConfig(branchCode: string): StoreConfiguration | null {
     const cached = this.configCache.get(branchCode);
     if (!cached) return null;
-    
+
     const age = Date.now() - cached.timestamp;
     if (age > this.CACHE_TTL) {
       this.configCache.delete(branchCode);
       return null;
     }
-    
+
     return cached.config;
   }
-  
+
   /**
    * Store configuration in cache
    */
@@ -54,7 +62,7 @@ export class StoreConfigService {
       timestamp: Date.now(),
     });
   }
-  
+
   /**
    * Clear cache for a specific branch or all branches
    */
@@ -70,24 +78,28 @@ export class StoreConfigService {
    * Get or create store configuration with caching and auto-creation
    * This method NEVER throws - it always returns a config (created or fallback)
    */
-  async getOrCreateStoreConfig(branchCode: string): Promise<StoreConfiguration> {
+  async getOrCreateStoreConfig(
+    branchCode: string,
+  ): Promise<StoreConfiguration> {
     this.logger.log(`Getting store config for branch: ${branchCode}`);
-    
+
     // 1. Try cache first
     const cached = this.getCachedConfig(branchCode);
     if (cached) {
       this.logger.debug(`Cache hit for branch ${branchCode}`);
       return cached;
     }
-    
+
     // 2. Try to get from database
     let config = await this.prisma.storeConfiguration.findUnique({
       where: { branchCode },
     });
-    
+
     // 3. If not found, try to create default config
     if (!config) {
-      this.logger.warn(`Store config not found for branch ${branchCode}, creating default...`);
+      this.logger.warn(
+        `Store config not found for branch ${branchCode}, creating default...`,
+      );
       try {
         config = await this.createDefaultConfig(branchCode);
         this.logger.log(`✅ Created default config for branch ${branchCode}`);
@@ -100,48 +112,51 @@ export class StoreConfigService {
         return this.getFallbackConfig(branchCode);
       }
     }
-    
+
     // 5. Cache and return
     this.cacheConfig(branchCode, config);
     return config;
   }
-  
+
   /**
    * Create default store configuration for a branch
    */
   async createDefaultConfig(branchCode: string): Promise<StoreConfiguration> {
     this.logger.log(`Creating default configuration for branch: ${branchCode}`);
-    
+
     // Try to get branch info from backup tables
     const branchId = parseInt(branchCode, 10);
     if (isNaN(branchId)) {
       throw new Error(`Invalid branch code: ${branchCode}`);
     }
-    
+
     // Get branch info from Odoo backup
     const odooOrder = await this.prisma.backupOdooOrder.findFirst({
       where: { branchId },
       select: { branchName: true, region: true },
     });
-    
+
     // Get branch info from IBQ backup
     const ibqOrder = await this.prisma.backupIbqOrder.findFirst({
       where: { branchId },
       select: { branchName: true, region: true },
     });
-    
-    const branchName = odooOrder?.branchName || ibqOrder?.branchName || `Branch-${branchCode}`;
+
+    const branchName =
+      odooOrder?.branchName || ibqOrder?.branchName || `Branch-${branchCode}`;
     const region = odooOrder?.region || ibqOrder?.region || 'AE';
-    
+
     // Try to get Oracle config from FusionSalesMetadata
     const fusionMetadata = await this.prisma.fusionSalesMetadata.findFirst({
       where: { region },
     });
-    
+
     if (!fusionMetadata) {
-      this.logger.warn(`No FusionSalesMetadata found for region ${region}, using defaults`);
+      this.logger.warn(
+        `No FusionSalesMetadata found for region ${region}, using defaults`,
+      );
     }
-    
+
     // Create the configuration
     const config = await this.prisma.storeConfiguration.create({
       data: {
@@ -166,7 +181,7 @@ export class StoreConfigService {
         createdBy: 'SYSTEM_AUTO_CREATE',
       },
     });
-    
+
     // Fire alert for manual review
     await this.alertsService.createAlert({
       alertType: AlertType.STORE_CONFIG_INVALID,
@@ -176,10 +191,10 @@ export class StoreConfigService {
       relatedEntityId: branchCode,
       relatedEntityType: 'STORE_CONFIGURATION',
     });
-    
+
     return config;
   }
-  
+
   /**
    * Get fallback configuration (used when DB creation fails)
    * This config is NOT persisted - it's in-memory only
@@ -187,7 +202,7 @@ export class StoreConfigService {
   getFallbackConfig(branchCode: string): StoreConfiguration {
     const branchId = parseInt(branchCode, 10);
     const now = new Date();
-    
+
     return {
       id: `FALLBACK_${branchCode}`,
       branchCode,
@@ -338,8 +353,12 @@ export class StoreConfigService {
     const { branchCode, odooBranchId, oracleOperatingUnitId, ...rest } = data;
     const prismaData = {
       ...rest,
-      odooBranchId: odooBranchId != null ? BigInt(odooBranchId) : numberToBigInt(0),
-      oracleOperatingUnitId: oracleOperatingUnitId != null ? BigInt(oracleOperatingUnitId) : numberToBigInt(0),
+      odooBranchId:
+        odooBranchId != null ? BigInt(odooBranchId) : numberToBigInt(0),
+      oracleOperatingUnitId:
+        oracleOperatingUnitId != null
+          ? BigInt(oracleOperatingUnitId)
+          : numberToBigInt(0),
     };
     return this.prisma.storeConfiguration.upsert({
       where: { branchCode },

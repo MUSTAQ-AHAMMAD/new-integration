@@ -1,8 +1,8 @@
 /**
  * Oracle Tax Classification Service
- * 
+ *
  * Fetches tax classification codes from Oracle Fusion based on product configuration.
- * 
+ *
  * Java Reference: FusionInvoiceMapping.java
  * - Fetches tax codes based on product item configuration
  * - Determines tax applicability for invoice lines
@@ -23,13 +23,13 @@ export class OracleTaxService {
 
   /**
    * Get tax classification code for a product item from Oracle Fusion.
-   * 
+   *
    * Java equivalent: getTaxClassificationCode(String itemNumber)
-   * 
+   *
    * @param itemNumber - Product ID from VendHQ
    * @param region - Region code (e.g., "AE", "KW", "OM")
    * @returns Tax classification code or null if not found/not taxable
-   * 
+   *
    * @example
    * const taxCode = await taxService.getTaxClassificationCode("PROD-12345", "AE");
    * // Returns: "VAT_STANDARD" or null
@@ -58,22 +58,22 @@ export class OracleTaxService {
 
       // Call Oracle Item Master service to get tax classification
       const itemMaster = await this.soapClient.getItemMaster(itemNumber);
-      
+
       if (itemMaster?.taxClassificationCode) {
         // Cache the result
         this.taxCache.set(cacheKey, itemMaster.taxClassificationCode);
-        
+
         this.logger.debug(
           `Tax code resolved for item ${itemNumber} in region ${region}: ${itemMaster.taxClassificationCode}`,
         );
-        
+
         return itemMaster.taxClassificationCode;
       }
-      
+
       this.logger.debug(
         `No tax code found for item ${itemNumber} in region ${region}`,
       );
-      
+
       return null;
     } catch (error) {
       this.logger.error(
@@ -96,7 +96,7 @@ export class OracleTaxService {
         where: { region },
         select: { taxClassificationCode: true },
       });
-      
+
       if (storeConfig?.taxClassificationCode) {
         return storeConfig.taxClassificationCode;
       }

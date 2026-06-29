@@ -61,12 +61,7 @@ export class PreFlightValidationService {
       'receiptAmount',
       'saleDate',
     ],
-    creditMemo: [
-      'creditMemoNumber',
-      'transactionDate',
-      'amount',
-      'reason',
-    ],
+    creditMemo: ['creditMemoNumber', 'transactionDate', 'amount', 'reason'],
     journal: [
       'batchName',
       'ledgerId',
@@ -96,7 +91,9 @@ export class PreFlightValidationService {
     const warnings: string[] = [];
     const fixedFields: Record<string, any> = {};
 
-    this.logger.debug(`Validating invoice payload: ${payload.transactionNumber}`);
+    this.logger.debug(
+      `Validating invoice payload: ${payload.transactionNumber}`,
+    );
 
     // 1. Check required fields
     for (const field of this.requiredFields.invoice) {
@@ -108,10 +105,14 @@ export class PreFlightValidationService {
     // 2. Validate transaction number format
     if (payload.transactionNumber) {
       if (payload.transactionNumber.length > 50) {
-        errors.push('Transaction number exceeds maximum length (50 characters)');
+        errors.push(
+          'Transaction number exceeds maximum length (50 characters)',
+        );
       }
       if (!/^[A-Z0-9\-_]+$/i.test(payload.transactionNumber)) {
-        warnings.push('Transaction number contains special characters - may cause issues in Oracle');
+        warnings.push(
+          'Transaction number contains special characters - may cause issues in Oracle',
+        );
       }
     }
 
@@ -122,7 +123,9 @@ export class PreFlightValidationService {
         errors.push(`Invalid transaction date: ${dateResult.error}`);
       } else if (dateResult.fixed) {
         fixedFields.transactionDate = dateResult.fixed;
-        warnings.push(`Transaction date auto-converted to UTC: ${dateResult.fixed}`);
+        warnings.push(
+          `Transaction date auto-converted to UTC: ${dateResult.fixed}`,
+        );
       }
     }
 
@@ -136,14 +139,18 @@ export class PreFlightValidationService {
         errors.push(currencyResult.error!);
       } else if (currencyResult.fixed !== undefined) {
         fixedFields.amount = currencyResult.fixed;
-        warnings.push(`Amount precision adjusted for ${payload.currencyCode}: ${currencyResult.fixed}`);
+        warnings.push(
+          `Amount precision adjusted for ${payload.currencyCode}: ${currencyResult.fixed}`,
+        );
       }
     }
 
     // 5. Validate amount (must be positive for invoices)
     if (payload.amount !== undefined) {
       if (payload.amount < 0) {
-        errors.push('Invoice amount cannot be negative (use credit memo for refunds)');
+        errors.push(
+          'Invoice amount cannot be negative (use credit memo for refunds)',
+        );
       }
       if (payload.amount === 0) {
         warnings.push('Invoice amount is zero - verify this is intentional');
@@ -156,13 +163,18 @@ export class PreFlightValidationService {
     // 6. Validate business unit
     if (payload.businessUnit) {
       if (payload.businessUnit.length > 30) {
-        errors.push('Business unit name exceeds maximum length (30 characters)');
+        errors.push(
+          'Business unit name exceeds maximum length (30 characters)',
+        );
       }
     }
 
     // 7. Validate invoice lines
     if (payload.lines && payload.lines.length > 0) {
-      const lineResult = this.validateInvoiceLines(payload.lines, payload.currencyCode!);
+      const lineResult = this.validateInvoiceLines(
+        payload.lines,
+        payload.currencyCode!,
+      );
       errors.push(...lineResult.errors);
       warnings.push(...lineResult.warnings);
       if (Object.keys(lineResult.fixedFields || {}).length > 0) {
@@ -183,7 +195,8 @@ export class PreFlightValidationService {
       isValid: errors.length === 0,
       errors,
       warnings,
-      fixedFields: Object.keys(fixedFields).length > 0 ? fixedFields : undefined,
+      fixedFields:
+        Object.keys(fixedFields).length > 0 ? fixedFields : undefined,
     };
   }
 
@@ -232,7 +245,9 @@ export class PreFlightValidationService {
         errors.push(currencyResult.error!);
       } else if (currencyResult.fixed !== undefined) {
         fixedFields.receiptAmount = currencyResult.fixed;
-        warnings.push(`Receipt amount precision adjusted: ${currencyResult.fixed}`);
+        warnings.push(
+          `Receipt amount precision adjusted: ${currencyResult.fixed}`,
+        );
       }
     }
 
@@ -248,14 +263,20 @@ export class PreFlightValidationService {
 
     // 6. Validate receipt method ID (must be positive integer)
     if (payload.receiptMethodId !== undefined) {
-      if (!Number.isInteger(payload.receiptMethodId) || payload.receiptMethodId <= 0) {
+      if (
+        !Number.isInteger(payload.receiptMethodId) ||
+        payload.receiptMethodId <= 0
+      ) {
         errors.push('Receipt method ID must be a positive integer');
       }
     }
 
     // 7. Validate bank account ID if provided
     if (payload.remittanceBankAccountId !== undefined) {
-      if (!Number.isInteger(payload.remittanceBankAccountId) || payload.remittanceBankAccountId <= 0) {
+      if (
+        !Number.isInteger(payload.remittanceBankAccountId) ||
+        payload.remittanceBankAccountId <= 0
+      ) {
         errors.push('Bank account ID must be a positive integer');
       }
     }
@@ -264,7 +285,8 @@ export class PreFlightValidationService {
       isValid: errors.length === 0,
       errors,
       warnings,
-      fixedFields: Object.keys(fixedFields).length > 0 ? fixedFields : undefined,
+      fixedFields:
+        Object.keys(fixedFields).length > 0 ? fixedFields : undefined,
     };
   }
 
@@ -340,7 +362,9 @@ export class PreFlightValidationService {
     fixed?: number;
   } {
     // Check if currency is supported
-    if (!this.currencyConfig[currencyCode as keyof typeof this.currencyConfig]) {
+    if (
+      !this.currencyConfig[currencyCode as keyof typeof this.currencyConfig]
+    ) {
       return {
         isValid: false,
         error: `Unsupported currency code: ${currencyCode}`,
@@ -352,7 +376,8 @@ export class PreFlightValidationService {
     }
 
     // Get currency configuration
-    const config = this.currencyConfig[currencyCode as keyof typeof this.currencyConfig];
+    const config =
+      this.currencyConfig[currencyCode as keyof typeof this.currencyConfig];
 
     // Check decimal precision
     const decimal = new Decimal(amount);
@@ -360,7 +385,9 @@ export class PreFlightValidationService {
 
     if (decimalPlaces > config.decimals) {
       // Fix by rounding to correct precision
-      const fixed = decimal.toDecimalPlaces(config.decimals, Decimal.ROUND_HALF_UP).toNumber();
+      const fixed = decimal
+        .toDecimalPlaces(config.decimals, Decimal.ROUND_HALF_UP)
+        .toNumber();
       return {
         isValid: true,
         fixed,
@@ -415,20 +442,26 @@ export class PreFlightValidationService {
         } else if (currencyResult.fixed !== undefined) {
           if (!fixedFields[i]) fixedFields[i] = {};
           fixedFields[i].unitSellingPrice = currencyResult.fixed;
-          warnings.push(`${linePrefix}: Price precision adjusted to ${currencyResult.fixed}`);
+          warnings.push(
+            `${linePrefix}: Price precision adjusted to ${currencyResult.fixed}`,
+          );
         }
       }
 
       // Validate item number if provided
       if (line.itemNumber) {
         if (line.itemNumber.length > 40) {
-          errors.push(`${linePrefix}: Item number exceeds maximum length (40 characters)`);
+          errors.push(
+            `${linePrefix}: Item number exceeds maximum length (40 characters)`,
+          );
         }
       }
 
       // Validate description
       if (line.description && line.description.length > 240) {
-        warnings.push(`${linePrefix}: Description exceeds recommended length (240 characters) - may be truncated`);
+        warnings.push(
+          `${linePrefix}: Description exceeds recommended length (240 characters) - may be truncated`,
+        );
       }
     }
 
@@ -457,10 +490,7 @@ export class PreFlightValidationService {
     }
 
     // Fields that Oracle expects as NULL instead of empty string
-    const nullFields = [
-      'taxClassificationCode',
-      'paymentTermsName',
-    ];
+    const nullFields = ['taxClassificationCode', 'paymentTermsName'];
 
     for (const field of nullFields) {
       if (payload[field] === '') {
@@ -485,8 +515,8 @@ export class PreFlightValidationService {
 
     // Validate invoice
     const invoiceResult = this.validateInvoice(order.invoice);
-    allErrors.push(...invoiceResult.errors.map(e => `Invoice: ${e}`));
-    allWarnings.push(...invoiceResult.warnings.map(w => `Invoice: ${w}`));
+    allErrors.push(...invoiceResult.errors.map((e) => `Invoice: ${e}`));
+    allWarnings.push(...invoiceResult.warnings.map((w) => `Invoice: ${w}`));
     if (invoiceResult.fixedFields) {
       allFixedFields.invoice = invoiceResult.fixedFields;
     }
@@ -494,8 +524,8 @@ export class PreFlightValidationService {
     // Validate receipt if provided
     if (order.receipt) {
       const receiptResult = this.validateReceipt(order.receipt);
-      allErrors.push(...receiptResult.errors.map(e => `Receipt: ${e}`));
-      allWarnings.push(...receiptResult.warnings.map(w => `Receipt: ${w}`));
+      allErrors.push(...receiptResult.errors.map((e) => `Receipt: ${e}`));
+      allWarnings.push(...receiptResult.warnings.map((w) => `Receipt: ${w}`));
       if (receiptResult.fixedFields) {
         allFixedFields.receipt = receiptResult.fixedFields;
       }
@@ -503,13 +533,17 @@ export class PreFlightValidationService {
       // Cross-validate: invoice and receipt currencies must match
       if (order.invoice.currencyCode && order.receipt.currencyCode) {
         if (order.invoice.currencyCode !== order.receipt.currencyCode) {
-          allErrors.push('Currency mismatch: Invoice and receipt must use the same currency');
+          allErrors.push(
+            'Currency mismatch: Invoice and receipt must use the same currency',
+          );
         }
       }
 
       // Cross-validate: receipt amount should match invoice amount
       if (order.invoice.amount && order.receipt.receiptAmount) {
-        const diff = Math.abs(order.invoice.amount - order.receipt.receiptAmount);
+        const diff = Math.abs(
+          order.invoice.amount - order.receipt.receiptAmount,
+        );
         if (diff > 0.01) {
           allWarnings.push(
             `Amount mismatch: Invoice (${order.invoice.amount}) vs Receipt (${order.receipt.receiptAmount})`,
@@ -522,7 +556,8 @@ export class PreFlightValidationService {
       isValid: allErrors.length === 0,
       errors: allErrors,
       warnings: allWarnings,
-      fixedFields: Object.keys(allFixedFields).length > 0 ? allFixedFields : undefined,
+      fixedFields:
+        Object.keys(allFixedFields).length > 0 ? allFixedFields : undefined,
     };
   }
 
@@ -540,9 +575,13 @@ export class PreFlightValidationService {
     for (const [key, value] of Object.entries(validationResult.fixedFields)) {
       if (key === 'lines' && Array.isArray(fixed.lines)) {
         // Fix line items
-        for (const [lineIndex, lineFixed] of Object.entries(value as any)) {
+        for (const [lineIndex, lineFixed] of Object.entries(value)) {
           const currentLine = fixed.lines[parseInt(lineIndex)];
-          if (currentLine && typeof lineFixed === 'object' && lineFixed !== null) {
+          if (
+            currentLine &&
+            typeof lineFixed === 'object' &&
+            lineFixed !== null
+          ) {
             fixed.lines[parseInt(lineIndex)] = {
               ...currentLine,
               ...(lineFixed as Record<string, any>),

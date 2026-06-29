@@ -52,27 +52,41 @@ export class ValidationService {
     }
 
     // ── Store Configuration Validation with Auto-Creation ──────────────────
-    this.logger.log(`[${odooOrderId}] Validating store configuration for branch: ${branchCode}`);
-    
+    this.logger.log(
+      `[${odooOrderId}] Validating store configuration for branch: ${branchCode}`,
+    );
+
     let storeConfig;
     try {
       // Use auto-creation method - this NEVER throws
-      storeConfig = await this.storeConfigService.getOrCreateStoreConfig(branchCode);
-      
+      storeConfig =
+        await this.storeConfigService.getOrCreateStoreConfig(branchCode);
+
       if (!storeConfig) {
         // This should never happen, but handle defensively
-        this.logger.error(`[${odooOrderId}] Store config is null after getOrCreateStoreConfig`);
-        errors.push(`Failed to get or create store configuration for branch: ${branchCode}`);
+        this.logger.error(
+          `[${odooOrderId}] Store config is null after getOrCreateStoreConfig`,
+        );
+        errors.push(
+          `Failed to get or create store configuration for branch: ${branchCode}`,
+        );
       } else {
-        this.logger.log(`[${odooOrderId}] ✅ Store config obtained for branch ${branchCode} (status: ${storeConfig.validationStatus})`);
-        
+        this.logger.log(
+          `[${odooOrderId}] ✅ Store config obtained for branch ${branchCode} (status: ${storeConfig.validationStatus})`,
+        );
+
         // Check configuration status
         if (!storeConfig.isActive) {
           errors.push(`Store ${branchCode} is inactive`);
         } else if (storeConfig.validationStatus === ValidationStatus.INVALID) {
           // For INVALID configs, add as error (still blocks)
-          errors.push(`Store ${branchCode} has invalid configuration: ${JSON.stringify(storeConfig.validationErrors)}`);
-        } else if (storeConfig.validationStatus === ValidationStatus.PARTIAL || storeConfig.validationStatus === ValidationStatus.PENDING) {
+          errors.push(
+            `Store ${branchCode} has invalid configuration: ${JSON.stringify(storeConfig.validationErrors)}`,
+          );
+        } else if (
+          storeConfig.validationStatus === ValidationStatus.PARTIAL ||
+          storeConfig.validationStatus === ValidationStatus.PENDING
+        ) {
           // For PARTIAL/PENDING configs (e.g., auto-created), add as warning (does NOT block)
           warnings.push(
             `Store ${branchCode} has ${storeConfig.validationStatus.toLowerCase()} configuration; sync will continue with caution. Please review and validate the configuration.`,
@@ -82,7 +96,9 @@ export class ValidationService {
     } catch (error) {
       // Catch any unexpected errors
       const errorMsg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`[${odooOrderId}] Error getting store config: ${errorMsg}`);
+      this.logger.error(
+        `[${odooOrderId}] Error getting store config: ${errorMsg}`,
+      );
       warnings.push(
         `Could not verify store configuration for branch ${branchCode}: ${errorMsg}. Continuing with sync.`,
       );

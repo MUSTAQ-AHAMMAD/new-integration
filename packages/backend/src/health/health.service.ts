@@ -112,7 +112,7 @@ export class HealthService {
   }
 
   /**
-   * Get comprehensive sync system status including queue sizes, 
+   * Get comprehensive sync system status including queue sizes,
    * processing rates, and error rates
    */
   async getSyncSystemStatus() {
@@ -159,9 +159,11 @@ export class HealthService {
       }),
     ]);
 
-    const totalOrders = pendingCount + processingCount + syncedCount + failedCount + skippedCount;
+    const totalOrders =
+      pendingCount + processingCount + syncedCount + failedCount + skippedCount;
     const recentTotal = recentlyProcessed + recentlyFailed;
-    const failureRate = recentTotal > 0 ? (recentlyFailed / recentTotal) * 100 : 0;
+    const failureRate =
+      recentTotal > 0 ? (recentlyFailed / recentTotal) * 100 : 0;
 
     // Get sync job status
     const [runningJobs, pendingJobs, failedJobs] = await Promise.all([

@@ -10,9 +10,7 @@ describe('Credential', () => {
     const cred = new Credential('user', 'pass');
 
     it('encodes username:password as base64', () => {
-      expect(cred.toString()).toBe(
-        Buffer.from('user:pass').toString('base64'),
-      );
+      expect(cred.toString()).toBe(Buffer.from('user:pass').toString('base64'));
     });
 
     it('returns "Basic {base64}" from toAuthHeader', () => {

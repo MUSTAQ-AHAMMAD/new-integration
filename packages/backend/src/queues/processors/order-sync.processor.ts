@@ -47,12 +47,16 @@ export class OrderSyncProcessor {
   async handleOrderSync(job: Job<OrderSyncJobData>) {
     const { odooOrderId, branchCode, syncJobId } = job.data;
     const startedAt = Date.now();
-    
-    this.logger.log(`[${odooOrderId}] ========================================`);
+
+    this.logger.log(
+      `[${odooOrderId}] ========================================`,
+    );
     this.logger.log(`[${odooOrderId}] Starting order sync process`);
     this.logger.log(`[${odooOrderId}]   Branch: ${branchCode}`);
     this.logger.log(`[${odooOrderId}]   Sync Job ID: ${syncJobId ?? 'N/A'}`);
-    this.logger.log(`[${odooOrderId}] ========================================`);
+    this.logger.log(
+      `[${odooOrderId}] ========================================`,
+    );
 
     const order = await this.prisma.orderSyncQueue.findUnique({
       where: { odooOrderId_branchCode: { odooOrderId, branchCode } },
@@ -65,30 +69,32 @@ export class OrderSyncProcessor {
 
     this.logger.log(
       `[${odooOrderId}] 📋 Order details:\n` +
-      `  - Order Number: ${order.odooOrderNumber}\n` +
-      `  - Total Amount: ${order.totalAmount} ${order.currency}\n` +
-      `  - Order Date: ${order.orderDate.toISOString()}\n` +
-      `  - Customer: ${order.customerName ?? 'N/A'}\n` +
-      `  - Is Paid: ${order.isPaid}\n` +
-      `  - Is Cancelled: ${order.isCancelled}\n` +
-      `  - Is Refund: ${order.isRefund}\n` +
-      `  - Current Status: ${order.status}\n` +
-      `  - Sync Attempts: ${order.syncAttempts}`,
+        `  - Order Number: ${order.odooOrderNumber}\n` +
+        `  - Total Amount: ${order.totalAmount} ${order.currency}\n` +
+        `  - Order Date: ${order.orderDate.toISOString()}\n` +
+        `  - Customer: ${order.customerName ?? 'N/A'}\n` +
+        `  - Is Paid: ${order.isPaid}\n` +
+        `  - Is Cancelled: ${order.isCancelled}\n` +
+        `  - Is Refund: ${order.isRefund}\n` +
+        `  - Current Status: ${order.status}\n` +
+        `  - Sync Attempts: ${order.syncAttempts}`,
     );
 
     try {
       // ── 1. Skip unpaid / cancelled orders ────────────────────
-      this.logger.log(`[${odooOrderId}] Step 1/14: Checking payment/cancellation status...`);
+      this.logger.log(
+        `[${odooOrderId}] Step 1/14: Checking payment/cancellation status...`,
+      );
       if (!order.isPaid || order.isCancelled) {
         const skipReasons = [
           !order.isPaid ? 'Order is not paid/posted' : null,
           order.isCancelled ? 'Order is cancelled' : null,
         ].filter(Boolean);
-        
+
         this.logger.warn(
           `[${odooOrderId}] ⏭️  SKIPPED: ${skipReasons.join(', ')}`,
         );
-        
+
         await this.prisma.orderSyncQueue.update({
           where: { id: order.id },
           data: {
@@ -104,10 +110,14 @@ export class OrderSyncProcessor {
           await this.incrementSyncJobCounters(syncJobId, 'skipped');
         return;
       }
-      this.logger.log(`[${odooOrderId}] ✅ Step 1/14: Order is paid and not cancelled`);
+      this.logger.log(
+        `[${odooOrderId}] ✅ Step 1/14: Order is paid and not cancelled`,
+      );
 
       // ── 2. Business-rule validation ───────────────────────────
-      this.logger.log(`[${odooOrderId}] Step 2/14: Running business-rule validation...`);
+      this.logger.log(
+        `[${odooOrderId}] Step 2/14: Running business-rule validation...`,
+      );
       const validation = await this.validationService.validateOrder(
         odooOrderId,
         branchCode,
@@ -115,10 +125,10 @@ export class OrderSyncProcessor {
       if (!validation.isValid) {
         this.logger.error(
           `[${odooOrderId}] ❌ VALIDATION FAILED:\n` +
-          `  Errors: ${JSON.stringify(validation.errors, null, 2)}\n` +
-          `  Warnings: ${JSON.stringify(validation.warnings, null, 2)}`,
+            `  Errors: ${JSON.stringify(validation.errors, null, 2)}\n` +
+            `  Warnings: ${JSON.stringify(validation.warnings, null, 2)}`,
         );
-        
+
         await this.prisma.orderSyncQueue.update({
           where: { id: order.id },
           data: {
@@ -144,10 +154,10 @@ export class OrderSyncProcessor {
         if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'failed');
         return;
       }
-      
+
       if (validation.warnings.length > 0) {
         this.logger.warn(
-          `[${odooOrderId}] ⚠️  Validation warnings:\n${validation.warnings.map(w => `  - ${w}`).join('\n')}`,
+          `[${odooOrderId}] ⚠️  Validation warnings:\n${validation.warnings.map((w) => `  - ${w}`).join('\n')}`,
         );
       }
       this.logger.log(`[${odooOrderId}] ✅ Step 2/14: Validation passed`);
@@ -171,10 +181,14 @@ export class OrderSyncProcessor {
       }
 
       // ── 2c. Store configuration check ────────────────────────
-      this.logger.log(`[${odooOrderId}] Step 3/14: Checking store configuration...`);
+      this.logger.log(
+        `[${odooOrderId}] Step 3/14: Checking store configuration...`,
+      );
       try {
         await this.storeConfigService.getValidatedConfig(branchCode);
-        this.logger.log(`[${odooOrderId}] ✅ Step 3/14: Store configuration valid`);
+        this.logger.log(
+          `[${odooOrderId}] ✅ Step 3/14: Store configuration valid`,
+        );
       } catch (configErr) {
         const configMsg =
           configErr instanceof Error ? configErr.message : 'Store config error';
@@ -230,7 +244,9 @@ export class OrderSyncProcessor {
       }
 
       // ── 3. Mark as PROCESSING ─────────────────────────────────
-      this.logger.log(`[${odooOrderId}] Step 4/14: Marking order as PROCESSING...`);
+      this.logger.log(
+        `[${odooOrderId}] Step 4/14: Marking order as PROCESSING...`,
+      );
       await this.prisma.orderSyncQueue.update({
         where: { id: order.id },
         data: {
@@ -243,18 +259,24 @@ export class OrderSyncProcessor {
         orderId: odooOrderId,
         status: SyncStatus.PROCESSING,
       });
-      this.logger.log(`[${odooOrderId}] ✅ Step 4/14: Status updated to PROCESSING (attempt ${order.syncAttempts + 1})`);
+      this.logger.log(
+        `[${odooOrderId}] ✅ Step 4/14: Status updated to PROCESSING (attempt ${order.syncAttempts + 1})`,
+      );
 
       // ── 4. Resolve payment method (warn-only) ─────────────────
-      this.logger.log(`[${odooOrderId}] Step 5/14: Resolving payment method...`);
+      this.logger.log(
+        `[${odooOrderId}] Step 5/14: Resolving payment method...`,
+      );
       const paymentMethodName = order.isRefund
         ? 'REFUND'
         : order.branchName?.trim()
           ? `${order.branchName.trim()}-DEFAULT`
           : 'DEFAULT';
-      
-      this.logger.debug(`[${odooOrderId}]   Payment method name: ${paymentMethodName}`);
-      
+
+      this.logger.debug(
+        `[${odooOrderId}]   Payment method name: ${paymentMethodName}`,
+      );
+
       const resolvedMapping =
         await this.paymentMappingService.resolvePaymentMethod(
           'ODOO',
@@ -264,7 +286,7 @@ export class OrderSyncProcessor {
         resolvedMapping === null
           ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
           : null;
-      
+
       if (resolvedMapping) {
         this.logger.log(
           `[${odooOrderId}] ✅ Step 5/14: Payment method resolved: ${JSON.stringify(resolvedMapping)}`,
@@ -284,10 +306,14 @@ export class OrderSyncProcessor {
           : AuditOperation.CREATE_INVOICE,
         branchCode,
       );
-      this.logger.debug(`[${odooOrderId}]   Idempotency key: ${idempotencyKey}`);
+      this.logger.debug(
+        `[${odooOrderId}]   Idempotency key: ${idempotencyKey}`,
+      );
 
       if (await this.idempotencyService.isDuplicate(idempotencyKey)) {
-        this.logger.warn(`[${odooOrderId}] 🔁 DUPLICATE: Order already synced (idempotency check)`);
+        this.logger.warn(
+          `[${odooOrderId}] 🔁 DUPLICATE: Order already synced (idempotency check)`,
+        );
         await this.prisma.orderSyncQueue.update({
           where: { id: order.id },
           data: { status: SyncStatus.SYNCED },
@@ -312,7 +338,9 @@ export class OrderSyncProcessor {
           await this.incrementSyncJobCounters(syncJobId, 'success');
         return;
       }
-      this.logger.log(`[${odooOrderId}] ✅ Step 6/14: Not a duplicate, proceeding with sync`);
+      this.logger.log(
+        `[${odooOrderId}] ✅ Step 6/14: Not a duplicate, proceeding with sync`,
+      );
 
       // ── 6. Resolve backup source and build Oracle payloads ─────
       //
@@ -327,9 +355,9 @@ export class OrderSyncProcessor {
       const effectiveRegion = branchCode;
       this.logger.log(
         `[${odooOrderId}] Step 7/14: Enriching order data...\n` +
-        `  - Effective Region: ${effectiveRegion}\n` +
-        `  - Order Number: ${order.odooOrderNumber}\n` +
-        `  - Enrichment will use backup tables or minimal fallback`,
+          `  - Effective Region: ${effectiveRegion}\n` +
+          `  - Order Number: ${order.odooOrderNumber}\n` +
+          `  - Enrichment will use backup tables or minimal fallback`,
       );
 
       let oracleInvoiceNumber: string | null = null;
@@ -353,32 +381,34 @@ export class OrderSyncProcessor {
 
         this.logger.log(
           `[${odooOrderId}] Step 8/14: Pushing Oracle payloads:\n` +
-          `  - Invoice Lines: ${invoiceHeader.invoiceLines.length}\n` +
-          `  - Standard Receipts: ${standardReceipts.length}\n` +
-          `  - Misc Receipts: ${miscReceipts.length}\n` +
-          `  - Apply Receipts: ${applyReceipts.length}\n` +
-          `  - Journal Entries: ${journalHeaders.length}`,
+            `  - Invoice Lines: ${invoiceHeader.invoiceLines.length}\n` +
+            `  - Standard Receipts: ${standardReceipts.length}\n` +
+            `  - Misc Receipts: ${miscReceipts.length}\n` +
+            `  - Apply Receipts: ${applyReceipts.length}\n` +
+            `  - Journal Entries: ${journalHeaders.length}`,
         );
 
         // ── 8. Push Invoice ───────────────────────────────────────
-        this.logger.log(`[${odooOrderId}] Step 8a/14: Creating Oracle invoice...`);
+        this.logger.log(
+          `[${odooOrderId}] Step 8a/14: Creating Oracle invoice...`,
+        );
         const invoiceResult =
           await this.soapClient.createSimpleInvoice(invoiceHeader);
-        
+
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
         // Convert to number since Prisma schema expects Int
-        const txnNumberOrOrderId = 
-          invoiceResult.transactionNumber ?? 
-          invoiceResult.customerTrxId ?? 
+        const txnNumberOrOrderId =
+          invoiceResult.transactionNumber ??
+          invoiceResult.customerTrxId ??
           odooOrderId;
         const parsedTxnNumber = parseInt(txnNumberOrOrderId, 10);
         const txnNumber = isNaN(parsedTxnNumber) ? null : parsedTxnNumber;
-        
+
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
-          `  - Transaction Number: ${txnNumber}\n` +
-          `  - Customer Trx ID: ${invoiceResult.customerTrxId || 'N/A'}\n` +
-          `  - Status: ${invoiceResult.serviceStatus || 'SUCCESS'}`,
+            `  - Transaction Number: ${txnNumber}\n` +
+            `  - Customer Trx ID: ${invoiceResult.customerTrxId || 'N/A'}\n` +
+            `  - Status: ${invoiceResult.serviceStatus || 'SUCCESS'}`,
         );
 
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
@@ -387,14 +417,17 @@ export class OrderSyncProcessor {
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
-            billToAccNumber: invoiceHeader.billToAccountNumber != null ? numberToBigInt(Number(invoiceHeader.billToAccountNumber)) : null,
+            billToAccNumber:
+              invoiceHeader.billToAccountNumber != null
+                ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+                : null,
             businessUnit: invoiceHeader.businessUnit,
             txnSource: invoiceHeader.transactionSource,
             txnType: invoiceHeader.transactionType,
             txnDate: invoiceHeader.saleDate,
             glDate: invoiceHeader.saleDate,
             currencyCode: invoiceHeader.invoiceCurrencyCode,
-            txnNumber: txnNumber,  // ✅ Store the actual transaction number
+            txnNumber: txnNumber, // ✅ Store the actual transaction number
             customerTxnId: Number(invoiceResult.customerTrxId) || null,
             region: effectiveRegion,
           },
@@ -507,7 +540,10 @@ export class OrderSyncProcessor {
               region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
               ledgerId: numberToBigInt(jl.ledgerId),
-              chartOfAccountsId: jl.chartOfAccountsId != null ? numberToBigInt(jl.chartOfAccountsId) : null,
+              chartOfAccountsId:
+                jl.chartOfAccountsId != null
+                  ? numberToBigInt(jl.chartOfAccountsId)
+                  : null,
               currencyCode: jl.currencyCode,
               headerId: jhAudit.id,
             })),
@@ -525,17 +561,17 @@ export class OrderSyncProcessor {
       //
       // This removes the hard dependency on backup tables and allows orders to
       // sync directly when they have complete data.
-      
+
       this.logger.log(
         `[${odooOrderId}] Using enrichment service for flexible order processing...`,
       );
-      
+
       const payloads = await this.enrichmentService.enrichOrder(
         order.id,
         branchCode,
         effectiveRegion,
       );
-      
+
       const txnNumber = await pushToOracle(payloads);
       const txnNumberStr = txnNumber ? String(txnNumber) : null;
       if (order.isRefund) {

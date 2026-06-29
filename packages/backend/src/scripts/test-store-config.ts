@@ -2,7 +2,7 @@
 
 /**
  * Test script for store configuration auto-creation
- * 
+ *
  * Tests:
  * 1. Get or create store config (should create if missing)
  * 2. Get again (should return from cache/DB)
@@ -23,9 +23,13 @@ async function testStoreConfig() {
   const prisma = app.get(PrismaService);
 
   // Test branches from the problem statement
-  const failingBranches = [304, 357, 1186, 255, 385, 215, 392, 212, 1240, 1169, 203, 381];
+  const failingBranches = [
+    304, 357, 1186, 255, 385, 215, 392, 212, 1240, 1169, 203, 381,
+  ];
 
-  console.log(`Testing ${failingBranches.length} branches that were failing...\n`);
+  console.log(
+    `Testing ${failingBranches.length} branches that were failing...\n`,
+  );
   console.log('═'.repeat(80));
 
   const results = {
@@ -54,9 +58,10 @@ async function testStoreConfig() {
       // Test 1: Get or create (should create if missing)
       console.log(`   → Getting or creating config...`);
       const startTime = Date.now();
-      const config1 = await storeConfigService.getOrCreateStoreConfig(branchCode);
+      const config1 =
+        await storeConfigService.getOrCreateStoreConfig(branchCode);
       const elapsed1 = Date.now() - startTime;
-      
+
       if (!config1) {
         console.log(`   ❌ FAILED: Config is null`);
         results.failed++;
@@ -79,7 +84,8 @@ async function testStoreConfig() {
       // Test 2: Get again (should return from cache)
       console.log(`   → Getting config again (should use cache)...`);
       const startTime2 = Date.now();
-      const config2 = await storeConfigService.getOrCreateStoreConfig(branchCode);
+      const config2 =
+        await storeConfigService.getOrCreateStoreConfig(branchCode);
       const elapsed2 = Date.now() - startTime2;
 
       if (!config2) {
@@ -89,23 +95,27 @@ async function testStoreConfig() {
       }
 
       console.log(`   ✅ Config obtained in ${elapsed2}ms`);
-      
+
       if (elapsed2 < elapsed1 / 2) {
         console.log(`   🚀 Cache is working! (${elapsed2}ms vs ${elapsed1}ms)`);
         results.cached++;
       }
 
       // Verify both configs are the same
-      if (config1.id === config2.id && config1.branchCode === config2.branchCode) {
+      if (
+        config1.id === config2.id &&
+        config1.branchCode === config2.branchCode
+      ) {
         console.log(`   ✅ Configs match`);
         results.success++;
       } else {
         console.log(`   ❌ FAILED: Configs don't match`);
         results.failed++;
       }
-
     } catch (error) {
-      console.log(`   ❌ ERROR: ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `   ❌ ERROR: ${error instanceof Error ? error.message : String(error)}`,
+      );
       results.failed++;
     }
   }
@@ -116,7 +126,9 @@ async function testStoreConfig() {
   console.log(`   ❌ Failed: ${results.failed}/${failingBranches.length}`);
   console.log(`   🆕 Created: ${results.created}`);
   console.log(`   🚀 Cached: ${results.cached}`);
-  console.log(`   📈 Success Rate: ${((results.success / failingBranches.length) * 100).toFixed(2)}%`);
+  console.log(
+    `   📈 Success Rate: ${((results.success / failingBranches.length) * 100).toFixed(2)}%`,
+  );
 
   // Test cache clearing
   console.log('\n🧹 Testing cache clearing...');
@@ -127,9 +139,12 @@ async function testStoreConfig() {
   console.log('\n🔄 Testing after cache clear...');
   const testBranchCode = String(failingBranches[0]);
   const startTime = Date.now();
-  const configAfterClear = await storeConfigService.getOrCreateStoreConfig(testBranchCode);
+  const configAfterClear =
+    await storeConfigService.getOrCreateStoreConfig(testBranchCode);
   const elapsed = Date.now() - startTime;
-  console.log(`   ✅ Config obtained in ${elapsed}ms (cache was cleared, so DB lookup expected)`);
+  console.log(
+    `   ✅ Config obtained in ${elapsed}ms (cache was cleared, so DB lookup expected)`,
+  );
 
   await app.close();
 

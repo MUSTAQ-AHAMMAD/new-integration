@@ -81,9 +81,7 @@ describe('FusionAppParams', () => {
       const cred = { hostName: 'acme', server: 'fa' };
       const result = FusionAppParams.fromCredential(cred);
       expect(result).toBeInstanceOf(FusionAppParams);
-      expect(result.buildBaseUrl()).toBe(
-        'https://acme.fa.fa.oraclecloud.com',
-      );
+      expect(result.buildBaseUrl()).toBe('https://acme.fa.fa.oraclecloud.com');
     });
   });
 

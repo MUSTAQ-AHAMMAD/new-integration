@@ -165,20 +165,20 @@ describe('FusionTransformationService', () => {
 
   beforeEach(() => {
     mockPrisma = buildMockPrisma();
-    
+
     // Mock the Oracle enrichment services
     mockUomService = {
       getUomCode: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<OracleUomService>;
-    
+
     mockTaxService = {
       getTaxClassificationCode: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<OracleTaxService>;
-    
+
     mockCustomerService = {
       getCustomerId: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<OracleCustomerService>;
-    
+
     service = new FusionTransformationService(
       mockPrisma as unknown as PrismaService,
       mockUomService,

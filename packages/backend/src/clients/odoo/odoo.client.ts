@@ -173,7 +173,7 @@ export class OdooClient {
 
         this.logger.log(
           `[Odoo Pagination] Starting order fetch: branchId=${params.branchId}, ` +
-          `startDate=${params.startDate}, endDate=${params.endDate}, limit=${params.limit}`,
+            `startDate=${params.startDate}, endDate=${params.endDate}, limit=${params.limit}`,
         );
 
         while (true) {
@@ -235,8 +235,8 @@ export class OdooClient {
 
           this.logger.log(
             `[Odoo Pagination] Fetched page ${Math.floor(offset / pageSize) + 1}: ` +
-            `${pageOrders.length} orders, cumulative: ${allOrders.length + pageOrders.length}` +
-            (totalExpected !== null ? `/${totalExpected}` : ''),
+              `${pageOrders.length} orders, cumulative: ${allOrders.length + pageOrders.length}` +
+              (totalExpected !== null ? `/${totalExpected}` : ''),
           );
 
           // ── Duplicate-page detection ─────────────────────────────────────
@@ -303,17 +303,16 @@ export class OdooClient {
           offset += pageSize;
         }
 
-        if (
-          totalExpected !== null &&
-          allOrders.length < totalExpected
-        ) {
-          const percentage = ((allOrders.length / totalExpected) * 100).toFixed(1);
+        if (totalExpected !== null && allOrders.length < totalExpected) {
+          const percentage = ((allOrders.length / totalExpected) * 100).toFixed(
+            1,
+          );
           this.logger.error(
             `[Odoo Pagination] ⚠️  INCOMPLETE FETCH: got ${allOrders.length} of ${totalExpected} expected records (${percentage}%) — ` +
-            `${totalExpected - allOrders.length} records are MISSING! ` +
-            (offsetPaginationBroken 
-              ? 'Offset pagination is broken on this endpoint. Consider using date-range slicing or alternative API endpoints.'
-              : 'This may indicate deleted records or API limitations.'),
+              `${totalExpected - allOrders.length} records are MISSING! ` +
+              (offsetPaginationBroken
+                ? 'Offset pagination is broken on this endpoint. Consider using date-range slicing or alternative API endpoints.'
+                : 'This may indicate deleted records or API limitations.'),
           );
         } else {
           this.logger.log(

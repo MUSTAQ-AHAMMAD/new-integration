@@ -35,7 +35,9 @@ export class StalledOrdersService {
     // Check if sync control allows this service to run
     const enabled = await this.syncControl.isEnabled('stalled-orders');
     if (!enabled) {
-      this.logger.debug('Stalled orders service is disabled, skipping cron run');
+      this.logger.debug(
+        'Stalled orders service is disabled, skipping cron run',
+      );
       return;
     }
 
