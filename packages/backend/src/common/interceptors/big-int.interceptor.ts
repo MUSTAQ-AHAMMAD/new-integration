@@ -22,6 +22,7 @@ export class BigIntInterceptor implements NestInterceptor {
   /**
    * Recursively converts BigInt values to Numbers in nested structures.
    * Throws if BigInt exceeds Number.MAX_SAFE_INTEGER to prevent data loss.
+   * Preserves Date objects and other built-in types.
    */
   private serializeBigInt(data: any): any {
     if (data === null || data === undefined) {
@@ -40,6 +41,11 @@ export class BigIntInterceptor implements NestInterceptor {
     
     if (Array.isArray(data)) {
       return data.map(item => this.serializeBigInt(item));
+    }
+    
+    // Preserve Date objects - they have their own toJSON method
+    if (data instanceof Date) {
+      return data;
     }
     
     if (typeof data === 'object') {
