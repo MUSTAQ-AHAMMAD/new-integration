@@ -22,10 +22,13 @@ function makeInvoiceHeader(
     billToAccountNumber: 'CUST-001',
     businessUnit: 'BU-UAE',
     saleDate: new Date('2024-01-15T10:00:00Z'),
+    trxDate: new Date('2024-01-15T10:00:00Z'),
     transactionSource: 'VendHQ',
     transactionType: 'PASA CONSULTING SALE',
     invoiceCurrencyCode: 'AED',
     conversionRateType: 'Corporate',
+    conversionRate: 1,
+    conversionDate: new Date('2024-01-15T10:00:00Z'),
     invoiceLines: [
       {
         lineNumber: 1,
