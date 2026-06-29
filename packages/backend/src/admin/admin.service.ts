@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { numberToBigInt } from '../common/utils/bigint-utils';
 
 /** Minimal typed interface for the dynamic Prisma delegates used by AdminService. */
 interface PrismaDelegate {
