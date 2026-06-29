@@ -529,8 +529,48 @@ export class OracleSoapClient implements OnModuleInit {
           extractTag(xml, 'customerTrxId') ||
           '';
         
+        // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response
+          const errorMessage = extractTag(xml, 'ErrorMessage') || 
+                               extractTag(xml, 'errorMessage') ||
+                               extractTag(xml, 'Message') ||
+                               extractTag(xml, 'message') ||
+                               'Unknown error';
+          
+          this.logger.error(
+            `❌ Invoice creation failed with Status E:\n` +
+            `  Transaction Number: ${transactionNumber || 'null'}\n` +
+            `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+            `  Status: ${serviceStatus}\n` +
+            `  Error Message: ${errorMessage}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          
+          throw new Error(
+            `Oracle invoice creation failed with Status E: ${errorMessage}. ` +
+            `Transaction Number: ${transactionNumber || 'null'}, ` +
+            `Customer Trx ID: ${customerTrxId || 'N/A'}`
+          );
+        }
+        
+        // ✅ Validate that we got a transaction number on success
+        if (!transactionNumber || transactionNumber.trim() === '') {
+          this.logger.error(
+            `❌ Invoice creation returned empty transaction number:\n` +
+            `  Status: ${serviceStatus}\n` +
+            `  Customer Trx ID: ${customerTrxId}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          
+          throw new Error(
+            `Oracle invoice creation succeeded but returned no transaction number. ` +
+            `Status: ${serviceStatus}, Customer Trx ID: ${customerTrxId || 'N/A'}`
+          );
+        }
+        
         this.logger.log(
-          `Invoice created: txn=${transactionNumber || 'N/A'}, status=${serviceStatus}`,
+          `✅ Invoice created successfully: txn=${transactionNumber}, status=${serviceStatus}`,
         );
         
         // Return properly parsed response
@@ -567,12 +607,27 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
+        
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
         const customerReceiptReference =
           extractTag(xml, 'CustomerReceiptReference') ||
           extractTag(xml, 'customerReceiptReference');
-        this.logger.log(`Standard receipt created: ${receiptNumber}`);
+        
+        // ✅ Validate receipt number was returned
+        if (!receiptNumber || receiptNumber.trim() === '') {
+          this.logger.error(
+            `❌ Standard receipt creation returned empty receipt number:\n` +
+            `  Requested Receipt Number: ${req.receiptNumber}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle standard receipt creation failed: no receipt number returned. ` +
+            `Requested: ${req.receiptNumber}`
+          );
+        }
+        
+        this.logger.log(`✅ Standard receipt created: ${receiptNumber}`);
         return { receiptNumber, customerReceiptReference };
       }),
     );
@@ -600,11 +655,31 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
+        
         const customerTrxId =
           extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
-        this.logger.log(`Apply receipt created: receipt=${receiptNumber}`);
+        
+        // ✅ Validate response contains required data
+        if (!receiptNumber || receiptNumber.trim() === '') {
+          this.logger.error(
+            `❌ Apply receipt creation returned empty receipt number:\n` +
+            `  Transaction Number: ${req.transactionNumber}\n` +
+            `  Requested Receipt Number: ${req.receiptNumber}\n` +
+            `  Amount Applied: ${req.amountApplied}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle apply receipt creation failed: no receipt number returned. ` +
+            `Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`
+          );
+        }
+        
+        this.logger.log(
+          `✅ Apply receipt created: receipt=${receiptNumber}, ` +
+          `applied=${req.amountApplied} to invoice ${req.transactionNumber}`,
+        );
         return { customerTrxId, receiptNumber };
       }),
     );
@@ -636,13 +711,29 @@ export class OracleSoapClient implements OnModuleInit {
           );
           const xml = resp.data as string;
           this.assertNoFault(xml, 'createMiscellaneousReceipt');
+          
           const receivablesTransactionId =
             extractTag(xml, 'ReceivablesTransactionId') ||
             extractTag(xml, 'receivablesTransactionId');
           const receiptNumber =
             extractTag(xml, 'ReceiptNumber') ||
             extractTag(xml, 'receiptNumber');
-          this.logger.log(`Misc receipt created: ${receiptNumber}`);
+          
+          // ✅ Validate receipt number was returned
+          if (!receiptNumber || receiptNumber.trim() === '') {
+            this.logger.error(
+              `❌ Misc receipt creation returned empty receipt number:\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Receipt Amount: ${req.receiptAmount}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+            throw new Error(
+              `Oracle misc receipt creation failed: no receipt number returned. ` +
+              `Requested: ${req.receiptNumber}`
+            );
+          }
+          
+          this.logger.log(`✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`);
           return { receivablesTransactionId, receiptNumber };
         }),
     );
@@ -670,9 +761,22 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'importJournals');
+        
         const result = extractTag(xml, 'result') || extractTag(xml, 'return');
         const jeHeaderId = result ? parseInt(result, 10) : null;
-        this.logger.log(`Journal imported: jeHeaderId=${String(jeHeaderId)}`);
+        
+        // ✅ Log warning if journal import failed but don't throw (journal is optional)
+        if (jeHeaderId === null || isNaN(jeHeaderId)) {
+          this.logger.warn(
+            `⚠️  Journal import did not return a valid JE Header ID:\n` +
+            `  Batch Name: ${header.batchName}\n` +
+            `  Result: ${result || 'null'}\n` +
+            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+        } else {
+          this.logger.log(`✅ Journal imported successfully: jeHeaderId=${jeHeaderId}`);
+        }
+        
         return jeHeaderId !== null && !isNaN(jeHeaderId) ? jeHeaderId : null;
       }),
     );

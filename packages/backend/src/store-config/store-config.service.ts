@@ -1,3 +1,4 @@
+import { numberToBigInt } from '../common/utils/bigint-utils';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AlertSeverity, AlertType, ValidationStatus, StoreConfiguration } from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
@@ -146,7 +147,7 @@ export class StoreConfigService {
       data: {
         branchCode,
         branchName,
-        odooBranchId: BigInt(branchId),
+        odooBranchId: numberToBigInt(branchId),
         oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
         oracleBusinessUnit: fusionMetadata?.businessUnit || 'DEFAULT_BU',
         billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
@@ -191,8 +192,8 @@ export class StoreConfigService {
       id: `FALLBACK_${branchCode}`,
       branchCode,
       branchName: `FALLBACK-${branchCode}`,
-      odooBranchId: BigInt(isNaN(branchId) ? 0 : branchId),
-      oracleOperatingUnitId: BigInt(0),
+      odooBranchId: numberToBigInt(isNaN(branchId) ? 0 : branchId),
+      oracleOperatingUnitId: numberToBigInt(0),
       oracleBusinessUnit: 'FALLBACK_BU',
       billToSiteName: 'FALLBACK_SITE',
       billToLocation: null,
@@ -337,8 +338,8 @@ export class StoreConfigService {
     const { branchCode, odooBranchId, oracleOperatingUnitId, ...rest } = data;
     const prismaData = {
       ...rest,
-      odooBranchId: odooBranchId != null ? BigInt(odooBranchId) : BigInt(0),
-      oracleOperatingUnitId: oracleOperatingUnitId != null ? BigInt(oracleOperatingUnitId) : BigInt(0),
+      odooBranchId: odooBranchId != null ? BigInt(odooBranchId) : numberToBigInt(0),
+      oracleOperatingUnitId: oracleOperatingUnitId != null ? BigInt(oracleOperatingUnitId) : numberToBigInt(0),
     };
     return this.prisma.storeConfiguration.upsert({
       where: { branchCode },
@@ -483,7 +484,7 @@ export class StoreConfigService {
           data: {
             branchCode,
             branchName: branch.branchName || `Branch ${branchCode}`,
-            odooBranchId: BigInt(branch.branchId),
+            odooBranchId: numberToBigInt(branch.branchId),
             oracleOperatingUnitId: metadata.billToAccount,
             oracleBusinessUnit: metadata.businessUnit,
             billToSiteName: metadata.billToName,

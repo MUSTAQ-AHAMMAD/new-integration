@@ -175,7 +175,7 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
     }
     case 'BigInt': {
       try {
-        return BigInt(s.split('.')[0]);
+        return numberToBigInt(parseFloat(s.split('.')[0]));
       } catch {
         return null;
       }

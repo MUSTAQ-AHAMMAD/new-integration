@@ -22,6 +22,7 @@ import { OrderEnrichmentService } from '../../sync/order-enrichment.service';
 import { ValidationService } from '../../sync/validation.service';
 import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
+import { numberToBigInt } from '../../common/utils/bigint-utils';
 
 @Processor(QUEUE_NAMES.ORDER_SYNC)
 export class OrderSyncProcessor {
@@ -386,7 +387,7 @@ export class OrderSyncProcessor {
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
-            billToAccNumber: invoiceHeader.billToAccountNumber != null ? BigInt(invoiceHeader.billToAccountNumber) : null,
+            billToAccNumber: invoiceHeader.billToAccountNumber != null ? numberToBigInt(Number(invoiceHeader.billToAccountNumber)) : null,
             businessUnit: invoiceHeader.businessUnit,
             txnSource: invoiceHeader.transactionSource,
             txnType: invoiceHeader.transactionType,
@@ -426,7 +427,7 @@ export class OrderSyncProcessor {
               currencyCode: sr.currencyCode,
               receiptDate: sr.saleDate,
               glDate: sr.saleDate,
-              receiptMethodId: BigInt(sr.receiptMethodId),
+              receiptMethodId: numberToBigInt(sr.receiptMethodId),
               receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
               remittanceBankAccId: String(sr.remittanceBankAccountId),
               customerId: sr.customerId,
@@ -448,7 +449,7 @@ export class OrderSyncProcessor {
               currencyCode: mr.currencyCode,
               glDate: mr.saleDate,
               receiptDate: mr.saleDate,
-              receiptMethodId: BigInt(mr.receiptMethodId),
+              receiptMethodId: numberToBigInt(mr.receiptMethodId),
               receiptMethodName: mr.receiptMethodName,
               receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
               bankAccNumber: mr.bankAccountName,
@@ -487,7 +488,7 @@ export class OrderSyncProcessor {
               requestDate: new Date(),
               region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
-              ledgerId: BigInt(jh.ledgerId),
+              ledgerId: numberToBigInt(jh.ledgerId),
               batchName: jh.batchName,
               batchDescription: jh.batchDescription,
               accountingPeriodName: jh.accountingPeriodName,
@@ -505,8 +506,8 @@ export class OrderSyncProcessor {
               requestDate: new Date(),
               region: effectiveRegion,
               jeHeaderId: jeHeaderId ?? null,
-              ledgerId: BigInt(jl.ledgerId),
-              chartOfAccountsId: jl.chartOfAccountsId != null ? BigInt(jl.chartOfAccountsId) : null,
+              ledgerId: numberToBigInt(jl.ledgerId),
+              chartOfAccountsId: jl.chartOfAccountsId != null ? numberToBigInt(jl.chartOfAccountsId) : null,
               currencyCode: jl.currencyCode,
               headerId: jhAudit.id,
             })),
