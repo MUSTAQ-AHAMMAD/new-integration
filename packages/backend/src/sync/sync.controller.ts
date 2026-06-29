@@ -10,27 +10,17 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Prisma, SyncStatus } from '@prisma/client';
-import {
-  extractBranchCode,
-  normalizeOrderForIngestion,
-} from '../common/odoo-utils';
+import { normalizeOrderForIngestion } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
-import { DateFormatUtil } from '../common/utils/date-format.util';
 import { toSafeNumber } from '../common/utils/bigint-utils';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
-import {
-  CircuitBreakerService,
-  CircuitStatus,
-} from '../clients/circuit-breaker.service';
+import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
-import {
-  OrderListResponseDto,
-  OrderResponseDto,
-} from './dto/order-response.dto';
+import { OrderListResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { OrderEnrichmentService } from './order-enrichment.service';
