@@ -78,12 +78,17 @@ export class ItemSyncService {
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          this.logger.error(`Item sync failed for region=${cred.region}: ${msg}`);
+          this.logger.error(
+            `Item sync failed for region=${cred.region}: ${msg}`,
+          );
           hasError = true;
         }
       }
 
-      await this.syncControl.markStopped('item-sync', hasError ? 'error' : 'success');
+      await this.syncControl.markStopped(
+        'item-sync',
+        hasError ? 'error' : 'success',
+      );
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Item sync job failed: ${msg}`);

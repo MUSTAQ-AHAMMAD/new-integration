@@ -154,7 +154,10 @@ export class VendHqSalesBackupService {
         }
       }
 
-      await this.syncControl.markStopped('vendhq-backup', hasError ? 'error' : 'success');
+      await this.syncControl.markStopped(
+        'vendhq-backup',
+        hasError ? 'error' : 'success',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`VendHQ backup cron failed: ${msg}`);

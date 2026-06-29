@@ -146,7 +146,10 @@ export class OdooBackupDiagnosticsController {
     }
 
     if (Object.keys(analysis).length === 0) {
-      return { status: 'NO_LINE_FIELDS_FOUND', issue: 'No line item fields present in raw JSON' };
+      return {
+        status: 'NO_LINE_FIELDS_FOUND',
+        issue: 'No line item fields present in raw JSON',
+      };
     }
 
     return analysis;
@@ -177,7 +180,10 @@ export class OdooBackupDiagnosticsController {
     }
 
     if (Object.keys(analysis).length === 0) {
-      return { status: 'NO_PAYMENT_FIELDS_FOUND', issue: 'No payment fields present in raw JSON' };
+      return {
+        status: 'NO_PAYMENT_FIELDS_FOUND',
+        issue: 'No payment fields present in raw JSON',
+      };
     }
 
     return analysis;

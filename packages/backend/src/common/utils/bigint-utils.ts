@@ -1,6 +1,6 @@
 /**
  * BigInt Utilities - Centralized BigInt handling utilities
- * 
+ *
  * This module provides safe conversion utilities for BigInt values
  * to prevent serialization errors and precision loss issues.
  */
@@ -12,16 +12,22 @@
  * @returns Number representation of the BigInt
  * @throws RangeError if the value exceeds MAX_SAFE_INTEGER
  */
-export function bigIntToNumber(value: bigint | null | undefined, fieldName?: string): number {
+export function bigIntToNumber(
+  value: bigint | null | undefined,
+  fieldName?: string,
+): number {
   if (value === null || value === undefined) {
     return 0;
   }
 
   // Check for precision loss
-  if (value > BigInt(Number.MAX_SAFE_INTEGER) || value < BigInt(-Number.MAX_SAFE_INTEGER)) {
+  if (
+    value > BigInt(Number.MAX_SAFE_INTEGER) ||
+    value < BigInt(-Number.MAX_SAFE_INTEGER)
+  ) {
     const field = fieldName ? ` (${fieldName})` : '';
     throw new RangeError(
-      `BigInt value${field} ${value.toString()} exceeds MAX_SAFE_INTEGER and cannot be safely converted to number`
+      `BigInt value${field} ${value.toString()} exceeds MAX_SAFE_INTEGER and cannot be safely converted to number`,
     );
   }
 
@@ -34,7 +40,10 @@ export function bigIntToNumber(value: bigint | null | undefined, fieldName?: str
  * @param fieldName - Optional field name for error messages
  * @returns Number representation or null
  */
-export function bigIntToNumberOrNull(value: bigint | null | undefined, fieldName?: string): number | null {
+export function bigIntToNumberOrNull(
+  value: bigint | null | undefined,
+  fieldName?: string,
+): number | null {
   if (value === null || value === undefined) {
     return null;
   }
@@ -69,12 +78,22 @@ export function toSafeNumber(value: any): number {
   }
 
   // Handle Prisma Decimal with toNumber() method
-  if (value && typeof value === 'object' && typeof value.toNumber === 'function') {
+  if (
+    value &&
+    typeof value === 'object' &&
+    typeof value.toNumber === 'function'
+  ) {
     return value.toNumber();
   }
 
   // Handle Prisma Decimal internal structure { s, e, d }
-  if (value && typeof value === 'object' && 's' in value && 'e' in value && 'd' in value) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    's' in value &&
+    'e' in value &&
+    'd' in value
+  ) {
     try {
       return parseFloat(value.toString());
     } catch {
@@ -103,7 +122,7 @@ export function serializeBigIntForLog(obj: any): any {
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(item => serializeBigIntForLog(item));
+    return obj.map((item) => serializeBigIntForLog(item));
   }
 
   if (typeof obj === 'object') {
@@ -123,7 +142,10 @@ export function serializeBigIntForLog(obj: any): any {
  * @returns true if safe to convert
  */
 export function isSafeBigInt(value: bigint): boolean {
-  return value <= BigInt(Number.MAX_SAFE_INTEGER) && value >= BigInt(-Number.MAX_SAFE_INTEGER);
+  return (
+    value <= BigInt(Number.MAX_SAFE_INTEGER) &&
+    value >= BigInt(-Number.MAX_SAFE_INTEGER)
+  );
 }
 
 /**
@@ -153,10 +175,14 @@ export function numberToBigInt(value: number | null | undefined): bigint {
  * @returns JSON string
  */
 export function stringifyWithBigInt(obj: any, space?: number): string {
-  return JSON.stringify(obj, (_, value) => {
-    if (typeof value === 'bigint') {
-      return bigIntToNumber(value);
-    }
-    return value;
-  }, space);
+  return JSON.stringify(
+    obj,
+    (_, value) => {
+      if (typeof value === 'bigint') {
+        return bigIntToNumber(value);
+      }
+      return value;
+    },
+    space,
+  );
 }

@@ -1,9 +1,9 @@
 /**
  * Fusion Payload Validator
- * 
+ *
  * Validates Oracle Fusion SOAP payloads before sending to ensure all required fields are present
  * and properly formatted. Based on Java model validation logic.
- * 
+ *
  * Java Reference:
  * - FusionSOAPClient/src/.../model/*.java
  * - IntegrationJobs/src/.../mapping/*.java
@@ -64,7 +64,10 @@ export class FusionPayloadValidator {
     // Validate saleDate
     if (!invoice.saleDate) {
       errors.push('saleDate is required');
-    } else if (!(invoice.saleDate instanceof Date) || isNaN(invoice.saleDate.getTime())) {
+    } else if (
+      !(invoice.saleDate instanceof Date) ||
+      isNaN(invoice.saleDate.getTime())
+    ) {
       errors.push('saleDate must be a valid Date object');
     }
 
@@ -139,7 +142,10 @@ export class FusionPayloadValidator {
     if (!receipt.receiptMethodId || receipt.receiptMethodId <= 0) {
       errors.push('receiptMethodId must be > 0');
     }
-    if (!receipt.remittanceBankAccountId || receipt.remittanceBankAccountId <= 0) {
+    if (
+      !receipt.remittanceBankAccountId ||
+      receipt.remittanceBankAccountId <= 0
+    ) {
       errors.push('remittanceBankAccountId must be > 0');
     }
     if (!receipt.orgId || receipt.orgId <= 0) {
@@ -156,7 +162,10 @@ export class FusionPayloadValidator {
     // Validate saleDate
     if (!receipt.saleDate) {
       errors.push('saleDate is required');
-    } else if (!(receipt.saleDate instanceof Date) || isNaN(receipt.saleDate.getTime())) {
+    } else if (
+      !(receipt.saleDate instanceof Date) ||
+      isNaN(receipt.saleDate.getTime())
+    ) {
       errors.push('saleDate must be a valid Date object');
     }
 
@@ -203,7 +212,10 @@ export class FusionPayloadValidator {
     // Validate saleDate
     if (!receipt.saleDate) {
       errors.push('saleDate is required');
-    } else if (!(receipt.saleDate instanceof Date) || isNaN(receipt.saleDate.getTime())) {
+    } else if (
+      !(receipt.saleDate instanceof Date) ||
+      isNaN(receipt.saleDate.getTime())
+    ) {
       errors.push('saleDate must be a valid Date object');
     }
 
@@ -219,7 +231,9 @@ export class FusionPayloadValidator {
 
     // Required string fields
     if (!receipt.transactionNumber) {
-      errors.push('transactionNumber is required (from invoice creation response)');
+      errors.push(
+        'transactionNumber is required (from invoice creation response)',
+      );
     }
     if (!receipt.receiptNumber) {
       errors.push('receiptNumber is required');
@@ -241,7 +255,10 @@ export class FusionPayloadValidator {
     // Validate receiptDate
     if (!receipt.receiptDate) {
       errors.push('receiptDate is required');
-    } else if (!(receipt.receiptDate instanceof Date) || isNaN(receipt.receiptDate.getTime())) {
+    } else if (
+      !(receipt.receiptDate instanceof Date) ||
+      isNaN(receipt.receiptDate.getTime())
+    ) {
       errors.push('receiptDate must be a valid Date object');
     }
 
@@ -270,7 +287,10 @@ export class FusionPayloadValidator {
     }
 
     // Validate period name format (MMM-yy)
-    if (journal.accountingPeriodName && !/^[A-Z][a-z]{2}-\d{2}$/.test(journal.accountingPeriodName)) {
+    if (
+      journal.accountingPeriodName &&
+      !/^[A-Z][a-z]{2}-\d{2}$/.test(journal.accountingPeriodName)
+    ) {
       errors.push(
         `accountingPeriodName must be in format "MMM-yy" (e.g., "Jan-24"), got: ${journal.accountingPeriodName}`,
       );
@@ -284,7 +304,10 @@ export class FusionPayloadValidator {
     // Validate accountingDate
     if (!journal.accountingDate) {
       errors.push('accountingDate is required');
-    } else if (!(journal.accountingDate instanceof Date) || isNaN(journal.accountingDate.getTime())) {
+    } else if (
+      !(journal.accountingDate instanceof Date) ||
+      isNaN(journal.accountingDate.getTime())
+    ) {
       errors.push('accountingDate must be a valid Date object');
     }
 
@@ -326,19 +349,32 @@ export class FusionPayloadValidator {
     // Validate accountingDate
     if (!line.accountingDate) {
       errors.push(`${prefix} accountingDate is required`);
-    } else if (!(line.accountingDate instanceof Date) || isNaN(line.accountingDate.getTime())) {
+    } else if (
+      !(line.accountingDate instanceof Date) ||
+      isNaN(line.accountingDate.getTime())
+    ) {
       errors.push(`${prefix} accountingDate must be a valid Date object`);
     }
 
     // Validate that either DR or CR amount is set, but not both
-    const hasDr = line.enteredDrAmount !== undefined && line.enteredDrAmount !== null && line.enteredDrAmount !== 0;
-    const hasCr = line.enteredCrAmount !== undefined && line.enteredCrAmount !== null && line.enteredCrAmount !== 0;
+    const hasDr =
+      line.enteredDrAmount !== undefined &&
+      line.enteredDrAmount !== null &&
+      line.enteredDrAmount !== 0;
+    const hasCr =
+      line.enteredCrAmount !== undefined &&
+      line.enteredCrAmount !== null &&
+      line.enteredCrAmount !== 0;
 
     if (!hasDr && !hasCr) {
-      errors.push(`${prefix} Must have either enteredDrAmount or enteredCrAmount`);
+      errors.push(
+        `${prefix} Must have either enteredDrAmount or enteredCrAmount`,
+      );
     }
     if (hasDr && hasCr) {
-      errors.push(`${prefix} Cannot have both enteredDrAmount and enteredCrAmount`);
+      errors.push(
+        `${prefix} Cannot have both enteredDrAmount and enteredCrAmount`,
+      );
     }
 
     return errors;

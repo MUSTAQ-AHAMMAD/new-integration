@@ -21,10 +21,16 @@ import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
-import { CircuitBreakerService, CircuitStatus } from '../clients/circuit-breaker.service';
+import {
+  CircuitBreakerService,
+  CircuitStatus,
+} from '../clients/circuit-breaker.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
-import { OrderListResponseDto, OrderResponseDto } from './dto/order-response.dto';
+import {
+  OrderListResponseDto,
+  OrderResponseDto,
+} from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderSyncService } from './order-sync.service';
 import { OrderEnrichmentService } from './order-enrichment.service';
@@ -404,13 +410,14 @@ export class SyncController {
 
   /**
    * GET /sync/orders - List orders with proper date formatting
-   * 
+   *
    * Fixes "[object Ob]" issue by ensuring all dates are formatted as ISO strings
    */
   @Get('orders')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'List orders with proper date formatting',
-    description: 'Returns orders from OrderSyncQueue with all dates formatted as ISO strings to fix UI display issues'
+    description:
+      'Returns orders from OrderSyncQueue with all dates formatted as ISO strings to fix UI display issues',
   })
   async getOrders(
     @Query('skip') skip?: string,
@@ -447,13 +454,14 @@ export class SyncController {
 
   /**
    * POST /sync/fix-all-failed - Bulk fix all failed orders
-   * 
+   *
    * Resets failed orders to PENDING status and triggers sync
    */
   @Post('fix-all-failed')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Fix all failed orders',
-    description: 'Resets all failed orders to PENDING status and triggers sync. Useful for bulk recovery after fixing issues.'
+    description:
+      'Resets all failed orders to PENDING status and triggers sync. Useful for bulk recovery after fixing issues.',
   })
   async fixAllFailedOrders() {
     this.logger.log('🔧 FIXING ALL FAILED ORDERS...');
@@ -505,26 +513,32 @@ export class SyncController {
           odooOrderId: order.odooOrderId,
           branchCode: order.branchCode,
         });
-        
-        results.requeued++;
 
+        results.requeued++;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage =
+          error instanceof Error ? error.message : 'Unknown error';
         results.errors.push({
           orderId: order.id,
           orderNumber: order.odooOrderNumber,
           error: errorMessage,
         });
-        this.logger.error(`❌ Failed to reset order ${order.id}:`, errorMessage);
+        this.logger.error(
+          `❌ Failed to reset order ${order.id}:`,
+          errorMessage,
+        );
       }
     }
 
-    this.logger.log(`✅ Fix completed: ${results.reset} reset, ${results.requeued} requeued`);
+    this.logger.log(
+      `✅ Fix completed: ${results.reset} reset, ${results.requeued} requeued`,
+    );
 
     return {
       message: 'Fix completed',
       results,
-      nextStep: 'Orders reset to PENDING and re-queued. Sync will process automatically.',
+      nextStep:
+        'Orders reset to PENDING and re-queued. Sync will process automatically.',
     };
   }
 
@@ -532,9 +546,10 @@ export class SyncController {
    * Sync a specific order directly
    */
   @Post('sync-direct/:orderId')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Directly sync a specific order',
-    description: 'Resets order to PENDING and immediately queues it for sync. Useful for testing.'
+    description:
+      'Resets order to PENDING and immediately queues it for sync. Useful for testing.',
   })
   async syncOrderDirect(@Param('orderId') orderId: string) {
     this.logger.log(`Direct sync for order: ${orderId}`);
@@ -553,7 +568,7 @@ export class SyncController {
       data: {
         status: SyncStatus.PENDING,
         syncAttempts: 0,
-        validationErrors: Prisma.JsonNull,  // ✅ Fixed
+        validationErrors: Prisma.JsonNull, // ✅ Fixed
       },
     });
 
@@ -578,7 +593,8 @@ export class SyncController {
   @Get('order-data/:orderSyncQueueId')
   @ApiOperation({
     summary: 'Get order data with lines and payments from backup tables',
-    description: 'Retrieves order along with its line items and payments from BackupOdooOrder tables. Use this to verify data exists before enrichment.'
+    description:
+      'Retrieves order along with its line items and payments from BackupOdooOrder tables. Use this to verify data exists before enrichment.',
   })
   async getOrderData(@Param('orderSyncQueueId') orderSyncQueueId: string) {
     this.logger.log(`Getting order data for: ${orderSyncQueueId}`);
@@ -593,23 +609,19 @@ export class SyncController {
 
     // Get backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
-      where: { 
+      where: {
         orderName: order.odooOrderNumber,
       },
     });
 
     // Get backup lines - use numeric orderId
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }
-        : { orderId: 0 },
+      where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }
-        : { orderId: 0 },
+      where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     return {
@@ -644,9 +656,12 @@ export class SyncController {
   @Post('test-enrich/:orderSyncQueueId')
   @ApiOperation({
     summary: 'Test order enrichment with backup table data',
-    description: 'Runs enrichment on a specific order to verify that lines and payments are being fetched correctly from backup tables.'
+    description:
+      'Runs enrichment on a specific order to verify that lines and payments are being fetched correctly from backup tables.',
   })
-  async testEnrichOrder(@Param('orderSyncQueueId') orderSyncQueueId: string): Promise<any> {
+  async testEnrichOrder(
+    @Param('orderSyncQueueId') orderSyncQueueId: string,
+  ): Promise<any> {
     this.logger.log(`Testing enrichment for order: ${orderSyncQueueId}`);
 
     const order = await this.prisma.orderSyncQueue.findUnique({
@@ -659,23 +674,19 @@ export class SyncController {
 
     // Get backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
-      where: { 
+      where: {
         orderName: order.odooOrderNumber,
       },
     });
 
     // Get backup lines - use numeric orderId
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }
-        : { orderId: 0 },
+      where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     // Get backup payments - use numeric orderId
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }
-        : { orderId: 0 },
+      where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     // Build enriched payloads
@@ -718,7 +729,7 @@ export class SyncController {
 
     // 1. Find the order in OrderSyncQueue
     const order = await this.prisma.orderSyncQueue.findFirst({
-      where: { 
+      where: {
         odooOrderNumber: orderNumber,
       },
     });
@@ -726,22 +737,22 @@ export class SyncController {
     // 2. Find backup lines - use the numeric order ID
     // First, find the backup order
     const backupOrder = await this.prisma.backupOdooOrder.findFirst({
-      where: { 
+      where: {
         orderName: orderNumber,
       },
     });
 
     const backupLines = await this.prisma.backupOdooOrderLine.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
-        : { orderId: 0 },  // No match
+      where: backupOrder
+        ? { orderId: backupOrder.orderId } // ✅ Use numeric orderId
+        : { orderId: 0 }, // No match
     });
 
     // 3. Find backup payments
     const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: backupOrder 
-        ? { orderId: backupOrder.orderId }  // ✅ Use numeric orderId
-        : { orderId: 0 },  // No match
+      where: backupOrder
+        ? { orderId: backupOrder.orderId } // ✅ Use numeric orderId
+        : { orderId: 0 }, // No match
     });
 
     return {
@@ -760,10 +771,12 @@ export class SyncController {
         count: backupPayments.length,
         sample: backupPayments.slice(0, 3),
       },
-      canSync: backupLines.length > 0 || backupPayments.length > 0 || !!backupOrder,
-      summary: backupLines.length > 0 
-        ? `✅ Found ${backupLines.length} lines and ${backupPayments.length} payments` 
-        : '⚠️ No backup data found - will use minimal data',
+      canSync:
+        backupLines.length > 0 || backupPayments.length > 0 || !!backupOrder,
+      summary:
+        backupLines.length > 0
+          ? `✅ Found ${backupLines.length} lines and ${backupPayments.length} payments`
+          : '⚠️ No backup data found - will use minimal data',
     };
   }
 
@@ -771,9 +784,9 @@ export class SyncController {
    * Get all circuit breaker statuses
    */
   @Get('admin/circuit-breakers')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get all circuit breaker statuses',
-    description: 'Returns status of all circuit breakers in the system'
+    description: 'Returns status of all circuit breakers in the system',
   })
   async getCircuitBreakers() {
     const statuses = await this.circuitBreakerService.getStatus();
@@ -787,9 +800,9 @@ export class SyncController {
    * Get status of a specific circuit breaker
    */
   @Get('admin/circuit-breaker/:name')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Get circuit breaker status by name',
-    description: 'Returns the status of a specific circuit breaker'
+    description: 'Returns the status of a specific circuit breaker',
   })
   async getCircuitBreaker(@Param('name') name: string) {
     const status = await this.circuitBreakerService.getStatus(name);
@@ -806,9 +819,10 @@ export class SyncController {
    * Reset a circuit breaker to CLOSED state
    */
   @Post('admin/circuit-breaker/reset/:name')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Reset circuit breaker for a service',
-    description: 'Manually reset a circuit breaker to CLOSED state. Use this to recover from OPEN state after fixing the underlying issue.'
+    description:
+      'Manually reset a circuit breaker to CLOSED state. Use this to recover from OPEN state after fixing the underlying issue.',
   })
   async resetCircuitBreaker(@Param('name') name: string) {
     this.logger.log(`Resetting circuit breaker: ${name}`);
@@ -826,12 +840,13 @@ export class SyncController {
   @Get('debug/metadata/:region')
   @ApiOperation({
     summary: 'Get FusionSalesMetadata by region',
-    description: 'Debug endpoint to check metadata configuration for a specific region'
+    description:
+      'Debug endpoint to check metadata configuration for a specific region',
   })
   async debugMetadata(@Param('region') region: string) {
     const metadata = await this.fusionMetadataService.getSalesMetadata(region);
     const buMap = await this.fusionMetadataService.getBusinessUnitMap(region);
-    
+
     return {
       region,
       metadata,
@@ -847,11 +862,12 @@ export class SyncController {
   @Post('debug/test-invoice/:region')
   @ApiOperation({
     summary: 'Test invoice building with metadata',
-    description: 'Debug endpoint to test invoice payload generation using FusionSalesMetadata'
+    description:
+      'Debug endpoint to test invoice payload generation using FusionSalesMetadata',
   })
   async testInvoiceWithMetadata(@Param('region') region: string) {
     const metadata = await this.fusionMetadataService.getSalesMetadata(region);
-    
+
     const testInvoice = {
       billToCustomerName: metadata.billToName,
       billToLocation: metadata.siteNumber || '',
@@ -862,22 +878,25 @@ export class SyncController {
       invoiceCurrencyCode: 'AED',
       conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
       saleDate: new Date(),
-      invoiceLines: [{
-        lineNumber: 1,
-        description: 'Test Line',
-        quantity: 1,
-        unitSellingPrice: 10,
-        currencyCode: 'AED',
-        salesOrder: 'TEST-001',
-        salesOrderLine: '1',
-      }],
+      invoiceLines: [
+        {
+          lineNumber: 1,
+          description: 'Test Line',
+          quantity: 1,
+          unitSellingPrice: 10,
+          currencyCode: 'AED',
+          salesOrder: 'TEST-001',
+          salesOrderLine: '1',
+        },
+      ],
     };
-    
+
     return {
       region,
       metadata,
       testInvoice,
-      message: 'Test invoice built from metadata. Check logs for Oracle response.',
+      message:
+        'Test invoice built from metadata. Check logs for Oracle response.',
     };
   }
 }

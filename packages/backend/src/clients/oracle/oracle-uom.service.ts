@@ -1,8 +1,8 @@
 /**
  * Oracle UOM (Unit of Measure) Service
- * 
+ *
  * Fetches unit of measure codes from Oracle Fusion and caches them.
- * 
+ *
  * Java Reference: FusionInvoiceMapping.java lines 57-84
  * - Fetches UOM codes via Oracle UOM service
  * - Caches results in HashMap for performance
@@ -23,13 +23,13 @@ export class OracleUomService {
 
   /**
    * Get UOM code for a product item from Oracle Fusion.
-   * 
+   *
    * Java equivalent: getUomCode(String itemNumber)
-   * 
+   *
    * @param itemNumber - Product ID from VendHQ
    * @param region - Region code (e.g., "AE", "KW", "OM")
    * @returns UOM code (e.g., "EA", "EACH") or null if not found
-   * 
+   *
    * @example
    * const uomCode = await uomService.getUomCode("PROD-12345", "AE");
    * // Returns: "EA"
@@ -58,22 +58,22 @@ export class OracleUomService {
 
       // Call Oracle Item Master service to get UOM code
       const itemMaster = await this.soapClient.getItemMaster(itemNumber);
-      
+
       if (itemMaster?.uomCode) {
         // Cache the result
         this.uomCache.set(cacheKey, itemMaster.uomCode);
-        
+
         this.logger.debug(
           `UOM code resolved for item ${itemNumber} in region ${region}: ${itemMaster.uomCode}`,
         );
-        
+
         return itemMaster.uomCode;
       }
-      
+
       this.logger.debug(
         `No UOM code found for item ${itemNumber} in region ${region}, using default`,
       );
-      
+
       // Return default UOM if not found
       const defaultUom = 'EA';
       this.uomCache.set(cacheKey, defaultUom);

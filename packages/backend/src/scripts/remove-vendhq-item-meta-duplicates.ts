@@ -36,18 +36,14 @@ async function removeDuplicates() {
       // Get all records for this itemId + region, ordered by updatedAt DESC
       const records = await prisma.vendHqItemMeta.findMany({
         where: { itemId, region },
-        orderBy: [
-          { updatedAt: 'desc' },
-          { createdAt: 'desc' },
-          { id: 'desc' },
-        ],
+        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
       });
 
       // Keep the first (most recent) record, delete the rest
       const recordsToDelete = records.slice(1);
 
       console.log(
-        `  Deleting ${recordsToDelete.length} duplicate(s) for itemId=${itemId}, region=${region}`
+        `  Deleting ${recordsToDelete.length} duplicate(s) for itemId=${itemId}, region=${region}`,
       );
 
       for (const record of recordsToDelete) {
@@ -58,7 +54,9 @@ async function removeDuplicates() {
       }
     }
 
-    console.log(`\n✅ Successfully removed ${totalRecordsDeleted} duplicate records.`);
+    console.log(
+      `\n✅ Successfully removed ${totalRecordsDeleted} duplicate records.`,
+    );
     console.log('You can now run: pnpm db:push');
   } catch (error) {
     console.error('❌ Error removing duplicates:', error);

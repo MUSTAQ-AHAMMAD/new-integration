@@ -121,7 +121,7 @@ export class DeadLetterQueueService {
     // Add jitter (±20%) to prevent thundering herd
     const jitter = exponentialDelay * 0.2 * (Math.random() - 0.5);
     const finalDelay = exponentialDelay + jitter;
-    
+
     // Cap at 5 minutes
     return Math.min(finalDelay, 300000);
   }
@@ -193,7 +193,10 @@ export class DeadLetterQueueService {
   /**
    * Manually retry a dead-letter order
    */
-  async retryDeadLetterOrder(orderId: string, branchCode: string): Promise<void> {
+  async retryDeadLetterOrder(
+    orderId: string,
+    branchCode: string,
+  ): Promise<void> {
     this.logger.log(`Manual retry requested for dead-letter order: ${orderId}`);
 
     const order = await this.prisma.orderSyncQueue.findUnique({

@@ -23,10 +23,14 @@ export class FusionMetadataService {
 
     if (!metadata) {
       // Try fallback - get first available metadata
-      this.logger.warn(`No metadata found for region ${region}, using fallback`);
+      this.logger.warn(
+        `No metadata found for region ${region}, using fallback`,
+      );
       const fallback = await this.prisma.fusionSalesMetadata.findFirst();
       if (fallback) {
-        this.logger.log(`Using fallback metadata from region ${fallback.region}`);
+        this.logger.log(
+          `Using fallback metadata from region ${fallback.region}`,
+        );
         this.cache.set(region, fallback);
         return fallback;
       }

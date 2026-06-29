@@ -528,9 +528,7 @@ describe('OracleSoapClient', () => {
       mockHttpPost.mockResolvedValue({ data: errorXml });
 
       const promise = client.createApplyReceipt(makeApplyReceiptRequest());
-      const assertion = expect(promise).rejects.toThrow(
-        'Currency mismatch',
-      );
+      const assertion = expect(promise).rejects.toThrow('Currency mismatch');
       await jest.runAllTimersAsync();
       await assertion;
     });
@@ -730,9 +728,7 @@ describe('OracleSoapClient', () => {
       mockHttpPost.mockResolvedValue({ data: errorXml });
 
       const promise = client.importJournalEntry(makeJournalHeader());
-      const assertion = expect(promise).rejects.toThrow(
-        'Invalid ledger ID',
-      );
+      const assertion = expect(promise).rejects.toThrow('Invalid ledger ID');
       await jest.runAllTimersAsync();
       await assertion;
     });

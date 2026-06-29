@@ -29,7 +29,7 @@ export class ErrorResolutionService {
   // Comprehensive error code database
   private readonly errorCodeMap: Record<string, ErrorCodeInfo> = {
     // Oracle Connection Errors
-    'ORACLE_CONN_001': {
+    ORACLE_CONN_001: {
       code: 'ORACLE_CONN_001',
       name: 'Oracle Connection Timeout',
       description: 'Connection to Oracle server timed out',
@@ -52,10 +52,11 @@ export class ErrorResolutionService {
       relatedDocs: 'https://docs.oracle.com/en/cloud/connectivity',
     },
 
-    'ORACLE_CONN_002': {
+    ORACLE_CONN_002: {
       code: 'ORACLE_CONN_002',
       name: 'Oracle Authentication Failed',
-      description: 'Failed to authenticate with Oracle using provided credentials',
+      description:
+        'Failed to authenticate with Oracle using provided credentials',
       category: ErrorType.AUTHENTICATION_ERROR,
       severity: 'CRITICAL',
       isRetryable: false,
@@ -75,7 +76,7 @@ export class ErrorResolutionService {
       relatedDocs: 'https://docs.oracle.com/en/cloud/authentication',
     },
 
-    'ORACLE_CONN_003': {
+    ORACLE_CONN_003: {
       code: 'ORACLE_CONN_003',
       name: 'Oracle Service Unavailable',
       description: 'Oracle REST/SOAP service returned 503 Service Unavailable',
@@ -96,7 +97,7 @@ export class ErrorResolutionService {
     },
 
     // Data Validation Errors
-    'DATA_VAL_001': {
+    DATA_VAL_001: {
       code: 'DATA_VAL_001',
       name: 'Missing Required Field',
       description: 'Required field missing in payload sent to Oracle',
@@ -125,10 +126,11 @@ export class ErrorResolutionService {
       },
     },
 
-    'DATA_VAL_002': {
+    DATA_VAL_002: {
       code: 'DATA_VAL_002',
       name: 'Invalid Date Format',
-      description: 'Date field does not match Oracle expected format (YYYY-MM-DD)',
+      description:
+        'Date field does not match Oracle expected format (YYYY-MM-DD)',
       category: ErrorType.VALIDATION_ERROR,
       severity: 'MEDIUM',
       isRetryable: false,
@@ -151,7 +153,7 @@ export class ErrorResolutionService {
       },
     },
 
-    'DATA_VAL_003': {
+    DATA_VAL_003: {
       code: 'DATA_VAL_003',
       name: 'Invalid Currency Precision',
       description: 'Currency amount has incorrect decimal precision',
@@ -175,10 +177,11 @@ export class ErrorResolutionService {
       },
     },
 
-    'DATA_VAL_004': {
+    DATA_VAL_004: {
       code: 'DATA_VAL_004',
       name: 'NULL vs Empty String',
-      description: 'Oracle expects empty string but received NULL (or vice versa)',
+      description:
+        'Oracle expects empty string but received NULL (or vice versa)',
       category: ErrorType.VALIDATION_ERROR,
       severity: 'LOW',
       isRetryable: false,
@@ -196,10 +199,11 @@ export class ErrorResolutionService {
     },
 
     // Mapping Errors
-    'MAPPING_001': {
+    MAPPING_001: {
       code: 'MAPPING_001',
       name: 'Payment Method Not Mapped',
-      description: 'Payment method from source system not found in mapping table',
+      description:
+        'Payment method from source system not found in mapping table',
       category: ErrorType.PAYMENT_METHOD_ERROR,
       severity: 'MEDIUM',
       isRetryable: false,
@@ -218,10 +222,11 @@ export class ErrorResolutionService {
       relatedDocs: '/admin/payment-mapping',
     },
 
-    'MAPPING_002': {
+    MAPPING_002: {
       code: 'MAPPING_002',
       name: 'Store Configuration Not Found',
-      description: 'Store/branch configuration missing in StoreConfiguration table',
+      description:
+        'Store/branch configuration missing in StoreConfiguration table',
       category: ErrorType.CONFIGURATION_ERROR,
       severity: 'HIGH',
       isRetryable: false,
@@ -241,7 +246,7 @@ export class ErrorResolutionService {
     },
 
     // Inventory Errors
-    'INVENTORY_001': {
+    INVENTORY_001: {
       code: 'INVENTORY_001',
       name: 'Negative Inventory Detected',
       description: 'Order would result in negative inventory in Oracle',
@@ -264,7 +269,7 @@ export class ErrorResolutionService {
     },
 
     // Rate Limiting
-    'RATE_LIMIT_001': {
+    RATE_LIMIT_001: {
       code: 'RATE_LIMIT_001',
       name: 'Oracle Rate Limit Exceeded',
       description: 'Too many requests to Oracle API in short time period',
@@ -286,7 +291,7 @@ export class ErrorResolutionService {
     },
 
     // Duplicate Errors
-    'DUPLICATE_001': {
+    DUPLICATE_001: {
       code: 'DUPLICATE_001',
       name: 'Duplicate Transaction',
       description: 'Transaction already exists in Oracle with same ID',
@@ -306,7 +311,7 @@ export class ErrorResolutionService {
     },
 
     // Network Errors
-    'NETWORK_001': {
+    NETWORK_001: {
       code: 'NETWORK_001',
       name: 'Network Connection Lost',
       description: 'Network connection interrupted during Oracle API call',
@@ -328,7 +333,7 @@ export class ErrorResolutionService {
     },
 
     // Unknown Errors
-    'UNKNOWN_001': {
+    UNKNOWN_001: {
       code: 'UNKNOWN_001',
       name: 'Unclassified Error',
       description: 'An unexpected error occurred',
@@ -372,20 +377,26 @@ export class ErrorResolutionService {
     } else {
       // Try to infer error code from message and type
       errorCode = this.inferErrorCode(errorType, errorMessage);
-      errorInfo = this.errorCodeMap[errorCode] || this.getDefaultErrorInfo(errorType);
+      errorInfo =
+        this.errorCodeMap[errorCode] || this.getDefaultErrorInfo(errorType);
     }
 
     // Analyze root cause
     const rootCause = this.determineRootCause(errorType, errorMessage);
 
     // Generate immediate actions
-    const immediateActions = this.generateImmediateActions(errorInfo, errorMessage);
+    const immediateActions = this.generateImmediateActions(
+      errorInfo,
+      errorMessage,
+    );
 
     // Generate long-term fixes
     const longTermFixes = this.generateLongTermFixes(errorInfo);
 
     // Estimate resolution time
-    const estimatedResolutionTime = this.estimateResolutionTime(errorInfo.severity);
+    const estimatedResolutionTime = this.estimateResolutionTime(
+      errorInfo.severity,
+    );
 
     return {
       errorInfo,
@@ -403,29 +414,52 @@ export class ErrorResolutionService {
     const lowerMessage = errorMessage.toLowerCase();
 
     // Connection/timeout errors
-    if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
+    if (
+      lowerMessage.includes('timeout') ||
+      lowerMessage.includes('timed out')
+    ) {
       return 'ORACLE_CONN_001';
     }
-    if (lowerMessage.includes('authentication') || lowerMessage.includes('401') || lowerMessage.includes('unauthorized')) {
+    if (
+      lowerMessage.includes('authentication') ||
+      lowerMessage.includes('401') ||
+      lowerMessage.includes('unauthorized')
+    ) {
       return 'ORACLE_CONN_002';
     }
-    if (lowerMessage.includes('503') || lowerMessage.includes('service unavailable')) {
+    if (
+      lowerMessage.includes('503') ||
+      lowerMessage.includes('service unavailable')
+    ) {
       return 'ORACLE_CONN_003';
     }
 
     // Validation errors
-    if (lowerMessage.includes('required field') || lowerMessage.includes('missing')) {
+    if (
+      lowerMessage.includes('required field') ||
+      lowerMessage.includes('missing')
+    ) {
       return 'DATA_VAL_001';
     }
-    if (lowerMessage.includes('date') && (lowerMessage.includes('format') || lowerMessage.includes('invalid'))) {
+    if (
+      lowerMessage.includes('date') &&
+      (lowerMessage.includes('format') || lowerMessage.includes('invalid'))
+    ) {
       return 'DATA_VAL_002';
     }
-    if (lowerMessage.includes('currency') || lowerMessage.includes('precision') || lowerMessage.includes('decimal')) {
+    if (
+      lowerMessage.includes('currency') ||
+      lowerMessage.includes('precision') ||
+      lowerMessage.includes('decimal')
+    ) {
       return 'DATA_VAL_003';
     }
 
     // Mapping errors
-    if (lowerMessage.includes('payment method') && lowerMessage.includes('not found')) {
+    if (
+      lowerMessage.includes('payment method') &&
+      lowerMessage.includes('not found')
+    ) {
       return 'MAPPING_001';
     }
     if (lowerMessage.includes('store') || lowerMessage.includes('branch')) {
@@ -433,17 +467,27 @@ export class ErrorResolutionService {
     }
 
     // Inventory errors
-    if (lowerMessage.includes('negative inventory') || lowerMessage.includes('insufficient stock')) {
+    if (
+      lowerMessage.includes('negative inventory') ||
+      lowerMessage.includes('insufficient stock')
+    ) {
       return 'INVENTORY_001';
     }
 
     // Rate limiting
-    if (lowerMessage.includes('rate limit') || lowerMessage.includes('429') || lowerMessage.includes('too many requests')) {
+    if (
+      lowerMessage.includes('rate limit') ||
+      lowerMessage.includes('429') ||
+      lowerMessage.includes('too many requests')
+    ) {
       return 'RATE_LIMIT_001';
     }
 
     // Duplicates
-    if (lowerMessage.includes('duplicate') || lowerMessage.includes('already exists')) {
+    if (
+      lowerMessage.includes('duplicate') ||
+      lowerMessage.includes('already exists')
+    ) {
       return 'DUPLICATE_001';
     }
 
@@ -495,7 +539,10 @@ export class ErrorResolutionService {
   /**
    * Determine root cause from error details
    */
-  private determineRootCause(errorType: ErrorType, errorMessage: string): string {
+  private determineRootCause(
+    errorType: ErrorType,
+    errorMessage: string,
+  ): string {
     const lowerMessage = errorMessage.toLowerCase();
 
     if (errorType === ErrorType.AUTHENTICATION_ERROR) {
@@ -504,7 +551,10 @@ export class ErrorResolutionService {
     if (errorType === ErrorType.TIMEOUT && lowerMessage.includes('connect')) {
       return 'Oracle server unreachable - possible network or firewall issue';
     }
-    if (errorType === ErrorType.VALIDATION_ERROR && lowerMessage.includes('required')) {
+    if (
+      errorType === ErrorType.VALIDATION_ERROR &&
+      lowerMessage.includes('required')
+    ) {
       return 'Missing required data in source system or transformation logic';
     }
     if (errorType === ErrorType.CONFIGURATION_ERROR) {
@@ -523,7 +573,10 @@ export class ErrorResolutionService {
   /**
    * Generate immediate action items
    */
-  private generateImmediateActions(errorInfo: ErrorCodeInfo, errorMessage: string): string[] {
+  private generateImmediateActions(
+    errorInfo: ErrorCodeInfo,
+    errorMessage: string,
+  ): string[] {
     const actions: string[] = [...errorInfo.resolution];
 
     // Add context-specific actions
@@ -532,7 +585,10 @@ export class ErrorResolutionService {
       actions.push('Ping Oracle server to verify connectivity');
     }
 
-    if (errorMessage.includes('permission') || errorMessage.includes('forbidden')) {
+    if (
+      errorMessage.includes('permission') ||
+      errorMessage.includes('forbidden')
+    ) {
       actions.push('Verify user account has required Oracle roles');
       actions.push('Check Oracle security policies');
     }

@@ -578,7 +578,7 @@ export class OracleSoapClient implements OnModuleInit {
     return this.circuitBreaker.execute('oracle:createSimpleInvoice', () =>
       this.withRetries(async () => {
         this.logger.log(`Creating invoice for ${header.billToCustomerName}...`);
-        
+
         const body = buildInvoiceSoap(header);
         const resp = await this.http.post(
           '/fscmService/RecInvoiceService',
@@ -592,82 +592,83 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createSimpleInvoice');
-        
+
         // Parse the response properly - handle both case variations
         const serviceStatus =
-          extractTag(xml, 'ServiceStatus') || 
-          extractTag(xml, 'serviceStatus') || 
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
           'SUCCESS';
         const transactionNumber =
           extractTag(xml, 'TransactionNumber') ||
           extractTag(xml, 'transactionNumber') ||
           '';
         const customerTrxId =
-          extractTag(xml, 'CustomerTrxId') || 
+          extractTag(xml, 'CustomerTrxId') ||
           extractTag(xml, 'customerTrxId') ||
           '';
-        
+
         // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
         if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
           // Extract error details from response using comprehensive extraction
           const errorMessage = extractErrorMessage(xml);
-          
+
           // Log the full XML for debugging if error message is empty
           if (!errorMessage || errorMessage === '') {
             this.logger.error(
               `⚠️  Status E detected but NO error message found in response!\n` +
-              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-              `  Transaction Number: ${transactionNumber || 'null'}\n` +
-              `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  FULL Response XML (for debugging):\n${xml}`,
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Transaction Number: ${transactionNumber || 'null'}\n` +
+                `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  FULL Response XML (for debugging):\n${xml}`,
             );
           } else {
             this.logger.error(
               `❌ Invoice creation failed with Status E:\n` +
-              `  Transaction Number: ${transactionNumber || 'null'}\n` +
-              `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  Error Message: ${errorMessage}\n` +
-              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  Transaction Number: ${transactionNumber || 'null'}\n` +
+                `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
           }
-          
+
           // Throw with appropriate error message
-          const displayError = errorMessage || 
-                              'Oracle returned Status E without error details. Check logs for full XML response.';
-          
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+
           throw new Error(
             `Oracle invoice creation failed with Status E: ${displayError} ` +
-            `Transaction Number: ${transactionNumber || 'null'}, ` +
-            `Customer Trx ID: ${customerTrxId || 'N/A'}`
+              `Transaction Number: ${transactionNumber || 'null'}, ` +
+              `Customer Trx ID: ${customerTrxId || 'N/A'}`,
           );
         }
-        
+
         // ✅ Validate that we got a transaction number on success
         if (!transactionNumber || transactionNumber.trim() === '') {
           this.logger.error(
             `❌ Invoice creation returned empty transaction number:\n` +
-            `  Status: ${serviceStatus}\n` +
-            `  Customer Trx ID: ${customerTrxId}\n` +
-            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+              `  Status: ${serviceStatus}\n` +
+              `  Customer Trx ID: ${customerTrxId}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
-          
+
           throw new Error(
             `Oracle invoice creation succeeded but returned no transaction number. ` +
-            `Status: ${serviceStatus}, Customer Trx ID: ${customerTrxId || 'N/A'}`
+              `Status: ${serviceStatus}, Customer Trx ID: ${customerTrxId || 'N/A'}`,
           );
         }
-        
+
         this.logger.log(
           `✅ Invoice created successfully: txn=${transactionNumber}, status=${serviceStatus}`,
         );
-        
+
         // Return properly parsed response
-        return { 
-          serviceStatus, 
-          transactionNumber, 
-          customerTrxId 
+        return {
+          serviceStatus,
+          transactionNumber,
+          customerTrxId,
         };
       }),
     );
@@ -697,69 +698,70 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
-        
+
         // Parse the response properly - handle both case variations
         const serviceStatus =
-          extractTag(xml, 'ServiceStatus') || 
-          extractTag(xml, 'serviceStatus') || 
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
           'SUCCESS';
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
         const customerReceiptReference =
           extractTag(xml, 'CustomerReceiptReference') ||
           extractTag(xml, 'customerReceiptReference');
-        
+
         // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
         if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
           // Extract error details from response using comprehensive extraction
           const errorMessage = extractErrorMessage(xml);
-          
+
           // Log the full XML for debugging if error message is empty
           if (!errorMessage || errorMessage === '') {
             this.logger.error(
               `⚠️  Status E detected but NO error message found in response!\n` +
-              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-              `  Receipt Number: ${receiptNumber || 'null'}\n` +
-              `  Requested Receipt Number: ${req.receiptNumber}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  FULL Response XML (for debugging):\n${xml}`,
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  FULL Response XML (for debugging):\n${xml}`,
             );
           } else {
             this.logger.error(
               `❌ Standard receipt creation failed with Status E:\n` +
-              `  Receipt Number: ${receiptNumber || 'null'}\n` +
-              `  Requested Receipt Number: ${req.receiptNumber}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  Error Message: ${errorMessage}\n` +
-              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
           }
-          
+
           // Throw with appropriate error message
-          const displayError = errorMessage || 
-                              'Oracle returned Status E without error details. Check logs for full XML response.';
-          
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+
           throw new Error(
             `Oracle standard receipt creation failed with Status E: ${displayError} ` +
-            `Receipt Number: ${receiptNumber || 'null'}, ` +
-            `Requested: ${req.receiptNumber}`
+              `Receipt Number: ${receiptNumber || 'null'}, ` +
+              `Requested: ${req.receiptNumber}`,
           );
         }
-        
+
         // ✅ Validate receipt number was returned
         if (!receiptNumber || receiptNumber.trim() === '') {
           this.logger.error(
             `❌ Standard receipt creation returned empty receipt number:\n` +
-            `  Requested Receipt Number: ${req.receiptNumber}\n` +
-            `  Status: ${serviceStatus}\n` +
-            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
           throw new Error(
             `Oracle standard receipt creation failed: no receipt number returned. ` +
-            `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`
+              `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`,
           );
         }
-        
+
         this.logger.log(`✅ Standard receipt created: ${receiptNumber}`);
         return { receiptNumber, customerReceiptReference };
       }),
@@ -788,77 +790,78 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
-        
+
         // Parse the response properly - handle both case variations
         const serviceStatus =
-          extractTag(xml, 'ServiceStatus') || 
-          extractTag(xml, 'serviceStatus') || 
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
           'SUCCESS';
         const customerTrxId =
           extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
-        
+
         // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
         if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
           // Extract error details from response using comprehensive extraction
           const errorMessage = extractErrorMessage(xml);
-          
+
           // Log the full XML for debugging if error message is empty
           if (!errorMessage || errorMessage === '') {
             this.logger.error(
               `⚠️  Status E detected but NO error message found in response!\n` +
-              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-              `  Receipt Number: ${receiptNumber || 'null'}\n` +
-              `  Transaction Number: ${req.transactionNumber}\n` +
-              `  Requested Receipt Number: ${req.receiptNumber}\n` +
-              `  Amount Applied: ${req.amountApplied}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  FULL Response XML (for debugging):\n${xml}`,
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Transaction Number: ${req.transactionNumber}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Amount Applied: ${req.amountApplied}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  FULL Response XML (for debugging):\n${xml}`,
             );
           } else {
             this.logger.error(
               `❌ Apply receipt creation failed with Status E:\n` +
-              `  Receipt Number: ${receiptNumber || 'null'}\n` +
-              `  Transaction Number: ${req.transactionNumber}\n` +
-              `  Requested Receipt Number: ${req.receiptNumber}\n` +
-              `  Amount Applied: ${req.amountApplied}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  Error Message: ${errorMessage}\n` +
-              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Transaction Number: ${req.transactionNumber}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Amount Applied: ${req.amountApplied}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
           }
-          
+
           // Throw with appropriate error message
-          const displayError = errorMessage || 
-                              'Oracle returned Status E without error details. Check logs for full XML response.';
-          
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+
           throw new Error(
             `Oracle apply receipt creation failed with Status E: ${displayError} ` +
-            `Receipt Number: ${receiptNumber || 'null'}, ` +
-            `Transaction: ${req.transactionNumber}, Requested: ${req.receiptNumber}`
+              `Receipt Number: ${receiptNumber || 'null'}, ` +
+              `Transaction: ${req.transactionNumber}, Requested: ${req.receiptNumber}`,
           );
         }
-        
+
         // ✅ Validate response contains required data
         if (!receiptNumber || receiptNumber.trim() === '') {
           this.logger.error(
             `❌ Apply receipt creation returned empty receipt number:\n` +
-            `  Transaction Number: ${req.transactionNumber}\n` +
-            `  Requested Receipt Number: ${req.receiptNumber}\n` +
-            `  Amount Applied: ${req.amountApplied}\n` +
-            `  Status: ${serviceStatus}\n` +
-            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+              `  Transaction Number: ${req.transactionNumber}\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Amount Applied: ${req.amountApplied}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
           throw new Error(
             `Oracle apply receipt creation failed: no receipt number returned. ` +
-            `Status: ${serviceStatus}, Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`
+              `Status: ${serviceStatus}, Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`,
           );
         }
-        
+
         this.logger.log(
           `✅ Apply receipt created: receipt=${receiptNumber}, ` +
-          `applied=${req.amountApplied} to invoice ${req.transactionNumber}`,
+            `applied=${req.amountApplied} to invoice ${req.transactionNumber}`,
         );
         return { customerTrxId, receiptNumber };
       }),
@@ -891,11 +894,11 @@ export class OracleSoapClient implements OnModuleInit {
           );
           const xml = resp.data as string;
           this.assertNoFault(xml, 'createMiscellaneousReceipt');
-          
+
           // Parse the response properly - handle both case variations
           const serviceStatus =
-            extractTag(xml, 'ServiceStatus') || 
-            extractTag(xml, 'serviceStatus') || 
+            extractTag(xml, 'ServiceStatus') ||
+            extractTag(xml, 'serviceStatus') ||
             'SUCCESS';
           const receivablesTransactionId =
             extractTag(xml, 'ReceivablesTransactionId') ||
@@ -903,62 +906,65 @@ export class OracleSoapClient implements OnModuleInit {
           const receiptNumber =
             extractTag(xml, 'ReceiptNumber') ||
             extractTag(xml, 'receiptNumber');
-          
+
           // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
           if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
             // Extract error details from response using comprehensive extraction
             const errorMessage = extractErrorMessage(xml);
-            
+
             // Log the full XML for debugging if error message is empty
             if (!errorMessage || errorMessage === '') {
               this.logger.error(
                 `⚠️  Status E detected but NO error message found in response!\n` +
-                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-                `  Receipt Number: ${receiptNumber || 'null'}\n` +
-                `  Requested Receipt Number: ${req.receiptNumber}\n` +
-                `  Receipt Amount: ${req.receiptAmount}\n` +
-                `  Status: ${serviceStatus}\n` +
-                `  FULL Response XML (for debugging):\n${xml}`,
+                  `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                  `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                  `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                  `  Receipt Amount: ${req.receiptAmount}\n` +
+                  `  Status: ${serviceStatus}\n` +
+                  `  FULL Response XML (for debugging):\n${xml}`,
               );
             } else {
               this.logger.error(
                 `❌ Misc receipt creation failed with Status E:\n` +
-                `  Receipt Number: ${receiptNumber || 'null'}\n` +
-                `  Requested Receipt Number: ${req.receiptNumber}\n` +
-                `  Receipt Amount: ${req.receiptAmount}\n` +
-                `  Status: ${serviceStatus}\n` +
-                `  Error Message: ${errorMessage}\n` +
-                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                  `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                  `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                  `  Receipt Amount: ${req.receiptAmount}\n` +
+                  `  Status: ${serviceStatus}\n` +
+                  `  Error Message: ${errorMessage}\n` +
+                  `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
               );
             }
-            
+
             // Throw with appropriate error message
-            const displayError = errorMessage || 
-                                'Oracle returned Status E without error details. Check logs for full XML response.';
-            
+            const displayError =
+              errorMessage ||
+              'Oracle returned Status E without error details. Check logs for full XML response.';
+
             throw new Error(
               `Oracle misc receipt creation failed with Status E: ${displayError} ` +
-              `Receipt Number: ${receiptNumber || 'null'}, ` +
-              `Requested: ${req.receiptNumber}, Amount: ${req.receiptAmount}`
+                `Receipt Number: ${receiptNumber || 'null'}, ` +
+                `Requested: ${req.receiptNumber}, Amount: ${req.receiptAmount}`,
             );
           }
-          
+
           // ✅ Validate receipt number was returned
           if (!receiptNumber || receiptNumber.trim() === '') {
             this.logger.error(
               `❌ Misc receipt creation returned empty receipt number:\n` +
-              `  Requested Receipt Number: ${req.receiptNumber}\n` +
-              `  Receipt Amount: ${req.receiptAmount}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Receipt Amount: ${req.receiptAmount}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
             throw new Error(
               `Oracle misc receipt creation failed: no receipt number returned. ` +
-              `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`
+                `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`,
             );
           }
-          
-          this.logger.log(`✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`);
+
+          this.logger.log(
+            `✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`,
+          );
           return { receivablesTransactionId, receiptNumber };
         }),
     );
@@ -986,64 +992,67 @@ export class OracleSoapClient implements OnModuleInit {
         );
         const xml = resp.data as string;
         this.assertNoFault(xml, 'importJournals');
-        
+
         // Parse the response properly - handle both case variations
         const serviceStatus =
-          extractTag(xml, 'ServiceStatus') || 
-          extractTag(xml, 'serviceStatus') || 
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
           'SUCCESS';
         const result = extractTag(xml, 'result') || extractTag(xml, 'return');
         const jeHeaderId = result ? parseInt(result, 10) : null;
-        
+
         // ✅ CRITICAL FIX: Check for Status E and throw error
         if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
           // Extract error details from response using comprehensive extraction
           const errorMessage = extractErrorMessage(xml);
-          
+
           // Log the full XML for debugging if error message is empty
           if (!errorMessage || errorMessage === '') {
             this.logger.error(
               `⚠️  Status E detected but NO error message found in response!\n` +
-              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-              `  Batch Name: ${header.batchName}\n` +
-              `  Batch Description: ${header.batchDescription}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  FULL Response XML (for debugging):\n${xml}`,
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Batch Name: ${header.batchName}\n` +
+                `  Batch Description: ${header.batchDescription}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  FULL Response XML (for debugging):\n${xml}`,
             );
           } else {
             this.logger.error(
               `❌ Journal import failed with Status E:\n` +
-              `  Batch Name: ${header.batchName}\n` +
-              `  Batch Description: ${header.batchDescription}\n` +
-              `  Status: ${serviceStatus}\n` +
-              `  Error Message: ${errorMessage}\n` +
-              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  Batch Name: ${header.batchName}\n` +
+                `  Batch Description: ${header.batchDescription}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
           }
-          
+
           // Throw with appropriate error message
-          const displayError = errorMessage || 
-                              'Oracle returned Status E without error details. Check logs for full XML response.';
-          
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+
           throw new Error(
             `Oracle journal import failed with Status E: ${displayError} ` +
-            `Batch: ${header.batchName}`
+              `Batch: ${header.batchName}`,
           );
         }
-        
+
         // ✅ Log warning if journal import failed but don't throw (journal is optional)
         if (jeHeaderId === null || isNaN(jeHeaderId)) {
           this.logger.warn(
             `⚠️  Journal import did not return a valid JE Header ID:\n` +
-            `  Batch Name: ${header.batchName}\n` +
-            `  Result: ${result || 'null'}\n` +
-            `  Status: ${serviceStatus}\n` +
-            `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+              `  Batch Name: ${header.batchName}\n` +
+              `  Result: ${result || 'null'}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
         } else {
-          this.logger.log(`✅ Journal imported successfully: jeHeaderId=${jeHeaderId}`);
+          this.logger.log(
+            `✅ Journal imported successfully: jeHeaderId=${jeHeaderId}`,
+          );
         }
-        
+
         return jeHeaderId !== null && !isNaN(jeHeaderId) ? jeHeaderId : null;
       }),
     );
@@ -1055,9 +1064,7 @@ export class OracleSoapClient implements OnModuleInit {
    * Calls Oracle Fusion CustomerProfileService.getActiveCustomerProfile
    * WSDL: /fscmService/CustomerProfileService?WSDL
    */
-  async getCustomerProfile(
-    accountNumber: string,
-  ): Promise<CustomerProfile> {
+  async getCustomerProfile(accountNumber: string): Promise<CustomerProfile> {
     return this.circuitBreaker.execute('oracle:getCustomerProfile', () =>
       this.withRetries(async () => {
         const body = buildCustomerProfileSoap(accountNumber);
@@ -1094,46 +1101,44 @@ export class OracleSoapClient implements OnModuleInit {
    * Calls Oracle Fusion ItemServiceV2.findItem
    * WSDL: /fscmService/ItemServiceV2?WSDL
    */
-  async getItemMaster(
-    itemNumber: string,
-  ): Promise<ItemMasterResult | null> {
+  async getItemMaster(itemNumber: string): Promise<ItemMasterResult | null> {
     return this.circuitBreaker.execute('oracle:getItemMaster', () =>
       this.withRetries(async () => {
         const body = buildItemMasterSoap(itemNumber);
-        const resp = await this.http.post(
-          '/fscmService/ItemServiceV2',
-          body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/findItem',
-            },
+        const resp = await this.http.post('/fscmService/ItemServiceV2', body, {
+          headers: {
+            SOAPAction:
+              'http://xmlns.oracle.com/apps/scm/productModel/items/itemServiceV2/findItem',
           },
-        );
+        });
         const xml = resp.data as string;
         this.assertNoFault(xml, 'findItem');
-        
+
         // Extract item details from response
         const itemNum = extractTagWithFallback(xml, 'ItemNumber', 'itemNumber');
         if (!itemNum) {
           this.logger.debug(`Item not found: ${itemNumber}`);
           return null;
         }
-        
-        const uomCode = extractTagWithFallback(
-          xml,
-          'PrimaryUOMCode',
-          'primaryUOMCode',
-          'UOMCode',
-          'uomCode',
-        ) || undefined;
-        const taxClassificationCode = extractTagWithFallback(
-          xml,
-          'TaxClassificationCode',
-          'taxClassificationCode',
-        ) || undefined;
-        
-        this.logger.debug(`Item found: ${itemNumber}, UOM: ${uomCode}, Tax: ${taxClassificationCode}`);
+
+        const uomCode =
+          extractTagWithFallback(
+            xml,
+            'PrimaryUOMCode',
+            'primaryUOMCode',
+            'UOMCode',
+            'uomCode',
+          ) || undefined;
+        const taxClassificationCode =
+          extractTagWithFallback(
+            xml,
+            'TaxClassificationCode',
+            'taxClassificationCode',
+          ) || undefined;
+
+        this.logger.debug(
+          `Item found: ${itemNumber}, UOM: ${uomCode}, Tax: ${taxClassificationCode}`,
+        );
         return { itemNumber: itemNum, uomCode, taxClassificationCode };
       }),
     );

@@ -60,7 +60,9 @@ export class FusionInvToVendHqService {
       });
 
       if (credentials.length === 0) {
-        this.logger.warn('No active VendHQ credentials — inventory sync skipped');
+        this.logger.warn(
+          'No active VendHQ credentials — inventory sync skipped',
+        );
         await this.syncControl.markStopped('fusion-inv-to-vendhq', 'success');
         return;
       }

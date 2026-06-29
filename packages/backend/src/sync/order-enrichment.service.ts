@@ -12,7 +12,7 @@ export interface InvoiceLine {
   quantity: number;
   unitSellingPrice: number;
   currencyCode: string;
-  salesOrder: string;  // ✅ Must be string, not optional
+  salesOrder: string; // ✅ Must be string, not optional
   salesOrderLine?: string;
   memoLineName?: string;
 }
@@ -98,29 +98,36 @@ export class OrderEnrichmentService {
       const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
         where: { orderId: backupOrder.orderId },
       });
-      
+
       if (backupLines.length > 0) {
         this.logger.log(`Found ${backupLines.length} lines in backup tables`);
-        return this.buildPayloadsFromBackup(order, backupLines, backupPayments, branchCode, region);
+        return this.buildPayloadsFromBackup(
+          order,
+          backupLines,
+          backupPayments,
+          branchCode,
+          region,
+        );
       }
     }
 
     // 3. If no backup data found, create minimal payloads as fallback
-    this.logger.warn(`No backup data found for order ${order.odooOrderNumber}, using minimal fallback`);
+    this.logger.warn(
+      `No backup data found for order ${order.odooOrderNumber}, using minimal fallback`,
+    );
     return this.createMinimalPayloads(order, branchCode, region);
   }
 
-
   private async buildPayloadsFromBackup(
-    order: any, 
-    backupLines: any[], 
+    order: any,
+    backupLines: any[],
     backupPayments: any[],
     branchCode: string,
-    region: string
+    region: string,
   ): Promise<EnrichedOrderData> {
     // ✅ FETCH from FusionSalesMetadata
     const metadata = await this.fusionMetadataService.getSalesMetadata(region);
-    
+
     if (!metadata) {
       throw new Error(`No FusionSalesMetadata found for region: ${region}`);
     }
@@ -133,7 +140,8 @@ export class OrderEnrichmentService {
       txnType: metadata.txnType,
     });
 
-    const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
+    const saleDate =
+      order.orderDate instanceof Date ? order.orderDate : new Date();
 
     // ✅ BUILD FROM METADATA
     const invoiceHeader: InvoiceHeader = {
@@ -147,7 +155,7 @@ export class OrderEnrichmentService {
       transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
       conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
-      invoiceLines: [],  // Now properly typed as InvoiceLine[]
+      invoiceLines: [], // Now properly typed as InvoiceLine[]
     };
 
     // Build invoice lines from backup data
@@ -155,7 +163,7 @@ export class OrderEnrichmentService {
       const qty = this.toNumber(line.qty || 1);
       const unitPrice = this.toNumber(line.priceUnit || 0);
       const subtotal = this.toNumber(line.priceSubtotal || 0);
-      
+
       // Skip discount items or zero amounts if needed
       if (qty === 0 && subtotal === 0) continue;
 
@@ -175,27 +183,29 @@ export class OrderEnrichmentService {
         quantity: qty,
         unitSellingPrice: unitPrice || (qty > 0 ? subtotal / qty : 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
+        salesOrder: order.odooOrderNumber || '', // ✅ Always string, never undefined
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
       };
-      
+
       invoiceHeader.invoiceLines.push(invoiceLine);
     }
 
     // If no valid lines, create one from total
     if (invoiceHeader.invoiceLines.length === 0) {
-      this.logger.warn(`No valid lines for order ${order.odooOrderNumber}, creating synthetic line`);
-      
+      this.logger.warn(
+        `No valid lines for order ${order.odooOrderNumber}, creating synthetic line`,
+      );
+
       const syntheticLine: InvoiceLine = {
         lineNumber: 1,
         description: order.odooOrderNumber || 'Sale',
         quantity: 1,
         unitSellingPrice: this.toNumber(order.totalAmount || 0),
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
+        salesOrder: order.odooOrderNumber || '', // ✅ Always string, never undefined
         salesOrderLine: '1',
       };
-      
+
       invoiceHeader.invoiceLines.push(syntheticLine);
     }
 
@@ -206,7 +216,7 @@ export class OrderEnrichmentService {
     for (const payment of backupPayments) {
       const amount = this.toNumber(payment.amount || 0);
       const method = payment.paymentName || 'DEFAULT';
-      
+
       if (amount === 0) continue;
 
       const receiptNumber = `${method}-${order.odooOrderNumber}-${Date.now()}`;
@@ -241,7 +251,7 @@ export class OrderEnrichmentService {
       const total = this.toNumber(order.totalAmount || 0);
       if (total > 0) {
         const receiptNumber = `DEFAULT-${order.odooOrderNumber}-${Date.now()}`;
-        
+
         const receipt: ReceiptRequest = {
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
@@ -267,7 +277,7 @@ export class OrderEnrichmentService {
     }
 
     this.logger.log(
-      `Built ${invoiceHeader.invoiceLines.length} lines, ${standardReceipts.length} receipts for order ${order.odooOrderNumber}`
+      `Built ${invoiceHeader.invoiceLines.length} lines, ${standardReceipts.length} receipts for order ${order.odooOrderNumber}`,
     );
 
     return {
@@ -279,10 +289,14 @@ export class OrderEnrichmentService {
     };
   }
 
-  private async createMinimalPayloads(order: any, branchCode: string, region: string): Promise<EnrichedOrderData> {
+  private async createMinimalPayloads(
+    order: any,
+    branchCode: string,
+    region: string,
+  ): Promise<EnrichedOrderData> {
     // ✅ FETCH from FusionSalesMetadata
     const metadata = await this.fusionMetadataService.getSalesMetadata(region);
-    
+
     if (!metadata) {
       throw new Error(`No FusionSalesMetadata found for region: ${region}`);
     }
@@ -295,7 +309,8 @@ export class OrderEnrichmentService {
       txnType: metadata.txnType,
     });
 
-    const saleDate = order.orderDate instanceof Date ? order.orderDate : new Date();
+    const saleDate =
+      order.orderDate instanceof Date ? order.orderDate : new Date();
     const total = this.toNumber(order.totalAmount || 0);
 
     // ✅ BUILD FROM METADATA
@@ -310,15 +325,17 @@ export class OrderEnrichmentService {
       transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
       conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
-      invoiceLines: [{
-        lineNumber: 1,
-        description: order.odooOrderNumber || 'Sale',
-        quantity: 1,
-        unitSellingPrice: total,
-        currencyCode: order.currency || 'AED',
-        salesOrder: order.odooOrderNumber || '',  // ✅ Always string, never undefined
-        salesOrderLine: '1',
-      }],
+      invoiceLines: [
+        {
+          lineNumber: 1,
+          description: order.odooOrderNumber || 'Sale',
+          quantity: 1,
+          unitSellingPrice: total,
+          currencyCode: order.currency || 'AED',
+          salesOrder: order.odooOrderNumber || '', // ✅ Always string, never undefined
+          salesOrderLine: '1',
+        },
+      ],
     };
 
     const standardReceipts: ReceiptRequest[] = [];
@@ -326,7 +343,7 @@ export class OrderEnrichmentService {
 
     if (total > 0) {
       const receiptNumber = `MINIMAL-${order.odooOrderNumber}-${Date.now()}`;
-      
+
       standardReceipts.push({
         currencyCode: order.currency || 'AED',
         saleDate,

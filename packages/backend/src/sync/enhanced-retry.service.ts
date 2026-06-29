@@ -87,10 +87,7 @@ export class EnhancedRetryService {
   /**
    * Calculate retry delay with exponential backoff and jitter
    */
-  calculateRetryDelay(
-    attempt: number,
-    errorType: ErrorType,
-  ): number {
+  calculateRetryDelay(attempt: number, errorType: ErrorType): number {
     const config = this.errorConfigs[errorType] || this.defaultConfig;
 
     // Exponential backoff
@@ -315,7 +312,10 @@ export class EnhancedRetryService {
   /**
    * Retry all orders in QUEUED_FOR_RETRY status (recovery after system restart)
    */
-  async recoverPendingRetries(): Promise<{ recovered: number; failed: number }> {
+  async recoverPendingRetries(): Promise<{
+    recovered: number;
+    failed: number;
+  }> {
     this.logger.log('Recovering pending retries after system restart...');
 
     const pendingRetries = await this.prisma.orderSyncQueue.findMany({
@@ -419,7 +419,8 @@ export class EnhancedRetryService {
       pendingRetries,
       retriesLast24h,
       retriesLast7d,
-      averageAttemptsBeforeSuccess: Math.round(averageAttemptsBeforeSuccess * 10) / 10,
+      averageAttemptsBeforeSuccess:
+        Math.round(averageAttemptsBeforeSuccess * 10) / 10,
       topErrorTypes,
     };
   }

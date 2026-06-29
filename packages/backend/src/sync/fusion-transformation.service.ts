@@ -183,9 +183,17 @@ export class FusionTransformationService {
         salesOrder: invoiceNumber,
         salesOrderLine: String(invoiceHeader.invoiceLines.length + 1),
         // Implement UOM service - Java: FusionInvoiceMapping.getUomCode()
-        uomCode: (await this.uomService.getUomCode(li.productId ?? undefined, region)) ?? '',
+        uomCode:
+          (await this.uomService.getUomCode(
+            li.productId ?? undefined,
+            region,
+          )) ?? '',
         // Implement Tax service - Java: FusionInvoiceMapping.getTaxClassificationCode()
-        taxClassificationCode: (await this.taxService.getTaxClassificationCode(li.productId ?? undefined, region)) ?? '',
+        taxClassificationCode:
+          (await this.taxService.getTaxClassificationCode(
+            li.productId ?? undefined,
+            region,
+          )) ?? '',
       };
       invoiceHeader.invoiceLines.push(invLine);
     }
@@ -229,7 +237,10 @@ export class FusionTransformationService {
         standardReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptNumber: `${pmtMethod}-${txnNumber}`,
           remittanceBankAccountId: Number(bankAccountId!),
           accountValue: invoiceHeader.billToAccountNumber,
@@ -238,7 +249,11 @@ export class FusionTransformationService {
           orgId: Number(buMap?.businessUnitId ?? 0n),
           receiptAmount: pmtAmount,
           // Implement Customer Profile service - Java: FusionStdReceiptMapping.getCustomerId()
-          customerId: (await this.customerService.getCustomerId(invoiceHeader.billToAccountNumber, region)) ?? undefined,
+          customerId:
+            (await this.customerService.getCustomerId(
+              invoiceHeader.billToAccountNumber,
+              region,
+            )) ?? undefined,
         });
       }
 
@@ -255,7 +270,10 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.bankAccount ?? ''),
@@ -268,7 +286,10 @@ export class FusionTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: String(register?.cashAccount ?? ''),
@@ -295,34 +316,37 @@ export class FusionTransformationService {
     const journalHeaders: JournalHeader[] = [];
     if (customerType !== 'NORMAL' && journalMeta) {
       const periodName = this.getPeriodName(saleDate);
-      
+
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
         (il, idx) => ({
           ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
-          periodName,  // Java line 84: getPeriodName(invoice.getSaleDate())
+          periodName, // Java line 84: getPeriodName(invoice.getSaleDate())
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Vend',
           jeCategoryName: journalMeta.jeCategory ?? 'Vend',
-          chartOfAccountsId: bigIntToNumber(journalMeta.chartOfAccountsId, 'chartOfAccountsId'),
+          chartOfAccountsId: bigIntToNumber(
+            journalMeta.chartOfAccountsId,
+            'chartOfAccountsId',
+          ),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,
           segment4: salesMeta.costCenterCode ?? undefined,
-          segment5: '00',  // Java line 101
+          segment5: '00', // Java line 101
           segment6: journalMeta.interCompany ?? undefined,
           segment7: journalMeta.futUsed ?? undefined,
-          segment8: '00',  // Java line 104
-          segment9: '00',  // Java line 105
+          segment8: '00', // Java line 104
+          segment9: '00', // Java line 105
           segment10: '00', // Java line 106
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           // Java logic (lines 109-115): CREDIT lines get Cr amounts, DEBIT lines get Dr amounts
           enteredCrAmount: il.unitSellingPrice * il.quantity,
           accountedCr: il.unitSellingPrice * il.quantity,
-          currencyConversionRate: 1,  // Java line 119
-          currencyConversionType: 'Corporate',  // Java line 118
-          currencyConversionDate: saleDate,  // Java line 120
-          transactionDate: saleDate,  // Java line 107
-          taxCode: 'N',  // Java line 121
+          currencyConversionRate: 1, // Java line 119
+          currencyConversionType: 'Corporate', // Java line 118
+          currencyConversionDate: saleDate, // Java line 120
+          transactionDate: saleDate, // Java line 107
+          taxCode: 'N', // Java line 121
         }),
       );
 
@@ -360,12 +384,26 @@ export class FusionTransformationService {
       );
       // Log detailed payload for debugging
       this.logger.debug('Invoice:', JSON.stringify(invoiceHeader, null, 2));
-      this.logger.debug('Standard Receipts:', JSON.stringify(standardReceipts, null, 2));
-      this.logger.debug('Misc Receipts:', JSON.stringify(miscReceipts, null, 2));
-      this.logger.debug('Apply Receipts:', JSON.stringify(applyReceipts, null, 2));
-      this.logger.debug('Journal Headers:', JSON.stringify(journalHeaders, null, 2));
+      this.logger.debug(
+        'Standard Receipts:',
+        JSON.stringify(standardReceipts, null, 2),
+      );
+      this.logger.debug(
+        'Misc Receipts:',
+        JSON.stringify(miscReceipts, null, 2),
+      );
+      this.logger.debug(
+        'Apply Receipts:',
+        JSON.stringify(applyReceipts, null, 2),
+      );
+      this.logger.debug(
+        'Journal Headers:',
+        JSON.stringify(journalHeaders, null, 2),
+      );
     } else {
-      this.logger.debug(`All payloads validated successfully for sale ${saleDbId}`);
+      this.logger.debug(
+        `All payloads validated successfully for sale ${saleDbId}`,
+      );
     }
 
     return {

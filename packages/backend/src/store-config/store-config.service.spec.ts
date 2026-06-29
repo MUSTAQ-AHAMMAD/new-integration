@@ -1,5 +1,10 @@
 import { NotFoundException } from '@nestjs/common';
-import { AlertSeverity, AlertType, ValidationStatus, Prisma } from '@prisma/client';
+import {
+  AlertSeverity,
+  AlertType,
+  ValidationStatus,
+  Prisma,
+} from '@prisma/client';
 import { AlertsService } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreConfigService } from './store-config.service';
@@ -275,8 +280,9 @@ describe('StoreConfigService', () => {
         ]);
 
       // Mock fusionSalesMetadata
-      (prisma as unknown as Record<string, { findMany: jest.Mock }>)
-        .fusionSalesMetadata = {
+      (
+        prisma as unknown as Record<string, { findMany: jest.Mock }>
+      ).fusionSalesMetadata = {
         findMany: jest.fn().mockResolvedValue([
           {
             id: '1',
@@ -302,8 +308,9 @@ describe('StoreConfigService', () => {
       };
 
       // Mock storeConfiguration.create
-      (prisma as unknown as Record<string, { create: jest.Mock }>)
-        .storeConfiguration.create = jest.fn().mockResolvedValue({});
+      (
+        prisma as unknown as Record<string, { create: jest.Mock }>
+      ).storeConfiguration.create = jest.fn().mockResolvedValue({});
     });
 
     it('creates configurations for all unique branches', async () => {
@@ -329,8 +336,9 @@ describe('StoreConfigService', () => {
     });
 
     it('throws error when no FusionSalesMetadata exists', async () => {
-      (prisma as unknown as Record<string, { findMany: jest.Mock }>)
-        .fusionSalesMetadata.findMany = jest.fn().mockResolvedValue([]);
+      (
+        prisma as unknown as Record<string, { findMany: jest.Mock }>
+      ).fusionSalesMetadata.findMany = jest.fn().mockResolvedValue([]);
 
       await expect(service.populateAllBranches()).rejects.toThrow(
         'No FusionSalesMetadata records found',
@@ -340,9 +348,8 @@ describe('StoreConfigService', () => {
     it('matches branches to FusionSalesMetadata by region', async () => {
       await service.populateAllBranches();
 
-      const createCalls = (
-        prisma.storeConfiguration.create as jest.Mock
-      ).mock.calls;
+      const createCalls = (prisma.storeConfiguration.create as jest.Mock).mock
+        .calls;
 
       // Branch 3 (AE) should use AE metadata
       expect(createCalls[0][0].data.billToSiteName).toBe('AE Store');

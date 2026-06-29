@@ -1,4 +1,8 @@
-import { toApiDatetime, normalizeOrderForIngestion, RawOdooOrderFields } from './odoo-utils';
+import {
+  toApiDatetime,
+  normalizeOrderForIngestion,
+  RawOdooOrderFields,
+} from './odoo-utils';
 
 describe('toApiDatetime', () => {
   it('appends 00:00:00 to a date-only start date', () => {
@@ -24,7 +28,10 @@ describe('toApiDatetime', () => {
 });
 
 describe('normalizeOrderForIngestion - isPaid logic', () => {
-  const createMockOrder = (state: string, amount = 100): RawOdooOrderFields => ({
+  const createMockOrder = (
+    state: string,
+    amount = 100,
+  ): RawOdooOrderFields => ({
     id: 123456,
     name: 'TEST-ORDER-001',
     branch_id: [1, 'Test Branch'],
@@ -36,7 +43,7 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
   const createMockOrderWithPayments = (
     state: string,
     amount = 100,
-    hasPayments = true
+    hasPayments = true,
   ): RawOdooOrderFields => ({
     id: 123456,
     name: 'TEST-ORDER-001',
@@ -44,9 +51,9 @@ describe('normalizeOrderForIngestion - isPaid logic', () => {
     date_order: '2026-06-26 10:00:00',
     amount_total: amount,
     state,
-    statement_ids: hasPayments ? [
-      { id: 1, amount: 100, paymentName: 'Cash' }
-    ] : [],
+    statement_ids: hasPayments
+      ? [{ id: 1, amount: 100, paymentName: 'Cash' }]
+      : [],
   });
 
   describe('State-based paid order detection - original states', () => {

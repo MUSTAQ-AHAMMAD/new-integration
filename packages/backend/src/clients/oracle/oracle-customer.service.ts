@@ -1,8 +1,8 @@
 /**
  * Oracle Customer Profile Service
- * 
+ *
  * Resolves customer IDs from account numbers by querying Oracle Fusion Customer Profile service.
- * 
+ *
  * Java Reference: FusionStdReceiptMapping.java
  * - Queries Oracle Customer Profile service to get customer ID from account number
  * - Customer ID is required for standard receipt processing
@@ -24,13 +24,13 @@ export class OracleCustomerService {
 
   /**
    * Get customer ID from account number by querying Oracle Fusion.
-   * 
+   *
    * Java equivalent: FusionCustomerProfileClient.getCustomerId(String accountNumber)
-   * 
+   *
    * @param accountValue - Customer account number
    * @param region - Region code (e.g., "AE", "KW", "OM")
    * @returns Customer ID or null if not found
-   * 
+   *
    * @example
    * const customerId = await customerService.getCustomerId("CUST-12345", "AE");
    * // Returns: 300000012345678
@@ -52,22 +52,22 @@ export class OracleCustomerService {
     try {
       // Call Oracle Customer Profile service SOAP API
       const profile = await this.soapClient.getCustomerProfile(accountValue);
-      
+
       if (profile && profile.customerAccountId) {
         // Cache the customer ID
         this.customerCache.set(cacheKey, profile.customerAccountId);
-        
+
         this.logger.debug(
           `Customer ID resolved for account ${accountValue} in region ${region}: ${profile.customerAccountId}`,
         );
-        
+
         return profile.customerAccountId;
       }
-      
+
       this.logger.debug(
         `No customer ID found for account ${accountValue} in region ${region}`,
       );
-      
+
       return null;
     } catch (error) {
       this.logger.error(
@@ -79,9 +79,9 @@ export class OracleCustomerService {
 
   /**
    * Get customer profile details including customer ID and payment terms.
-   * 
+   *
    * Java equivalent: FusionCustomerProfileClient.getCustomerProfile(String accountNumber)
-   * 
+   *
    * @param accountValue - Customer account number
    * @param region - Region code (e.g., "AE", "KW", "OM")
    * @returns Customer profile or null if not found
@@ -103,26 +103,26 @@ export class OracleCustomerService {
     try {
       // Call Oracle Customer Profile service SOAP API
       const profile = await this.soapClient.getCustomerProfile(accountValue);
-      
+
       if (profile && profile.customerAccountId) {
         // Cache the full profile
         this.profileCache.set(cacheKey, profile);
-        
+
         // Also cache the customer ID separately
         this.customerCache.set(cacheKey, profile.customerAccountId);
-        
+
         this.logger.debug(
           `Customer profile resolved for account ${accountValue} in region ${region}: ` +
-          `ID=${profile.customerAccountId}, terms=${profile.paymentTermsName}`,
+            `ID=${profile.customerAccountId}, terms=${profile.paymentTermsName}`,
         );
-        
+
         return profile;
       }
-      
+
       this.logger.debug(
         `No customer profile found for account ${accountValue} in region ${region}`,
       );
-      
+
       return null;
     } catch (error) {
       this.logger.error(
@@ -145,7 +145,7 @@ export class OracleCustomerService {
   /**
    * Get cache statistics for both customer ID and profile caches.
    */
-  getCacheStats(): { 
+  getCacheStats(): {
     customerIdCache: { size: number; keys: string[] };
     profileCache: { size: number; keys: string[] };
   } {

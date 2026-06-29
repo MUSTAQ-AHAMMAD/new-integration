@@ -231,11 +231,17 @@ export class OdooTransformationService {
           standardReceipts.push({
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             saleDate,
-            receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+            receiptMethodId: bigIntToNumber(
+              receiptMethod.receiptMethodId,
+              'receiptMethodId',
+            ),
             receiptNumber: `${pmtMethod}-${txnNumber}`,
             remittanceBankAccountId: numericAccountId,
             accountValue: invoiceHeader.billToAccountNumber,
-            orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
+            orgId: bigIntToNumber(
+              buMap?.businessUnitId ?? 0n,
+              'businessUnitId',
+            ),
             receiptAmount: pmtAmount,
           });
         }
@@ -253,7 +259,10 @@ export class OdooTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.bankAccountName,
@@ -265,7 +274,10 @@ export class OdooTransformationService {
         miscReceipts.push({
           currencyCode: invoiceHeader.invoiceCurrencyCode,
           saleDate,
-          receiptMethodId: bigIntToNumber(receiptMethod.receiptMethodId, 'receiptMethodId'),
+          receiptMethodId: bigIntToNumber(
+            receiptMethod.receiptMethodId,
+            'receiptMethodId',
+          ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
           bankAccountName: storeConfig.cashAccountName,
@@ -295,7 +307,10 @@ export class OdooTransformationService {
           accountingDate: saleDate,
           userJeSourceName: journalMeta.jeSource ?? 'Odoo',
           jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
-          chartOfAccountsId: bigIntToNumber(journalMeta.chartOfAccountsId, 'chartOfAccountsId'),
+          chartOfAccountsId: bigIntToNumber(
+            journalMeta.chartOfAccountsId,
+            'chartOfAccountsId',
+          ),
           segment1: journalMeta.company ?? undefined,
           segment2: journalMeta.account ?? undefined,
           segment3: journalMeta.department ?? undefined,

@@ -119,7 +119,7 @@ function extractFirstTaxName(taxId: unknown): string | null {
 /**
  * Extract tax IDs from Odoo tax_ids or tax_id field and return as JSON string array.
  * Handles both plain integer arrays and Many2one tuple arrays.
- * 
+ *
  * @example
  *   extractTaxIdsJson([26, 27])           → "[26,27]"
  *   extractTaxIdsJson([[26, "VAT 5%"]])   → "[26]"
@@ -127,11 +127,11 @@ function extractFirstTaxName(taxId: unknown): string | null {
  */
 function extractTaxIdsJson(taxField: unknown): string | null {
   if (!Array.isArray(taxField) || taxField.length === 0) return null;
-  
+
   const ids = taxField
     .map((t) => (typeof t === 'number' ? t : Array.isArray(t) ? t[0] : null))
     .filter((t) => t != null);
-  
+
   return ids.length > 0 ? JSON.stringify(ids) : null;
 }
 
@@ -275,7 +275,7 @@ export class OdooBackupService {
           `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
           `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
       );
-      
+
       await this.syncControl.markStopped('odoo-backup', 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -333,7 +333,9 @@ export class OdooBackupService {
     // Check if sync control allows this service to run
     const enabled = await this.syncControl.isEnabled('odoo-backup');
     if (!enabled) {
-      this.logger.debug('Odoo credential backup is disabled, skipping cron run');
+      this.logger.debug(
+        'Odoo credential backup is disabled, skipping cron run',
+      );
       return;
     }
 
@@ -395,7 +397,9 @@ export class OdooBackupService {
                   : order.branch_id
                 : null;
             const storeEntry =
-              odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
+              odooBranchId != null
+                ? branchIdMap.get(BigInt(odooBranchId))
+                : null;
             const resolvedBranchCode =
               storeEntry?.branchCode ?? payload.branchCode;
             // Prefer region from credential; fall back to StoreConfiguration.region
@@ -1195,8 +1199,7 @@ export class OdooBackupService {
         const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
         const taxIds = extractTaxIdsJson(line.tax_ids ?? line.tax_id);
 
-        const lineName =
-          typeof line.name === 'string' ? line.name : null;
+        const lineName = typeof line.name === 'string' ? line.name : null;
 
         return {
           orderId: order.id,
@@ -1377,8 +1380,12 @@ export class OdooBackupService {
       try {
         // Reconstruct the order object from rawJson if available, otherwise use backup fields
         let order: RawOdooOrderFields;
-        
-        if (backupOrder.rawJson && typeof backupOrder.rawJson === 'object' && !Array.isArray(backupOrder.rawJson)) {
+
+        if (
+          backupOrder.rawJson &&
+          typeof backupOrder.rawJson === 'object' &&
+          !Array.isArray(backupOrder.rawJson)
+        ) {
           // Use the full rawJson which should contain payment data
           order = backupOrder.rawJson as unknown as RawOdooOrderFields;
         } else {
@@ -1393,7 +1400,7 @@ export class OdooBackupService {
               paymentDate: true,
             },
           });
-          
+
           order = {
             id: backupOrder.orderId,
             name: backupOrder.orderName,
@@ -1407,7 +1414,10 @@ export class OdooBackupService {
           };
         }
 
-        const payload = normalizeOrderForIngestion(order, backupOrder.timezone ?? undefined);
+        const payload = normalizeOrderForIngestion(
+          order,
+          backupOrder.timezone ?? undefined,
+        );
         if (!payload) {
           this.logger.debug(
             `Skipping backup order id=${backupOrder.orderId}: no valid branch code`,
@@ -1424,8 +1434,7 @@ export class OdooBackupService {
           backupOrder.resolvedBranchCode ??
           storeEntry?.branchCode ??
           payload.branchCode;
-        const resolvedRegion =
-          backupOrder.region ?? storeEntry?.region ?? null;
+        const resolvedRegion = backupOrder.region ?? storeEntry?.region ?? null;
 
         await this.orderSyncService.ingestOrder({
           ...payload,

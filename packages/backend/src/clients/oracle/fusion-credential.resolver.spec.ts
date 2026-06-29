@@ -7,12 +7,14 @@ import { FUSION_REST_API_VERSION } from '../../utils/fusion-app-params';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeDbCredential(overrides: Partial<{
-  hostName: string;
-  server: string;
-  username: string;
-  password: string;
-}> = {}) {
+function makeDbCredential(
+  overrides: Partial<{
+    hostName: string;
+    server: string;
+    username: string;
+    password: string;
+  }> = {},
+) {
   return {
     hostName: 'mycompany',
     server: 'us6',
@@ -22,7 +24,9 @@ function makeDbCredential(overrides: Partial<{
   };
 }
 
-function makePrisma(credential: ReturnType<typeof makeDbCredential> | null = makeDbCredential()) {
+function makePrisma(
+  credential: ReturnType<typeof makeDbCredential> | null = makeDbCredential(),
+) {
   return {
     fusionCredential: {
       findFirst: jest.fn().mockResolvedValue(credential),
@@ -39,9 +43,11 @@ function makeConfigService(overrides: Record<string, string> = {}) {
     ...overrides,
   };
   return {
-    get: jest.fn().mockImplementation((key: string, fallback = '') =>
-      defaults[key] ?? fallback,
-    ),
+    get: jest
+      .fn()
+      .mockImplementation(
+        (key: string, fallback = '') => defaults[key] ?? fallback,
+      ),
   } as unknown as ConfigService;
 }
 
@@ -119,9 +125,7 @@ describe('FusionCredentialResolver', () => {
 
     it('returns the env-var REST base URL', async () => {
       const settings = await resolver.resolveOracleConnectionSettings();
-      expect(settings?.restBaseUrl).toBe(
-        'https://oracle-env.example.com/rest',
-      );
+      expect(settings?.restBaseUrl).toBe('https://oracle-env.example.com/rest');
     });
 
     it('produces correct Basic-Auth header from env credentials', async () => {
@@ -146,7 +150,9 @@ describe('FusionCredentialResolver', () => {
     it('falls back to environment variables when DB throws', async () => {
       const brokenPrisma = {
         fusionCredential: {
-          findFirst: jest.fn().mockRejectedValue(new Error('DB connection lost')),
+          findFirst: jest
+            .fn()
+            .mockRejectedValue(new Error('DB connection lost')),
         },
       } as unknown as PrismaService;
 

@@ -62,8 +62,12 @@ describe('BigIntInterceptor', () => {
         next: (result) => {
           expect(result.job.createdAt).toBeInstanceOf(Date);
           expect(result.job.updatedAt).toBeInstanceOf(Date);
-          expect(result.job.createdAt.toISOString()).toBe(testDate1.toISOString());
-          expect(result.job.updatedAt.toISOString()).toBe(testDate2.toISOString());
+          expect(result.job.createdAt.toISOString()).toBe(
+            testDate1.toISOString(),
+          );
+          expect(result.job.updatedAt.toISOString()).toBe(
+            testDate2.toISOString(),
+          );
           done();
         },
       });
