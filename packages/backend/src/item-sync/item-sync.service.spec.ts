@@ -2,6 +2,7 @@ import { ItemSyncService } from './item-sync.service';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SyncControlService } from '../sync/sync-control.service';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -57,6 +58,14 @@ function makeVendHq() {
   };
 }
 
+function makeSyncControl() {
+  return {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    markRunning: jest.fn().mockResolvedValue(undefined),
+    markStopped: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -66,15 +75,18 @@ describe('ItemSyncService', () => {
   let prisma: ReturnType<typeof makePrisma>;
   let oracle: ReturnType<typeof makeOracle>;
   let vendHq: ReturnType<typeof makeVendHq>;
+  let syncControl: ReturnType<typeof makeSyncControl>;
 
   beforeEach(() => {
     prisma = makePrisma();
     oracle = makeOracle();
     vendHq = makeVendHq();
+    syncControl = makeSyncControl();
     service = new ItemSyncService(
       prisma as unknown as PrismaService,
       oracle as unknown as OracleClient,
       vendHq as unknown as VendHqClient,
+      syncControl as unknown as SyncControlService,
     );
     jest.clearAllMocks();
   });
