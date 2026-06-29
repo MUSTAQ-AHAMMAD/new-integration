@@ -686,22 +686,65 @@ export class OracleSoapClient implements OnModuleInit {
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
         
+        // Parse the response properly - handle both case variations
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') || 
+          extractTag(xml, 'serviceStatus') || 
+          'SUCCESS';
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
         const customerReceiptReference =
           extractTag(xml, 'CustomerReceiptReference') ||
           extractTag(xml, 'customerReceiptReference');
         
+        // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response using comprehensive extraction
+          const errorMessage = extractErrorMessage(xml);
+          
+          // Log the full XML for debugging if error message is empty
+          if (!errorMessage || errorMessage === '') {
+            this.logger.error(
+              `⚠️  Status E detected but NO error message found in response!\n` +
+              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+              `  Receipt Number: ${receiptNumber || 'null'}\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  FULL Response XML (for debugging):\n${xml}`,
+            );
+          } else {
+            this.logger.error(
+              `❌ Standard receipt creation failed with Status E:\n` +
+              `  Receipt Number: ${receiptNumber || 'null'}\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Error Message: ${errorMessage}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+          }
+          
+          // Throw with appropriate error message
+          const displayError = errorMessage || 
+                              'Oracle returned Status E without error details. Check logs for full XML response.';
+          
+          throw new Error(
+            `Oracle standard receipt creation failed with Status E: ${displayError} ` +
+            `Receipt Number: ${receiptNumber || 'null'}, ` +
+            `Requested: ${req.receiptNumber}`
+          );
+        }
+        
         // ✅ Validate receipt number was returned
         if (!receiptNumber || receiptNumber.trim() === '') {
           this.logger.error(
             `❌ Standard receipt creation returned empty receipt number:\n` +
             `  Requested Receipt Number: ${req.receiptNumber}\n` +
+            `  Status: ${serviceStatus}\n` +
             `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
           throw new Error(
             `Oracle standard receipt creation failed: no receipt number returned. ` +
-            `Requested: ${req.receiptNumber}`
+            `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`
           );
         }
         
@@ -734,10 +777,56 @@ export class OracleSoapClient implements OnModuleInit {
         const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
         
+        // Parse the response properly - handle both case variations
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') || 
+          extractTag(xml, 'serviceStatus') || 
+          'SUCCESS';
         const customerTrxId =
           extractTag(xml, 'CustomerTrxId') || extractTag(xml, 'customerTrxId');
         const receiptNumber =
           extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
+        
+        // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response using comprehensive extraction
+          const errorMessage = extractErrorMessage(xml);
+          
+          // Log the full XML for debugging if error message is empty
+          if (!errorMessage || errorMessage === '') {
+            this.logger.error(
+              `⚠️  Status E detected but NO error message found in response!\n` +
+              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+              `  Receipt Number: ${receiptNumber || 'null'}\n` +
+              `  Transaction Number: ${req.transactionNumber}\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Amount Applied: ${req.amountApplied}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  FULL Response XML (for debugging):\n${xml}`,
+            );
+          } else {
+            this.logger.error(
+              `❌ Apply receipt creation failed with Status E:\n` +
+              `  Receipt Number: ${receiptNumber || 'null'}\n` +
+              `  Transaction Number: ${req.transactionNumber}\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Amount Applied: ${req.amountApplied}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Error Message: ${errorMessage}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+          }
+          
+          // Throw with appropriate error message
+          const displayError = errorMessage || 
+                              'Oracle returned Status E without error details. Check logs for full XML response.';
+          
+          throw new Error(
+            `Oracle apply receipt creation failed with Status E: ${displayError} ` +
+            `Receipt Number: ${receiptNumber || 'null'}, ` +
+            `Transaction: ${req.transactionNumber}, Requested: ${req.receiptNumber}`
+          );
+        }
         
         // ✅ Validate response contains required data
         if (!receiptNumber || receiptNumber.trim() === '') {
@@ -746,11 +835,12 @@ export class OracleSoapClient implements OnModuleInit {
             `  Transaction Number: ${req.transactionNumber}\n` +
             `  Requested Receipt Number: ${req.receiptNumber}\n` +
             `  Amount Applied: ${req.amountApplied}\n` +
+            `  Status: ${serviceStatus}\n` +
             `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
           throw new Error(
             `Oracle apply receipt creation failed: no receipt number returned. ` +
-            `Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`
+            `Status: ${serviceStatus}, Transaction: ${req.transactionNumber}, Receipt: ${req.receiptNumber}`
           );
         }
         
@@ -790,6 +880,11 @@ export class OracleSoapClient implements OnModuleInit {
           const xml = resp.data as string;
           this.assertNoFault(xml, 'createMiscellaneousReceipt');
           
+          // Parse the response properly - handle both case variations
+          const serviceStatus =
+            extractTag(xml, 'ServiceStatus') || 
+            extractTag(xml, 'serviceStatus') || 
+            'SUCCESS';
           const receivablesTransactionId =
             extractTag(xml, 'ReceivablesTransactionId') ||
             extractTag(xml, 'receivablesTransactionId');
@@ -797,17 +892,57 @@ export class OracleSoapClient implements OnModuleInit {
             extractTag(xml, 'ReceiptNumber') ||
             extractTag(xml, 'receiptNumber');
           
+          // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+          if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+            // Extract error details from response using comprehensive extraction
+            const errorMessage = extractErrorMessage(xml);
+            
+            // Log the full XML for debugging if error message is empty
+            if (!errorMessage || errorMessage === '') {
+              this.logger.error(
+                `⚠️  Status E detected but NO error message found in response!\n` +
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Receipt Amount: ${req.receiptAmount}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  FULL Response XML (for debugging):\n${xml}`,
+              );
+            } else {
+              this.logger.error(
+                `❌ Misc receipt creation failed with Status E:\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Receipt Amount: ${req.receiptAmount}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+              );
+            }
+            
+            // Throw with appropriate error message
+            const displayError = errorMessage || 
+                                'Oracle returned Status E without error details. Check logs for full XML response.';
+            
+            throw new Error(
+              `Oracle misc receipt creation failed with Status E: ${displayError} ` +
+              `Receipt Number: ${receiptNumber || 'null'}, ` +
+              `Requested: ${req.receiptNumber}, Amount: ${req.receiptAmount}`
+            );
+          }
+          
           // ✅ Validate receipt number was returned
           if (!receiptNumber || receiptNumber.trim() === '') {
             this.logger.error(
               `❌ Misc receipt creation returned empty receipt number:\n` +
               `  Requested Receipt Number: ${req.receiptNumber}\n` +
               `  Receipt Amount: ${req.receiptAmount}\n` +
+              `  Status: ${serviceStatus}\n` +
               `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
             throw new Error(
               `Oracle misc receipt creation failed: no receipt number returned. ` +
-              `Requested: ${req.receiptNumber}`
+              `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`
             );
           }
           
@@ -840,8 +975,49 @@ export class OracleSoapClient implements OnModuleInit {
         const xml = resp.data as string;
         this.assertNoFault(xml, 'importJournals');
         
+        // Parse the response properly - handle both case variations
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') || 
+          extractTag(xml, 'serviceStatus') || 
+          'SUCCESS';
         const result = extractTag(xml, 'result') || extractTag(xml, 'return');
         const jeHeaderId = result ? parseInt(result, 10) : null;
+        
+        // ✅ CRITICAL FIX: Check for Status E and throw error
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response using comprehensive extraction
+          const errorMessage = extractErrorMessage(xml);
+          
+          // Log the full XML for debugging if error message is empty
+          if (!errorMessage || errorMessage === '') {
+            this.logger.error(
+              `⚠️  Status E detected but NO error message found in response!\n` +
+              `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+              `  Batch Name: ${header.batchName}\n` +
+              `  Batch Description: ${header.batchDescription}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  FULL Response XML (for debugging):\n${xml}`,
+            );
+          } else {
+            this.logger.error(
+              `❌ Journal import failed with Status E:\n` +
+              `  Batch Name: ${header.batchName}\n` +
+              `  Batch Description: ${header.batchDescription}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Error Message: ${errorMessage}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+            );
+          }
+          
+          // Throw with appropriate error message
+          const displayError = errorMessage || 
+                              'Oracle returned Status E without error details. Check logs for full XML response.';
+          
+          throw new Error(
+            `Oracle journal import failed with Status E: ${displayError} ` +
+            `Batch: ${header.batchName}`
+          );
+        }
         
         // ✅ Log warning if journal import failed but don't throw (journal is optional)
         if (jeHeaderId === null || isNaN(jeHeaderId)) {
@@ -849,6 +1025,7 @@ export class OracleSoapClient implements OnModuleInit {
             `⚠️  Journal import did not return a valid JE Header ID:\n` +
             `  Batch Name: ${header.batchName}\n` +
             `  Result: ${result || 'null'}\n` +
+            `  Status: ${serviceStatus}\n` +
             `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
           );
         } else {
