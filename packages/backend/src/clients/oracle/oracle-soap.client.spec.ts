@@ -336,6 +336,104 @@ describe('OracleSoapClient', () => {
       await jest.runAllTimersAsync();
       await assertion;
     });
+
+    it('uses invoiceHeaderInformation wrapper in SOAP envelope', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(makeInvoiceHeader());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain('<typ:invoiceHeaderInformation>');
+      expect(soapBody).toContain('</typ:invoiceHeaderInformation>');
+      expect(soapBody).not.toContain('<typ:invoice>');
+    });
+
+    it('includes unitCode attribute in Quantity field', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(makeInvoiceHeader());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toMatch(/<typ1:Quantity unitCode="Ea">2<\/typ1:Quantity>/);
+    });
+
+    it('includes currencyCode attribute in UnitSellingPrice field', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(makeInvoiceHeader());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toMatch(/<typ1:UnitSellingPrice currencyCode="AED">50<\/typ1:UnitSellingPrice>/);
+    });
+
+    it('uses custom uomCode when provided', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(
+        makeInvoiceHeader({
+          invoiceLines: [
+            {
+              lineNumber: 1,
+              itemNumber: 'ITEM-001',
+              quantity: 5,
+              uomCode: 'Box',
+              unitSellingPrice: 100,
+              currencyCode: 'SAR',
+              salesOrder: 'SALE-001',
+            },
+          ],
+        }),
+      );
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toMatch(/<typ1:Quantity unitCode="Box">5<\/typ1:Quantity>/);
+    });
+
+    it('prioritizes MemoLineName over ItemNumber for discount items', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(
+        makeInvoiceHeader({
+          invoiceLines: [
+            {
+              lineNumber: 1,
+              itemNumber: 'ITEM-001',
+              memoLineName: 'Discount Item',
+              quantity: 1,
+              unitSellingPrice: -10,
+              currencyCode: 'SAR',
+              salesOrder: 'SALE-001',
+            },
+          ],
+        }),
+      );
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain('<typ1:MemoLineName>Discount Item</typ1:MemoLineName>');
+      expect(soapBody).not.toContain('<typ1:ItemNumber>ITEM-001</typ1:ItemNumber>');
+    });
+
+    it('uses ItemNumber when MemoLineName is not provided', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'INV-001' }),
+      });
+
+      await client.createSimpleInvoice(makeInvoiceHeader());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain('<typ1:ItemNumber>ITEM-001</typ1:ItemNumber>');
+      expect(soapBody).not.toContain('<typ1:MemoLineName>');
+    });
   });
 
   // ── createStandardReceipt ─────────────────────────────────────
