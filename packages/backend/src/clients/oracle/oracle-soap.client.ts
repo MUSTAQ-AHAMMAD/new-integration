@@ -180,16 +180,14 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
       (l) => `
         <typ1:InvoiceLine>
           <typ1:LineNumber>${l.lineNumber}</typ1:LineNumber>
-          ${l.itemNumber ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
-          ${l.memoLineName ? `<typ1:MemoLineName>${l.memoLineName}</typ1:MemoLineName>` : ''}
+          ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
+          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
-          <typ1:Quantity>${l.quantity}</typ1:Quantity>
-          ${l.uomCode ? `<typ1:UOMCode>${l.uomCode}</typ1:UOMCode>` : ''}
-          <typ1:UnitSellingPrice>${l.unitSellingPrice}</typ1:UnitSellingPrice>
-          <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
+          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${l.unitSellingPrice}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
-          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
         </typ1:InvoiceLine>`,
     )
     .join('');
@@ -202,25 +200,25 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
   <soapenv:Header/>
   <soapenv:Body>
     <typ:createSimpleInvoice>
-      <typ:invoice>
-        <typ1:BillToCustomerName>${escapeXml(header.billToCustomerName)}</typ1:BillToCustomerName>
-        <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
-        <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
-        ${header.billToContact ? `<typ1:BillToContact>${escapeXml(header.billToContact)}</typ1:BillToContact>` : ''}
-        ${header.soldToCustomerName ? `<typ1:SoldToCustomerName>${escapeXml(header.soldToCustomerName)}</typ1:SoldToCustomerName>` : ''}
+      <typ:invoiceHeaderInformation>
         <typ1:BusinessUnit>${escapeXml(header.businessUnit)}</typ1:BusinessUnit>
         <typ1:TransactionSource>${escapeXml(header.transactionSource)}</typ1:TransactionSource>
         <typ1:TransactionType>${escapeXml(header.transactionType)}</typ1:TransactionType>
         <typ1:TrxDate>${xmlDate(header.trxDate ?? header.saleDate)}</typ1:TrxDate>
         <typ1:GlDate>${xmlDate(header.saleDate)}</typ1:GlDate>
+        <typ1:BillToCustomerName>${escapeXml(header.billToCustomerName)}</typ1:BillToCustomerName>
+        <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
+        <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
+        ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
         <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
         <typ1:ConversionRateType>${header.conversionRateType}</typ1:ConversionRateType>
         ${header.conversionRate !== undefined ? `<typ1:ConversionRate>${header.conversionRate}</typ1:ConversionRate>` : ''}
         ${header.conversionDate ? `<typ1:ConversionDate>${xmlDate(header.conversionDate)}</typ1:ConversionDate>` : ''}
-        ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
+        ${header.billToContact ? `<typ1:BillToContact>${escapeXml(header.billToContact)}</typ1:BillToContact>` : ''}
+        ${header.soldToCustomerName ? `<typ1:SoldToCustomerName>${escapeXml(header.soldToCustomerName)}</typ1:SoldToCustomerName>` : ''}
         ${header.purchaseOrder ? `<typ1:PurchaseOrder>${escapeXml(header.purchaseOrder)}</typ1:PurchaseOrder>` : ''}
         ${linesXml}
-      </typ:invoice>
+      </typ:invoiceHeaderInformation>
     </typ:createSimpleInvoice>
   </soapenv:Body>
 </soapenv:Envelope>`;
