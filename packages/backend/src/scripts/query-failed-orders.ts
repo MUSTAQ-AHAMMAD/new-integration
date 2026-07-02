@@ -33,11 +33,11 @@ class FailedOrdersAnalyzer {
     console.log('📊 Summary Statistics');
     console.log('─────────────────────────────────────────────────────────────\n');
 
-    const [total, pending, processing, completed, failed, skipped] = await Promise.all([
+    const [total, pending, processing, synced, failed, skipped] = await Promise.all([
       this.prisma.orderSyncQueue.count(),
       this.prisma.orderSyncQueue.count({ where: { status: 'PENDING' } }),
       this.prisma.orderSyncQueue.count({ where: { status: 'PROCESSING' } }),
-      this.prisma.orderSyncQueue.count({ where: { status: 'COMPLETED' } }),
+      this.prisma.orderSyncQueue.count({ where: { status: 'SYNCED' } }),
       this.prisma.orderSyncQueue.count({ where: { status: 'FAILED' } }),
       this.prisma.orderSyncQueue.count({ where: { status: 'SKIPPED' } }),
     ]);
@@ -45,14 +45,14 @@ class FailedOrdersAnalyzer {
     console.log(`   Total Orders: ${total}`);
     console.log(`   ├─ Pending: ${pending} (${this.percentage(pending, total)}%)`);
     console.log(`   ├─ Processing: ${processing} (${this.percentage(processing, total)}%)`);
-    console.log(`   ├─ Completed: ${completed} (${this.percentage(completed, total)}%)`);
+    console.log(`   ├─ Synced: ${synced} (${this.percentage(synced, total)}%)`);
     console.log(`   ├─ Failed: ${failed} (${this.percentage(failed, total)}%)`);
     console.log(`   └─ Skipped: ${skipped} (${this.percentage(skipped, total)}%)\n`);
 
-    const statusECount = await this.prisma.orderSyncQueue.count({
+    const statusECount = await this.prisma.failedTransaction.count({
       where: {
-        status: 'FAILED',
-        lastErrorMessage: { contains: 'Status E' },
+        errorMessage: { contains: 'Status E' },
+        orderSyncQueueId: { not: null },
       },
     });
 
@@ -86,27 +86,26 @@ class FailedOrdersAnalyzer {
     console.log('📝 Common Error Messages');
     console.log('─────────────────────────────────────────────────────────────\n');
 
-    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+    const failedTransactions = await this.prisma.failedTransaction.findMany({
       where: {
-        status: 'FAILED',
-        lastErrorMessage: { not: null },
+        orderSyncQueueId: { not: null },
       },
       select: {
-        lastErrorMessage: true,
-        lastErrorType: true,
+        errorMessage: true,
+        errorType: true,
       },
       take: 100,
     });
 
     const errorPatterns = new Map<string, number>();
 
-    failedOrders.forEach(order => {
-      if (!order.lastErrorMessage) return;
+    failedTransactions.forEach(transaction => {
+      if (!transaction.errorMessage) return;
 
       // Extract key phrases from error messages
       let pattern = 'Unknown error';
 
-      if (order.lastErrorMessage.includes('Status E')) {
+      if (transaction.errorMessage.includes('Status E')) {
         pattern = 'Status E (no details)';
         
         // Try to extract specific Oracle errors
@@ -124,16 +123,16 @@ class FailedOrdersAnalyzer {
         ];
 
         for (const regex of matches) {
-          if (regex.test(order.lastErrorMessage)) {
+          if (regex.test(transaction.errorMessage)) {
             pattern = `Status E: ${regex.toString().replace(/[\/i]/g, '')}`;
             break;
           }
         }
-      } else if (order.lastErrorMessage.includes('timeout')) {
+      } else if (transaction.errorMessage.includes('timeout')) {
         pattern = 'Timeout error';
-      } else if (order.lastErrorMessage.includes('not found')) {
+      } else if (transaction.errorMessage.includes('not found')) {
         pattern = 'Not found error';
-      } else if (order.lastErrorMessage.includes('validation')) {
+      } else if (transaction.errorMessage.includes('validation')) {
         pattern = 'Validation error';
       }
 
@@ -159,38 +158,43 @@ class FailedOrdersAnalyzer {
     console.log('🕐 Recent Failures (Last 10)');
     console.log('─────────────────────────────────────────────────────────────\n');
 
-    const recentFailures = await this.prisma.orderSyncQueue.findMany({
+    const recentFailedTransactions = await this.prisma.failedTransaction.findMany({
       where: {
-        status: 'FAILED',
-        lastErrorMessage: { contains: 'Status E' },
+        errorMessage: { contains: 'Status E' },
+        orderSyncQueueId: { not: null },
       },
-      select: {
-        odooOrderId: true,
-        odooOrderNumber: true,
-        branchCode: true,
-        region: true,
-        totalAmount: true,
-        currency: true,
-        syncAttempts: true,
-        lastErrorMessage: true,
-        updatedAt: true,
+      include: {
+        orderSyncQueue: {
+          select: {
+            odooOrderId: true,
+            odooOrderNumber: true,
+            branchCode: true,
+            totalAmount: true,
+            currency: true,
+            syncAttempts: true,
+            updatedAt: true,
+          },
+        },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       take: 10,
     });
 
-    if (recentFailures.length === 0) {
+    if (recentFailedTransactions.length === 0) {
       console.log('   ✅ No recent Status E failures\n');
       return;
     }
 
-    recentFailures.forEach((order, index) => {
+    recentFailedTransactions.forEach((transaction, index) => {
+      const order = transaction.orderSyncQueue;
+      if (!order) return;
+      
       console.log(`   ${index + 1}. Order ${order.odooOrderNumber || order.odooOrderId}`);
-      console.log(`      Branch: ${order.branchCode} | Region: ${order.region || 'N/A'}`);
+      console.log(`      Branch: ${order.branchCode}`);
       console.log(`      Amount: ${order.totalAmount} ${order.currency}`);
       console.log(`      Attempts: ${order.syncAttempts}`);
       console.log(`      Updated: ${order.updatedAt.toISOString()}`);
-      console.log(`      Error: ${order.lastErrorMessage?.substring(0, 100)}...`);
+      console.log(`      Error: ${transaction.errorMessage?.substring(0, 100)}...`);
       console.log();
     });
   }
@@ -267,7 +271,7 @@ class FailedOrdersAnalyzer {
       console.log(`      Customer: ${invoice.billToCustName}`);
       console.log(`      BU: ${invoice.businessUnit} | Source: ${invoice.txnSource}`);
       console.log(`      Type: ${invoice.txnType} | Region: ${invoice.region || 'N/A'}`);
-      console.log(`      Date: ${invoice.requestDate.toISOString()}`);
+      console.log(`      Date: ${invoice.requestDate ? invoice.requestDate.toISOString() : 'N/A'}`);
       console.log();
     });
   }
@@ -284,9 +288,9 @@ class FailedOrdersAnalyzer {
     });
 
     for (const branch of branches) {
-      const [completed, failed] = await Promise.all([
+      const [synced, failed] = await Promise.all([
         this.prisma.orderSyncQueue.count({
-          where: { branchCode: branch.branchCode, status: 'COMPLETED' },
+          where: { branchCode: branch.branchCode, status: 'SYNCED' },
         }),
         this.prisma.orderSyncQueue.count({
           where: { branchCode: branch.branchCode, status: 'FAILED' },
@@ -294,13 +298,13 @@ class FailedOrdersAnalyzer {
       ]);
 
       const total = branch._count.id;
-      const successRate = this.percentage(completed, total);
-      const failureRate = this.percentage(failed, total);
+      const successRate = parseFloat(this.percentage(synced, total));
+      const failureRate = parseFloat(this.percentage(failed, total));
 
       const indicator = successRate >= 90 ? '✅' : successRate >= 70 ? '⚠️' : '❌';
 
       console.log(`   ${indicator} ${branch.branchCode}`);
-      console.log(`      Total: ${total} | Success: ${completed} (${successRate}%) | Failed: ${failed} (${failureRate}%)`);
+      console.log(`      Total: ${total} | Success: ${synced} (${successRate}%) | Failed: ${failed} (${failureRate}%)`);
       console.log();
     }
   }
