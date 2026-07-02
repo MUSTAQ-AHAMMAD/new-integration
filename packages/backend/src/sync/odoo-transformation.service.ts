@@ -107,7 +107,9 @@ export class OdooTransformationService {
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: storeConfig.billToSiteName,
       billToLocation: storeConfig.billToLocation ?? '',
-      billToAccountNumber: storeConfig.odooBranchId, // Use odooBranchId for proper Oracle account mapping
+      billToAccountNumber: String(
+        bigIntToNumber(storeConfig.odooBranchId, 'odooBranchId'),
+      ), // Convert BigInt to string
       businessUnit: storeConfig.oracleBusinessUnit,
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
       outletName: backup.warehouseName ?? backup.branchName ?? undefined,
