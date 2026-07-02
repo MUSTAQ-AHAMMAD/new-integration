@@ -95,7 +95,7 @@ class OracleInvoiceDebugger {
       const payloads = await this.transformation.buildOrderPayloads(
         backupOrder.id,
         order.branchCode,
-        order.region || 'AE',
+        storeConfig.region || 'AE',
       );
 
       console.log('\n📦 Invoice Header Generated:');
@@ -154,13 +154,17 @@ class OracleInvoiceDebugger {
     }
 
     // Find most recent failed order with Status E error
-    return this.prisma.orderSyncQueue.findFirst({
+    const failedTransactions = await this.prisma.failedTransaction.findMany({
       where: {
-        status: 'FAILED',
-        lastErrorMessage: { contains: 'Status E' },
+        errorMessage: { contains: 'Status E' },
+        orderSyncQueueId: { not: null },
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+      include: { orderSyncQueue: true },
     });
+    
+    return failedTransactions[0]?.orderSyncQueue || null;
   }
 
   private async getBackupOrder(odooOrderId: string) {
@@ -464,17 +468,17 @@ class OracleInvoiceDebugger {
     }
 
     // Check for missing region mapping
-    if (!order.region) {
-      issues.push('⚠️  Order has no region set - may affect receipt creation');
+    if (!storeConfig.region) {
+      issues.push('⚠️  StoreConfig has no region set - may affect receipt creation');
     }
 
     // Check if similar orders succeeded
     const similarSucceeded = await this.prisma.orderSyncQueue.findFirst({
       where: {
         branchCode: order.branchCode,
-        status: 'COMPLETED',
+        status: 'SYNCED',
       },
-      orderBy: { completedAt: 'desc' },
+      orderBy: { updatedAt: 'desc' },
     });
 
     if (!similarSucceeded) {
