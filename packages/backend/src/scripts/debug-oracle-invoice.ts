@@ -561,12 +561,12 @@ class OracleInvoiceDebugger {
     console.log('5️⃣  Update store configuration if needed:');
     console.log(`   UPDATE "StoreConfiguration"`);
     console.log(`   SET <field> = '<correct_value>'`);
-    console.log(`   WHERE "branchCode" = '${order.branchCode}';\n');
+    console.log(`   WHERE "branchCode" = '${order.branchCode}';\n`);
 
     console.log('6️⃣  Retry the order after fixing:');
-    console.log(`   curl -X POST http://localhost:3000/sync/orders/retry \\`);
-    console.log(`   -H "Content-Type: application/json" \\`);
-    console.log(`   -d '{"odooOrderId":"${order.odooOrderId}","branchCode":"${order.branchCode}"}'`);
+    console.log('   curl -X POST http://localhost:3000/sync/orders/retry \\');
+    console.log('     -H "Content-Type: application/json" \\');
+    console.log('     -d \'{"odooOrderId":"' + order.odooOrderId + '","branchCode":"' + order.branchCode + '"}\'');
   }
 }
 
