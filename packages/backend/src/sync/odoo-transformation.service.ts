@@ -107,12 +107,13 @@ export class OdooTransformationService {
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: storeConfig.billToSiteName,
       billToLocation: storeConfig.billToLocation ?? '',
-      billToAccountNumber: String(storeConfig.oracleOperatingUnitId),
+      billToAccountNumber: storeConfig.odooBranchId, // Use odooBranchId for proper Oracle account mapping
       businessUnit: storeConfig.oracleBusinessUnit,
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
       outletName: backup.warehouseName ?? backup.branchName ?? undefined,
       saleDate,
       trxDate: saleDate, // Transaction date same as sale date
+      paymentTermsName: storeConfig.paymentTermsName,
       transactionSource: storeConfig.transactionSource,
       transactionType: storeConfig.transactionType,
       invoiceCurrencyCode: storeConfig.invoiceCurrencyCode,

@@ -157,6 +157,11 @@ export class StoreConfigService {
       );
     }
 
+    // Try to get bank/cash account IDs from FusionBusinessUnitMap or other sources
+    const businessUnitMap = await this.prisma.fusionBusinessUnitMap.findFirst({
+      where: { region },
+    });
+
     // Create the configuration
     const config = await this.prisma.storeConfiguration.create({
       data: {
@@ -164,11 +169,14 @@ export class StoreConfigService {
         branchName,
         odooBranchId: numberToBigInt(branchId),
         oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
-        oracleBusinessUnit: fusionMetadata?.businessUnit || 'DEFAULT_BU',
+        oracleBusinessUnit: fusionMetadata?.businessUnit || businessUnitMap?.businessUnitName || 'DEFAULT_BU',
         billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
         billToLocation: fusionMetadata?.siteNumber || undefined,
         bankAccountName: `BANK_${region}`,
         cashAccountName: `CASH_${region}`,
+        // Try to populate account IDs if available
+        bankAccountId: fusionMetadata?.distributionAccId ? Number(fusionMetadata.distributionAccId) : undefined,
+        cashAccountId: undefined, // Will need to be populated manually or from other source
         paymentTermsName: 'IMMEDIATE',
         taxClassificationCode: undefined,
         transactionSource: fusionMetadata?.txnSource || 'Manual',
@@ -177,7 +185,7 @@ export class StoreConfigService {
         region,
         isActive: true,
         validationStatus: ValidationStatus.PARTIAL,
-        validationErrors: ['Auto-created config - requires manual validation'],
+        validationErrors: ['Auto-created config - requires manual validation of bank/cash account IDs'],
         createdBy: 'SYSTEM_AUTO_CREATE',
       },
     });

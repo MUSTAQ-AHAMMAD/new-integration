@@ -422,13 +422,15 @@ export class OrderSyncProcessor {
                 ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
                 : null,
             businessUnit: invoiceHeader.businessUnit,
+            paymentTermsName: invoiceHeader.paymentTermsName,
             txnSource: invoiceHeader.transactionSource,
             txnType: invoiceHeader.transactionType,
-            txnDate: invoiceHeader.saleDate,
+            txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
             glDate: invoiceHeader.saleDate,
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             txnNumber: txnNumber, // ✅ Store the actual transaction number
             customerTxnId: Number(invoiceResult.customerTrxId) || null,
+            totalAmount: order.totalAmount, // Store total amount for reference
             region: effectiveRegion,
           },
         });
@@ -441,8 +443,10 @@ export class OrderSyncProcessor {
             lineNumber: il.lineNumber,
             itemNumber: il.itemNumber ?? null,
             description: il.description,
+            uom: il.uomCode ?? null,
             quantity: il.quantity,
             currencyCode: invoiceHeader.invoiceCurrencyCode,
+            taxCode: il.taxClassificationCode ?? null,
             salesOrder: il.salesOrder ?? null,
             salesOrderLine: Number(il.salesOrderLine) || null,
             region: effectiveRegion,

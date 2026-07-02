@@ -32,7 +32,7 @@ export interface InvoiceLine {
 export interface InvoiceHeader {
   billToCustomerName: string;
   billToLocation: string;
-  billToAccountNumber: string;
+  billToAccountNumber: string | number; // Can be string or number, will be converted to BigInt for storage
   businessUnit: string;
   outletName?: string;
   saleDate: Date;
