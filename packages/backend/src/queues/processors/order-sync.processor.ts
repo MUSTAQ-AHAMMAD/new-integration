@@ -390,10 +390,47 @@ export class OrderSyncProcessor {
 
         // ── 8. Push Invoice ───────────────────────────────────────
         this.logger.log(
-          `[${odooOrderId}] Step 8a/14: Creating Oracle invoice...`,
+          `[${odooOrderId}] Step 8a/14: Creating Oracle invoice...\n` +
+            `  - Bill To: ${invoiceHeader.billToCustomerName}\n` +
+            `  - Business Unit: ${invoiceHeader.businessUnit}\n` +
+            `  - Account Number: ${invoiceHeader.billToAccountNumber}\n` +
+            `  - Invoice Lines: ${invoiceHeader.invoiceLines.length}`,
         );
-        const invoiceResult =
-          await this.soapClient.createSimpleInvoice(invoiceHeader);
+
+        let invoiceResult: any;
+        try {
+          invoiceResult =
+            await this.soapClient.createSimpleInvoice(invoiceHeader);
+        } catch (invoiceError) {
+          this.logger.error(
+            `[${odooOrderId}] ❌ Oracle invoice creation failed: ${invoiceError instanceof Error ? invoiceError.message : String(invoiceError)}`,
+          );
+          // Store failed invoice attempt
+          await this.prisma.fusionInvoiceHeader.create({
+            data: {
+              status: 'ERROR',
+              message: invoiceError instanceof Error ? invoiceError.message : String(invoiceError),
+              requestDate: new Date(),
+              billToCustName: invoiceHeader.billToCustomerName,
+              billToLocation: invoiceHeader.billToLocation,
+              billToAccNumber:
+                invoiceHeader.billToAccountNumber != null
+                  ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+                  : null,
+              businessUnit: invoiceHeader.businessUnit,
+              txnSource: invoiceHeader.transactionSource,
+              txnType: invoiceHeader.transactionType,
+              txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+              glDate: invoiceHeader.saleDate,
+              currencyCode: invoiceHeader.invoiceCurrencyCode,
+              totalAmount: order.totalAmount,
+              region: effectiveRegion,
+            },
+          });
+          throw new Error(
+            `Oracle invoice creation failed: ${invoiceError instanceof Error ? invoiceError.message : String(invoiceError)}`,
+          );
+        }
 
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
         // Convert to number since Prisma schema expects Int
@@ -455,47 +492,109 @@ export class OrderSyncProcessor {
         });
 
         // ── 9. Push Standard Receipts ─────────────────────────────
+        this.logger.log(
+          `[${odooOrderId}] Step 9/14: Creating ${standardReceipts.length} standard receipt(s)...`,
+        );
         for (const sr of standardReceipts) {
-          const srResult = await this.soapClient.createStandardReceipt(sr);
-          await this.prisma.fusionStandardReceipt.create({
-            data: {
-              status: 'SUCCESS',
-              requestDate: new Date(),
-              currencyCode: sr.currencyCode,
-              receiptDate: sr.saleDate,
-              glDate: sr.saleDate,
-              receiptMethodId: numberToBigInt(sr.receiptMethodId),
-              receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
-              remittanceBankAccId: String(sr.remittanceBankAccountId),
-              customerId: sr.customerId,
-              accountValue: sr.accountValue,
-              receiptAmount: sr.receiptAmount,
-              orgId: sr.orgId,
-              region: effectiveRegion,
-            },
-          });
+          try {
+            const srResult = await this.soapClient.createStandardReceipt(sr);
+            await this.prisma.fusionStandardReceipt.create({
+              data: {
+                status: 'SUCCESS',
+                requestDate: new Date(),
+                currencyCode: sr.currencyCode,
+                receiptDate: sr.saleDate,
+                glDate: sr.saleDate,
+                receiptMethodId: numberToBigInt(sr.receiptMethodId),
+                receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
+                remittanceBankAccId: String(sr.remittanceBankAccountId),
+                customerId: sr.customerId,
+                accountValue: sr.accountValue,
+                receiptAmount: sr.receiptAmount,
+                orgId: sr.orgId,
+                region: effectiveRegion,
+              },
+            });
+            this.logger.log(
+              `[${odooOrderId}]   ✅ Standard receipt created: ${srResult.receiptNumber}`,
+            );
+          } catch (receiptError) {
+            this.logger.error(
+              `[${odooOrderId}]   ❌ Standard receipt failed: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}`,
+            );
+            await this.prisma.fusionStandardReceipt.create({
+              data: {
+                status: 'ERROR',
+                message: receiptError instanceof Error ? receiptError.message : String(receiptError),
+                requestDate: new Date(),
+                currencyCode: sr.currencyCode,
+                receiptDate: sr.saleDate,
+                glDate: sr.saleDate,
+                receiptMethodId: numberToBigInt(sr.receiptMethodId),
+                receiptNumber: sr.receiptNumber,
+                remittanceBankAccId: String(sr.remittanceBankAccountId),
+                customerId: sr.customerId,
+                accountValue: sr.accountValue,
+                receiptAmount: sr.receiptAmount,
+                orgId: sr.orgId,
+                region: effectiveRegion,
+              },
+            });
+            throw receiptError;
+          }
         }
 
         // ── 10. Push Misc Receipts ────────────────────────────────
+        this.logger.log(
+          `[${odooOrderId}] Step 10/14: Creating ${miscReceipts.length} misc receipt(s)...`,
+        );
         for (const mr of miscReceipts) {
-          const mrResult = await this.soapClient.createMiscellaneousReceipt(mr);
-          await this.prisma.fusionMiscReceipt.create({
-            data: {
-              status: 'SUCCESS',
-              requestDate: new Date(),
-              currencyCode: mr.currencyCode,
-              glDate: mr.saleDate,
-              receiptDate: mr.saleDate,
-              receiptMethodId: numberToBigInt(mr.receiptMethodId),
-              receiptMethodName: mr.receiptMethodName,
-              receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
-              bankAccNumber: mr.bankAccountName,
-              recActivityName: mr.receivableActivityName,
-              receiptAmount: mr.receiptAmount,
-              orgId: mr.orgId,
-              region: effectiveRegion,
-            },
-          });
+          try {
+            const mrResult = await this.soapClient.createMiscellaneousReceipt(mr);
+            await this.prisma.fusionMiscReceipt.create({
+              data: {
+                status: 'SUCCESS',
+                requestDate: new Date(),
+                currencyCode: mr.currencyCode,
+                glDate: mr.saleDate,
+                receiptDate: mr.saleDate,
+                receiptMethodId: numberToBigInt(mr.receiptMethodId),
+                receiptMethodName: mr.receiptMethodName,
+                receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
+                bankAccNumber: mr.bankAccountName,
+                recActivityName: mr.receivableActivityName,
+                receiptAmount: mr.receiptAmount,
+                orgId: mr.orgId,
+                region: effectiveRegion,
+              },
+            });
+            this.logger.log(
+              `[${odooOrderId}]   ✅ Misc receipt created: ${mrResult.receiptNumber}`,
+            );
+          } catch (miscError) {
+            this.logger.error(
+              `[${odooOrderId}]   ❌ Misc receipt failed: ${miscError instanceof Error ? miscError.message : String(miscError)}`,
+            );
+            await this.prisma.fusionMiscReceipt.create({
+              data: {
+                status: 'ERROR',
+                message: miscError instanceof Error ? miscError.message : String(miscError),
+                requestDate: new Date(),
+                currencyCode: mr.currencyCode,
+                glDate: mr.saleDate,
+                receiptDate: mr.saleDate,
+                receiptMethodId: numberToBigInt(mr.receiptMethodId),
+                receiptMethodName: mr.receiptMethodName,
+                receiptNumber: mr.receiptNumber,
+                bankAccNumber: mr.bankAccountName,
+                recActivityName: mr.receivableActivityName,
+                receiptAmount: mr.receiptAmount,
+                orgId: mr.orgId,
+                region: effectiveRegion,
+              },
+            });
+            throw miscError;
+          }
         }
 
         // ── 11. Apply Receipts to Invoice ─────────────────────────
