@@ -119,17 +119,41 @@ export class VendHqToOracleSyncService {
     } = await this.transformationService.buildSalePayloads(saleDbId, region);
 
     // ── Invoice ──────────────────────────────────────────────────────────────
-    const invoiceResult =
-      await this.soapClient.createSimpleInvoice(invoiceHeader);
-    const txnNumber = String(
-      invoiceResult.customerTrxId ??
-        invoiceResult.transactionNumber ??
-        saleDbId,
+    let invoiceErrorMessage: string | null = null;
+    let invoiceStatus = 'SUCCESS';
+    let invoiceResult: any;
+    let txnNumber: string;
+
+    try {
+      invoiceResult =
+        await this.soapClient.createSimpleInvoice(invoiceHeader);
+      txnNumber = String(
+        invoiceResult.customerTrxId ??
+          invoiceResult.transactionNumber ??
+          saleDbId,
+      );
+      invoiceStatus = invoiceResult.serviceStatus ?? 'SUCCESS';
+    } catch (error) {
+      invoiceStatus = 'ERROR';
+      invoiceErrorMessage =
+        error instanceof Error
+          ? error.message.substring(0, 500)
+          : String(error).substring(0, 500);
+      txnNumber = saleDbId;
+      throw error; // Re-throw to maintain existing error handling
+    }
+
+    // Calculate total amount from invoice lines
+    const totalAmount = invoiceHeader.invoiceLines.reduce(
+      (sum, line) =>
+        sum + (line.unitSellingPrice ?? 0) * (line.quantity ?? 0),
+      0,
     );
 
     const auditHeader = await this.prisma.fusionInvoiceHeader.create({
       data: {
-        status: invoiceResult.serviceStatus ?? 'SUCCESS',
+        status: invoiceStatus,
+        message: invoiceErrorMessage,
         requestDate: new Date(),
         billToCustName: invoiceHeader.billToCustomerName,
         billToLocation: invoiceHeader.billToLocation,
@@ -143,15 +167,17 @@ export class VendHqToOracleSyncService {
         txnDate: invoiceHeader.saleDate,
         glDate: invoiceHeader.saleDate,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        txnNumber: Number(invoiceResult.customerTrxId) || null,
-        customerTxnId: Number(invoiceResult.customerTrxId) || null,
+        txnNumber: Number(invoiceResult?.customerTrxId) || null,
+        customerTxnId: Number(invoiceResult?.customerTrxId) || null,
+        totalAmount,
         region,
       },
     });
 
     await this.prisma.fusionInvoiceLine.createMany({
       data: invoiceHeader.invoiceLines.map((il) => ({
-        status: invoiceResult.serviceStatus ?? 'SUCCESS',
+        status: invoiceStatus,
+        message: invoiceErrorMessage,
         requestDate: new Date(),
         invoiceNumber: txnNumber,
         lineNumber: il.lineNumber,
@@ -168,16 +194,31 @@ export class VendHqToOracleSyncService {
 
     // ── Standard Receipts ────────────────────────────────────────────────────
     for (const sr of standardReceipts) {
-      const srResult = await this.soapClient.createStandardReceipt(sr);
+      let srStatus = 'SUCCESS';
+      let srErrorMessage: string | null = null;
+      let srResult: any;
+
+      try {
+        srResult = await this.soapClient.createStandardReceipt(sr);
+      } catch (error) {
+        srStatus = 'ERROR';
+        srErrorMessage =
+          error instanceof Error
+            ? error.message.substring(0, 500)
+            : String(error).substring(0, 500);
+        throw error; // Re-throw to maintain existing error handling
+      }
+
       await this.prisma.fusionStandardReceipt.create({
         data: {
-          status: 'SUCCESS',
+          status: srStatus,
+          message: srErrorMessage,
           requestDate: new Date(),
           currencyCode: sr.currencyCode,
           receiptDate: sr.saleDate,
           glDate: sr.saleDate,
           receiptMethodId: numberToBigInt(sr.receiptMethodId),
-          receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
+          receiptNumber: srResult?.receiptNumber ?? sr.receiptNumber,
           remittanceBankAccId: String(sr.remittanceBankAccountId),
           customerId: sr.customerId,
           accountValue: sr.accountValue,
@@ -190,17 +231,32 @@ export class VendHqToOracleSyncService {
 
     // ── Misc Receipts ────────────────────────────────────────────────────────
     for (const mr of miscReceipts) {
-      const mrResult = await this.soapClient.createMiscellaneousReceipt(mr);
+      let mrStatus = 'SUCCESS';
+      let mrErrorMessage: string | null = null;
+      let mrResult: any;
+
+      try {
+        mrResult = await this.soapClient.createMiscellaneousReceipt(mr);
+      } catch (error) {
+        mrStatus = 'ERROR';
+        mrErrorMessage =
+          error instanceof Error
+            ? error.message.substring(0, 500)
+            : String(error).substring(0, 500);
+        throw error; // Re-throw to maintain existing error handling
+      }
+
       await this.prisma.fusionMiscReceipt.create({
         data: {
-          status: 'SUCCESS',
+          status: mrStatus,
+          message: mrErrorMessage,
           requestDate: new Date(),
           currencyCode: mr.currencyCode,
           glDate: mr.saleDate,
           receiptDate: mr.saleDate,
           receiptMethodId: numberToBigInt(mr.receiptMethodId),
           receiptMethodName: mr.receiptMethodName,
-          receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
+          receiptNumber: mrResult?.receiptNumber ?? mr.receiptNumber,
           bankAccNumber: mr.bankAccountName,
           recActivityName: mr.receivableActivityName,
           receiptAmount: mr.receiptAmount,
@@ -212,15 +268,31 @@ export class VendHqToOracleSyncService {
 
     // ── Apply Receipts ───────────────────────────────────────────────────────
     for (const ar of applyReceipts) {
-      const arResult = await this.soapClient.createApplyReceipt(ar);
+      let arStatus = 'SUCCESS';
+      let arErrorMessage: string | null = null;
+      let arResult: any;
+
+      try {
+        arResult = await this.soapClient.createApplyReceipt(ar);
+      } catch (error) {
+        arStatus = 'ERROR';
+        arErrorMessage =
+          error instanceof Error
+            ? error.message.substring(0, 500)
+            : String(error).substring(0, 500);
+        throw error; // Re-throw to maintain existing error handling
+      }
+
       await this.prisma.fusionApplyReceipt.create({
         data: {
-          status: 'SUCCESS',
+          status: arStatus,
+          message: arErrorMessage,
           requestDate: new Date(),
           accountingDate: ar.receiptDate,
           applicationDate: ar.receiptDate,
-          txnNumber: arResult.customerTrxId ?? ar.transactionNumber,
-          receiptNumber: arResult.receiptNumber ?? ar.receiptNumber,
+          txnNumber: arResult?.customerTrxId ?? ar.transactionNumber,
+          receiptNumber: arResult?.receiptNumber ?? ar.receiptNumber,
+          amountApplied: ar.amountApplied,
           currencyCode: ar.receiptCurrency,
           txnSource: ar.transactionSource,
           region,
@@ -230,10 +302,29 @@ export class VendHqToOracleSyncService {
 
     // ── Journal Entries ──────────────────────────────────────────────────────
     for (const jh of journalHeaders) {
-      const jeHeaderId = await this.soapClient.importJournalEntry(jh);
+      let jeStatus = 'SUCCESS';
+      let jeErrorMessage: string | null = null;
+      let jeHeaderId: number | null = null;
+
+      try {
+        jeHeaderId = await this.soapClient.importJournalEntry(jh);
+        if (jeHeaderId == null) {
+          jeStatus = 'ERROR';
+          jeErrorMessage = 'Journal entry import returned null header ID';
+        }
+      } catch (error) {
+        jeStatus = 'ERROR';
+        jeErrorMessage =
+          error instanceof Error
+            ? error.message.substring(0, 500)
+            : String(error).substring(0, 500);
+        throw error; // Re-throw to maintain existing error handling
+      }
+
       const jhAudit = await this.prisma.fusionJournalHeader.create({
         data: {
-          status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
+          status: jeStatus,
+          message: jeErrorMessage,
           requestDate: new Date(),
           region,
           jeHeaderId: jeHeaderId ?? null,
@@ -251,7 +342,8 @@ export class VendHqToOracleSyncService {
 
       await this.prisma.fusionJournalLine.createMany({
         data: jh.journalLines.map((jl, idx) => ({
-          status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
+          status: jeStatus,
+          message: jeErrorMessage,
           requestDate: new Date(),
           region,
           jeHeaderId: jeHeaderId ?? null,
