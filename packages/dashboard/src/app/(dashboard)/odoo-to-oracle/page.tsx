@@ -35,21 +35,32 @@ const SCOPE_OPTIONS = [
 
 type ScopeType = (typeof SCOPE_OPTIONS)[number]['value'];
 
-function StepBadge({ step, label, active }: { step: number; label: string; active: boolean }) {
+function StepBadge({ step, label, active, completed }: { step: number; label: string; active: boolean; completed?: boolean }) {
   return (
     <div
-      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${
-        active ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+        active 
+          ? 'bg-indigo-600 text-white shadow-md' 
+          : completed
+          ? 'bg-green-100 text-green-800 border border-green-300'
+          : 'bg-slate-100 text-slate-500'
       }`}
     >
       <span
         className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-          active ? 'bg-white/20' : 'bg-slate-200'
+          active 
+            ? 'bg-white/20' 
+            : completed
+            ? 'bg-green-200'
+            : 'bg-slate-200'
         }`}
       >
-        {step}
+        {completed ? '✓' : step}
       </span>
       {label}
+      {active && (
+        <Loader2 className="h-3 w-3 animate-spin ml-1" />
+      )}
     </div>
   );
 }
@@ -389,9 +400,19 @@ export default function OdooToOraclePage() {
           </p>
         </div>
         <div className="ml-auto hidden items-center gap-2 lg:flex">
-          <StepBadge step={1} label="Fetch from Odoo" active={fetchMutation.isPending} />
+          <StepBadge 
+            step={1} 
+            label="Fetch from Odoo" 
+            active={fetchMutation.isPending}
+            completed={!!fetchResult && !fetchMutation.isPending}
+          />
           <ArrowRight className="h-4 w-4 text-slate-300" />
-          <StepBadge step={2} label="Push to Oracle" active={syncMutation.isPending} />
+          <StepBadge 
+            step={2} 
+            label="Push to Oracle" 
+            active={syncMutation.isPending || (!!polledJob && !TERMINAL_STATUSES.has(polledJob.status))}
+            completed={!!polledJob && TERMINAL_STATUSES.has(polledJob.status)}
+          />
         </div>
       </div>
 
@@ -420,7 +441,8 @@ export default function OdooToOraclePage() {
                   creates a sync job and pushes to Oracle.
                 </li>
                 <li>
-                  Monitor the sync job progress below in real time (updates every 3 seconds).
+                  Monitor the <strong>visual progress bars</strong> below in real time showing percentage
+                  completion for each step and detailed success/failed/skipped breakdowns.
                 </li>
               </ol>
             </div>
