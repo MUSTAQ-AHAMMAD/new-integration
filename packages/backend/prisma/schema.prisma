@@ -754,6 +754,7 @@ model FusionInvoiceHeader {
   currencyCode     String    @default("AED")
   txnNumber        Int?
   customerTxnId    Int?
+  totalAmount      Decimal?  @db.Decimal(15, 2)
   region           String
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -861,6 +862,7 @@ model FusionApplyReceipt {
   applicationDate DateTime?
   txnNumber       String?
   receiptNumber   String?
+  amountApplied   Decimal?  @db.Decimal(15, 2)
   currencyCode    String    @default("AED")
   region          String
   integMode       String?
