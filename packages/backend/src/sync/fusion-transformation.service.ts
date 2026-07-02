@@ -137,7 +137,9 @@ export class FusionTransformationService {
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: salesMeta.billToName,
       billToLocation: salesMeta.siteNumber ?? '',
-      billToAccountNumber: salesMeta.billToAccount, // Can be BigInt or number, will be converted for storage
+      billToAccountNumber: String(
+        bigIntToNumber(salesMeta.billToAccount, 'billToAccount'),
+      ), // Convert BigInt to string
       businessUnit: salesMeta.businessUnit,
       outletName: sale.outletName ?? undefined,
       saleDate,
