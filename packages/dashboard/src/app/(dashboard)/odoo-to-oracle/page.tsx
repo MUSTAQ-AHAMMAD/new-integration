@@ -19,7 +19,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { formatDate, getStatusColor } from '@/lib/utils';
+import { getSocket } from '@/lib/websocket';
 
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED', 'PARTIAL']);
 
@@ -33,68 +35,114 @@ const SCOPE_OPTIONS = [
 
 type ScopeType = (typeof SCOPE_OPTIONS)[number]['value'];
 
-function StepBadge({ step, label, active }: { step: number; label: string; active: boolean }) {
+function StepBadge({ step, label, active, completed }: { step: number; label: string; active: boolean; completed?: boolean }) {
   return (
     <div
-      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium ${
-        active ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+        active 
+          ? 'bg-indigo-600 text-white shadow-md' 
+          : completed
+          ? 'bg-green-100 text-green-800 border border-green-300'
+          : 'bg-slate-100 text-slate-500'
       }`}
     >
       <span
         className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-          active ? 'bg-white/20' : 'bg-slate-200'
+          active 
+            ? 'bg-white/20' 
+            : completed
+            ? 'bg-green-200'
+            : 'bg-slate-200'
         }`}
       >
-        {step}
+        {completed ? '✓' : step}
       </span>
       {label}
+      {active && (
+        <Loader2 className="h-3 w-3 animate-spin ml-1" />
+      )}
     </div>
   );
 }
 
 function FetchResultCard({
   result,
+  isLoading,
 }: {
-  result: { fetched: number; ingested: number; skipped: number; errors: string[] };
+  result: { fetched: number; ingested: number; skipped: number; errors: string[] } | null;
+  isLoading: boolean;
 }) {
+  if (!result && !isLoading) return null;
+
+  const isComplete = !isLoading && result;
+  const progress = isLoading ? 50 : 100; // Simple progress indicator
+
   return (
-    <Card className="border-green-200 bg-green-50/50">
+    <Card className={isComplete ? "border-green-200 bg-green-50/50" : "border-blue-200 bg-blue-50/50"}>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold text-green-800">
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
-          Step 1 Complete — Fetched from Odoo
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          {isComplete ? (
+            <>
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <span className="text-green-800">Step 1 Complete — Fetched from Odoo</span>
+            </>
+          ) : (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              <span className="text-blue-800">Step 1 In Progress — Fetching from Odoo</span>
+            </>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="rounded-lg bg-white p-3 shadow-sm">
-            <p className="text-xl font-bold text-slate-900">{result.fetched}</p>
-            <p className="text-xs text-slate-500">Orders Fetched</p>
+        {/* Progress Bar */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-600 font-medium">Progress</span>
+            <span className="text-slate-900 font-bold">{progress}%</span>
           </div>
-          <div className="rounded-lg bg-white p-3 shadow-sm">
-            <p className="text-xl font-bold text-green-700">{result.ingested}</p>
-            <p className="text-xs text-slate-500">Ingested</p>
-          </div>
-          <div className="rounded-lg bg-white p-3 shadow-sm">
-            <p className="text-xl font-bold text-yellow-700">{result.skipped}</p>
-            <p className="text-xs text-slate-500">Skipped</p>
-          </div>
+          <Progress value={progress} className="h-2" />
         </div>
-        {result.errors.length > 0 && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-            <p className="mb-1 text-xs font-semibold text-red-700">
-              Errors ({result.errors.length})
-            </p>
-            <ul className="space-y-0.5 text-xs text-red-600">
-              {result.errors.slice(0, 8).map((err, i) => (
-                <li key={i} className="truncate">
-                  • {err}
-                </li>
-              ))}
-              {result.errors.length > 8 && (
-                <li className="text-red-500">…and {result.errors.length - 8} more</li>
-              )}
-            </ul>
+
+        {result && (
+          <>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-lg bg-white p-3 shadow-sm">
+                <p className="text-xl font-bold text-slate-900">{result.fetched}</p>
+                <p className="text-xs text-slate-500">Orders Fetched</p>
+              </div>
+              <div className="rounded-lg bg-white p-3 shadow-sm">
+                <p className="text-xl font-bold text-green-700">{result.ingested}</p>
+                <p className="text-xs text-slate-500">Ingested</p>
+              </div>
+              <div className="rounded-lg bg-white p-3 shadow-sm">
+                <p className="text-xl font-bold text-yellow-700">{result.skipped}</p>
+                <p className="text-xs text-slate-500">Skipped</p>
+              </div>
+            </div>
+            {result.errors.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="mb-1 text-xs font-semibold text-red-700">
+                  Errors ({result.errors.length})
+                </p>
+                <ul className="space-y-0.5 text-xs text-red-600">
+                  {result.errors.slice(0, 8).map((err, i) => (
+                    <li key={i} className="truncate">
+                      • {err}
+                    </li>
+                  ))}
+                  {result.errors.length > 8 && (
+                    <li className="text-red-500">…and {result.errors.length - 8} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+        
+        {isLoading && !result && (
+          <div className="text-center py-4">
+            <p className="text-sm text-slate-600">Fetching orders from Odoo...</p>
           </div>
         )}
       </CardContent>
@@ -104,6 +152,14 @@ function FetchResultCard({
 
 function SyncJobCard({ job }: { job: SyncJob }) {
   const isRunning = !TERMINAL_STATUSES.has(job.status);
+  const progress = job.totalRecords && job.totalRecords > 0 
+    ? Math.round((job.processedRecords / job.totalRecords) * 100)
+    : 0;
+  
+  const successRate = job.processedRecords > 0
+    ? Math.round((job.successCount / job.processedRecords) * 100)
+    : 0;
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -111,6 +167,19 @@ function SyncJobCard({ job }: { job: SyncJob }) {
         {isRunning && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
       </CardHeader>
       <CardContent>
+        {/* Overall Progress Bar */}
+        <div className="mb-4 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-gray-600 font-medium">Overall Progress</span>
+            <span className="text-gray-900 font-bold">{progress}%</span>
+          </div>
+          <Progress value={progress} className="h-3" />
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span>{job.processedRecords} of {job.totalRecords || '—'} processed</span>
+            <span className="text-green-600 font-medium">{successRate}% success</span>
+          </div>
+        </div>
+
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
             <dt className="text-gray-500">Job ID</dt>
@@ -126,29 +195,54 @@ function SyncJobCard({ job }: { job: SyncJob }) {
               </span>
             </dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-gray-500">Records processed</dt>
-            <dd className="font-medium text-gray-800">
-              {job.processedRecords} / {job.totalRecords || '—'}
-            </dd>
+          
+          {/* Detailed Counters */}
+          <div className="pt-2 border-t space-y-2">
+            <div className="flex justify-between items-center">
+              <dt className="flex items-center gap-1 text-gray-500">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> Succeeded
+              </dt>
+              <dd className="font-medium text-green-700">{job.successCount}</dd>
+            </div>
+            {job.successCount > 0 && (
+              <div className="ml-5">
+                <Progress 
+                  value={job.totalRecords ? (job.successCount / job.totalRecords) * 100 : 0} 
+                  className="h-1.5 bg-green-100"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-between items-center">
+              <dt className="flex items-center gap-1 text-gray-500">
+                <XCircle className="h-3.5 w-3.5 text-red-500" /> Failed
+              </dt>
+              <dd className="font-medium text-red-700">{job.failedCount}</dd>
+            </div>
+            {job.failedCount > 0 && (
+              <div className="ml-5">
+                <Progress 
+                  value={job.totalRecords ? (job.failedCount / job.totalRecords) * 100 : 0} 
+                  className="h-1.5 bg-red-100"
+                />
+              </div>
+            )}
+
+            <div className="flex justify-between items-center">
+              <dt className="text-gray-500">Skipped</dt>
+              <dd className="font-medium text-yellow-700">{job.skippedCount}</dd>
+            </div>
+            {job.skippedCount > 0 && (
+              <div className="ml-5">
+                <Progress 
+                  value={job.totalRecords ? (job.skippedCount / job.totalRecords) * 100 : 0} 
+                  className="h-1.5 bg-yellow-100"
+                />
+              </div>
+            )}
           </div>
-          <div className="flex justify-between">
-            <dt className="flex items-center gap-1 text-gray-500">
-              <CheckCircle2 className="h-3.5 w-3.5 text-green-500" /> Succeeded
-            </dt>
-            <dd className="font-medium text-green-700">{job.successCount}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="flex items-center gap-1 text-gray-500">
-              <XCircle className="h-3.5 w-3.5 text-red-500" /> Failed
-            </dt>
-            <dd className="font-medium text-red-700">{job.failedCount}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-gray-500">Skipped</dt>
-            <dd className="font-medium text-yellow-700">{job.skippedCount}</dd>
-          </div>
-          <div className="flex justify-between">
+
+          <div className="flex justify-between pt-2 border-t">
             <dt className="text-gray-500">Created at</dt>
             <dd className="text-gray-400">{formatDate(job.createdAt)}</dd>
           </div>
@@ -201,6 +295,26 @@ export default function OdooToOraclePage() {
 
   const needsBranch = scopeType === 'BRANCH' || scopeType === 'BRANCH_DATE_RANGE';
   const needsDates = scopeType === 'DATE_RANGE' || scopeType === 'BRANCH_DATE_RANGE';
+
+  // ── WebSocket for real-time sync job updates ──────────────────────
+  useEffect(() => {
+    if (!activeJobId) return;
+
+    const socket = getSocket();
+    
+    const handleSyncJobUpdate = (data: { jobId: string; status: string; progress?: number }) => {
+      if (data.jobId === activeJobId) {
+        // Immediately refetch the job to show updated progress
+        qc.invalidateQueries({ queryKey: ['sync-job-poll', activeJobId] });
+      }
+    };
+
+    socket.on('syncJobUpdate', handleSyncJobUpdate);
+
+    return () => {
+      socket.off('syncJobUpdate', handleSyncJobUpdate);
+    };
+  }, [activeJobId, qc]);
 
   // ── Load available Odoo credentials ──────────────────────────────
   const { data: credentials = [], isLoading: loadingCreds } = useQuery({
@@ -286,9 +400,19 @@ export default function OdooToOraclePage() {
           </p>
         </div>
         <div className="ml-auto hidden items-center gap-2 lg:flex">
-          <StepBadge step={1} label="Fetch from Odoo" active={fetchMutation.isPending} />
+          <StepBadge 
+            step={1} 
+            label="Fetch from Odoo" 
+            active={fetchMutation.isPending}
+            completed={!!fetchResult && !fetchMutation.isPending}
+          />
           <ArrowRight className="h-4 w-4 text-slate-300" />
-          <StepBadge step={2} label="Push to Oracle" active={syncMutation.isPending} />
+          <StepBadge 
+            step={2} 
+            label="Push to Oracle" 
+            active={syncMutation.isPending || (!!polledJob && !TERMINAL_STATUSES.has(polledJob.status))}
+            completed={!!polledJob && TERMINAL_STATUSES.has(polledJob.status)}
+          />
         </div>
       </div>
 
@@ -317,7 +441,8 @@ export default function OdooToOraclePage() {
                   creates a sync job and pushes to Oracle.
                 </li>
                 <li>
-                  Monitor the sync job progress below in real time (updates every 3 seconds).
+                  Monitor the <strong>visual progress bars</strong> below in real time showing percentage
+                  completion for each step and detailed success/failed/skipped breakdowns.
                 </li>
               </ol>
             </div>
@@ -587,7 +712,9 @@ export default function OdooToOraclePage() {
       </div>
 
       {/* Step 1 result */}
-      {fetchResult && <FetchResultCard result={fetchResult} />}
+      {(fetchMutation.isPending || fetchResult) && (
+        <FetchResultCard result={fetchResult} isLoading={fetchMutation.isPending} />
+      )}
 
       {/* Step 2 sync job progress */}
       {polledJob && <SyncJobCard job={polledJob} />}
