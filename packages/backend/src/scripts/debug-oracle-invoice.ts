@@ -564,8 +564,8 @@ class OracleInvoiceDebugger {
     console.log(`   WHERE "branchCode" = '${order.branchCode}';\n');
 
     console.log('6️⃣  Retry the order after fixing:');
-    console.log(`   curl -X POST http://localhost:3000/sync/orders/retry`);
-    console.log(`   -H "Content-Type: application/json"`);
+    console.log(`   curl -X POST http://localhost:3000/sync/orders/retry \\`);
+    console.log(`   -H "Content-Type: application/json" \\`);
     console.log(`   -d '{"odooOrderId":"${order.odooOrderId}","branchCode":"${order.branchCode}"}'`);
   }
 }
@@ -596,14 +596,14 @@ async function main() {
   const soapClient = app.get(OracleSoapClient);
   const storeConfigService = app.get(StoreConfigService);
 
-  const debugger = new OracleInvoiceDebugger(
+  const invoiceDebugger = new OracleInvoiceDebugger(
     prisma,
     transformation,
     soapClient,
     storeConfigService,
   );
 
-  await debugger.run(options);
+  await invoiceDebugger.run(options);
   await app.close();
 }
 
