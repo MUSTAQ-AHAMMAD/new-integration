@@ -41,13 +41,13 @@ export class SyncControlService implements OnModuleInit {
       {
         serviceName: 'vendhq-backup',
         displayName: 'VendHQ Backup Service',
-        description: 'Fetches sales from VendHQ API every 10 minutes',
+        description: 'Fetches sales from VendHQ API every 10 minutes (per region)',
         enabled: true,
       },
       {
         serviceName: 'vendhq-to-oracle',
         displayName: 'VendHQ→Oracle Sync Service',
-        description: 'Syncs VendHQ sales to Oracle every 10 minutes',
+        description: 'Syncs VendHQ sales to Oracle every 10 minutes (per region)',
         enabled: true,
       },
       {
@@ -59,7 +59,7 @@ export class SyncControlService implements OnModuleInit {
       {
         serviceName: 'item-sync',
         displayName: 'Item Sync Service',
-        description: 'Syncs items from Oracle to VendHQ daily',
+        description: 'Syncs items from Oracle to VendHQ daily (per region)',
         enabled: true,
       },
       {
@@ -72,15 +72,20 @@ export class SyncControlService implements OnModuleInit {
         serviceName: 'fusion-inv-to-vendhq',
         displayName: 'Fusion Inventory to VendHQ',
         description:
-          'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes',
+          'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes (per region)',
         enabled: true,
       },
     ];
 
     for (const service of services) {
       await this.prisma.syncControl.upsert({
-        where: { serviceName: service.serviceName },
-        create: service,
+        where: { 
+          serviceName_region: {
+            serviceName: service.serviceName,
+            region: null, // Global service
+          },
+        },
+        create: { ...service, region: null },
         update: {
           displayName: service.displayName,
           description: service.description,
@@ -92,9 +97,14 @@ export class SyncControlService implements OnModuleInit {
   /**
    * Check if a sync service is enabled
    */
-  async isEnabled(serviceName: string): Promise<boolean> {
+  async isEnabled(serviceName: string, region?: string): Promise<boolean> {
     const control = await this.prisma.syncControl.findUnique({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
     });
 
     // Default to true if not found (backward compatibility)
@@ -104,9 +114,14 @@ export class SyncControlService implements OnModuleInit {
   /**
    * Mark a sync service as running
    */
-  async markRunning(serviceName: string): Promise<void> {
+  async markRunning(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
       data: {
         isRunning: true,
         lastRunAt: new Date(),
@@ -121,9 +136,15 @@ export class SyncControlService implements OnModuleInit {
   async markStopped(
     serviceName: string,
     status: 'success' | 'error',
+    region?: string,
   ): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
       data: {
         isRunning: false,
         lastStatus: status,
@@ -135,40 +156,58 @@ export class SyncControlService implements OnModuleInit {
   /**
    * Enable a sync service
    */
-  async enable(serviceName: string): Promise<void> {
+  async enable(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
       data: { enabled: true },
     });
-    this.logger.log(`Sync service "${serviceName}" has been ENABLED`);
+    const regionLabel = region ? ` (region=${region})` : '';
+    this.logger.log(`Sync service "${serviceName}"${regionLabel} has been ENABLED`);
   }
 
   /**
    * Disable a sync service
    */
-  async disable(serviceName: string): Promise<void> {
+  async disable(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
       data: { enabled: false },
     });
-    this.logger.warn(`Sync service "${serviceName}" has been DISABLED`);
+    const regionLabel = region ? ` (region=${region})` : '';
+    this.logger.warn(`Sync service "${serviceName}"${regionLabel} has been DISABLED`);
   }
 
   /**
-   * Get all sync control records
+   * Get all sync control records, optionally filtered by region
    */
-  async listAll() {
+  async listAll(region?: string) {
     return this.prisma.syncControl.findMany({
-      orderBy: { displayName: 'asc' },
+      where: region ? { region } : {},
+      orderBy: [{ region: 'asc' }, { displayName: 'asc' }],
     });
   }
 
   /**
    * Get single sync control record
    */
-  async getOne(serviceName: string) {
+  async getOne(serviceName: string, region?: string) {
     return this.prisma.syncControl.findUnique({
-      where: { serviceName },
+      where: { 
+        serviceName_region: {
+          serviceName,
+          region: region ?? null,
+        },
+      },
     });
   }
 }

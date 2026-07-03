@@ -2,19 +2,21 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { useRegion } from '@/providers/region-provider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PageHeader } from '@/components/ui/page-header';
 import { ErrorState } from '@/components/ui/error-state';
-import { Play, Pause, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Play, Pause, RefreshCw, CheckCircle, XCircle, Clock, Globe } from 'lucide-react';
 
 interface SyncControl {
   id: string;
   serviceName: string;
   displayName: string;
   description: string | null;
+  region: string | null;
   enabled: boolean;
   isRunning: boolean;
   lastRunAt: string | null;
@@ -25,14 +27,16 @@ interface SyncControl {
   updatedAt: string;
 }
 
-async function fetchSyncControls(): Promise<SyncControl[]> {
-  const response = await fetch('/api/admin/sync-control');
+async function fetchSyncControls(region?: string | null): Promise<SyncControl[]> {
+  const query = region ? `?region=${encodeURIComponent(region)}` : '';
+  const response = await fetch(`/api/v1/admin/sync-control${query}`);
   if (!response.ok) throw new Error('Failed to fetch sync controls');
   return response.json();
 }
 
-async function toggleService(serviceName: string) {
-  const response = await fetch(`/api/admin/sync-control/${serviceName}/toggle`, {
+async function toggleService(serviceName: string, region?: string | null) {
+  const query = region ? `?region=${encodeURIComponent(region)}` : '';
+  const response = await fetch(`/api/v1/admin/sync-control/${serviceName}/toggle${query}`, {
     method: 'POST',
   });
   if (!response.ok) throw new Error('Failed to toggle sync service');
@@ -61,29 +65,31 @@ function formatRelativeTime(date: string | null): string {
 
 export default function SyncControlPage() {
   const queryClient = useQueryClient();
+  const { selectedRegion } = useRegion();
   const [toggleInProgress, setToggleInProgress] = useState<string | null>(null);
 
   const { data: controls, isLoading, error } = useQuery<SyncControl[]>({
-    queryKey: ['sync-controls'],
-    queryFn: fetchSyncControls,
+    queryKey: ['sync-controls', selectedRegion],
+    queryFn: () => fetchSyncControls(selectedRegion),
     refetchInterval: 5000,
   });
 
   const toggleMutation = useMutation({
-    mutationFn: toggleService,
-    onMutate: (serviceName) => {
+    mutationFn: ({ serviceName, region }: { serviceName: string; region?: string | null }) => 
+      toggleService(serviceName, region),
+    onMutate: ({ serviceName }) => {
       setToggleInProgress(serviceName);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sync-controls'] });
+      queryClient.invalidateQueries({ queryKey: ['sync-controls', selectedRegion] });
     },
     onSettled: () => {
       setToggleInProgress(null);
     },
   });
 
-  const handleToggle = (serviceName: string) => {
-    toggleMutation.mutate(serviceName);
+  const handleToggle = (serviceName: string, region?: string | null) => {
+    toggleMutation.mutate({ serviceName, region });
   };
 
   if (error) {
@@ -94,8 +100,22 @@ export default function SyncControlPage() {
     <div className="space-y-6">
       <PageHeader
         title="Sync Control Center"
-        subtitle="Monitor and control all background sync operations"
+        subtitle={selectedRegion 
+          ? `Monitor and control background sync operations for region: ${selectedRegion}` 
+          : "Monitor and control all background sync operations across all regions"}
       />
+
+      {selectedRegion && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            <span>Filtered to region: <strong>{selectedRegion}</strong></span>
+            <span className="text-xs text-indigo-600">
+              (Use the region selector in the header to view all regions)
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -162,6 +182,7 @@ export default function SyncControlPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Service</TableHead>
+                  <TableHead>Region</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Last Run</TableHead>
                   <TableHead>Last Status</TableHead>
@@ -179,6 +200,17 @@ export default function SyncControlPage() {
                           {control.description}
                         </div>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {control.region ? (
+                        <Badge variant="outline" className="font-mono">
+                          {control.region}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">
+                          Global
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -234,7 +266,7 @@ export default function SyncControlPage() {
                       <Button
                         size="sm"
                         variant={control.enabled ? 'destructive' : 'default'}
-                        onClick={() => handleToggle(control.serviceName)}
+                        onClick={() => handleToggle(control.serviceName, control.region)}
                         disabled={toggleInProgress === control.serviceName}
                       >
                         {control.enabled ? (
