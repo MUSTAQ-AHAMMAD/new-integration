@@ -162,6 +162,28 @@ export class StoreConfigService {
       where: { region },
     });
 
+    // Try to get bank/cash account IDs from VendHqRegister for this region
+    const register = await this.prisma.vendHqRegister.findFirst({
+      where: { 
+        region,
+        bankAccountId: { not: null },
+        cashAccountId: { not: null },
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const bankAccountId = register?.bankAccountId ? Number(register.bankAccountId) : undefined;
+    const cashAccountId = register?.cashAccountId ? Number(register.cashAccountId) : undefined;
+
+    const validationErrors: string[] = [];
+    if (!bankAccountId || !cashAccountId) {
+      validationErrors.push('Bank or cash account IDs missing - receipt creation will fail');
+    }
+    if (!fusionMetadata) {
+      validationErrors.push('No FusionSalesMetadata found for region - using defaults');
+    }
+
     // Create the configuration
     const config = await this.prisma.storeConfiguration.create({
       data: {
@@ -172,11 +194,11 @@ export class StoreConfigService {
         oracleBusinessUnit: fusionMetadata?.businessUnit || businessUnitMap?.businessUnitName || 'DEFAULT_BU',
         billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
         billToLocation: fusionMetadata?.siteNumber || undefined,
-        bankAccountName: `BANK_${region}`,
-        cashAccountName: `CASH_${region}`,
-        // Try to populate account IDs if available
-        bankAccountId: fusionMetadata?.distributionAccId ? Number(fusionMetadata.distributionAccId) : undefined,
-        cashAccountId: undefined, // Will need to be populated manually or from other source
+        bankAccountName: register?.bankAccount || `BANK_${region}`,
+        cashAccountName: register?.cashAccount || `CASH_${region}`,
+        // Populate account IDs from register if available
+        bankAccountId,
+        cashAccountId,
         paymentTermsName: 'IMMEDIATE',
         taxClassificationCode: undefined,
         transactionSource: fusionMetadata?.txnSource || 'Manual',
@@ -184,8 +206,8 @@ export class StoreConfigService {
         invoiceCurrencyCode: 'AED',
         region,
         isActive: true,
-        validationStatus: ValidationStatus.PARTIAL,
-        validationErrors: ['Auto-created config - requires manual validation of bank/cash account IDs'],
+        validationStatus: bankAccountId && cashAccountId ? ValidationStatus.PENDING : ValidationStatus.PARTIAL,
+        validationErrors: validationErrors.length > 0 ? validationErrors : undefined,
         createdBy: 'SYSTEM_AUTO_CREATE',
       },
     });
@@ -292,19 +314,33 @@ export class StoreConfigService {
 
   async validateConfig(
     branchCode: string,
-  ): Promise<{ isValid: boolean; errors: string[] }> {
+  ): Promise<{ isValid: boolean; errors: string[]; warnings: string[] }> {
     const config = await this.prisma.storeConfiguration.findUnique({
       where: { branchCode },
     });
-    if (!config) return { isValid: false, errors: ['Store config not found'] };
+    if (!config) return { isValid: false, errors: ['Store config not found'], warnings: [] };
 
     const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    // Critical fields - will block sync
     if (!config.billToSiteName) errors.push('billToSiteName is required');
     if (!config.bankAccountName) errors.push('bankAccountName is required');
     if (!config.cashAccountName) errors.push('cashAccountName is required');
     if (!config.paymentTermsName) errors.push('paymentTermsName is required');
-    if (!config.oracleBusinessUnit)
-      errors.push('oracleBusinessUnit is required');
+    if (!config.oracleBusinessUnit) errors.push('oracleBusinessUnit is required');
+    
+    // Account ID validation - critical for receipt creation
+    if (config.bankAccountId === null) {
+      errors.push('bankAccountId is required for receipt creation - receipts will be skipped');
+    }
+    if (config.cashAccountId === null) {
+      errors.push('cashAccountId is required for receipt creation - cash receipts will be skipped');
+    }
+    
+    // Warning fields - won't block sync but should be reviewed
+    if (!config.region) warnings.push('region should be set for proper configuration matching');
+    if (!config.taxClassificationCode) warnings.push('taxClassificationCode not set - may affect tax calculation');
 
     const status =
       errors.length === 0
@@ -330,7 +366,7 @@ export class StoreConfigService {
       });
     }
 
-    return { isValid: errors.length === 0, errors };
+    return { isValid: errors.length === 0, errors, warnings };
   }
 
   async listStores(activeOnly = false) {
@@ -373,6 +409,138 @@ export class StoreConfigService {
       create: { branchCode, ...prismaData },
       update: { ...prismaData, version: { increment: 1 } },
     });
+  }
+
+  /**
+   * Populate missing bank/cash account IDs for store configurations
+   * Uses VendHqRegister data as the source of truth for account IDs by region
+   * 
+   * @returns Summary of updated configurations
+   */
+  async populateBankCashAccountIds(): Promise<{
+    totalStores: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+  }> {
+    this.logger.log('Starting bank/cash account ID population for store configurations');
+
+    const errors: string[] = [];
+    let updated = 0;
+    let skipped = 0;
+
+    // Get all store configurations that need account IDs
+    const stores = await this.prisma.storeConfiguration.findMany({
+      where: {
+        OR: [
+          { bankAccountId: null },
+          { cashAccountId: null },
+        ],
+      },
+      orderBy: { branchCode: 'asc' },
+    });
+
+    this.logger.log(`Found ${stores.length} stores with missing account IDs`);
+
+    // Get VendHqRegister data by region to use as reference
+    const registersByRegion = await this.prisma.$queryRaw<
+      Array<{
+        region: string;
+        bankAccountId: bigint | null;
+        cashAccountId: bigint | null;
+        sampleRegisterName: string;
+      }>
+    >`
+      SELECT DISTINCT ON (region)
+        region,
+        "bankAccountId",
+        "cashAccountId",
+        "registerName" as "sampleRegisterName"
+      FROM "VendHqRegister"
+      WHERE "bankAccountId" IS NOT NULL
+        AND "cashAccountId" IS NOT NULL
+        AND "deletedAt" IS NULL
+      ORDER BY region, "createdAt" DESC
+    `;
+
+    this.logger.log(`Found ${registersByRegion.length} regions with account IDs`);
+
+    // Create a map of region -> account IDs
+    const regionAccountMap = new Map<string, { bankAccountId: number; cashAccountId: number }>();
+    for (const reg of registersByRegion) {
+      if (reg.bankAccountId && reg.cashAccountId) {
+        regionAccountMap.set(reg.region, {
+          bankAccountId: Number(reg.bankAccountId),
+          cashAccountId: Number(reg.cashAccountId),
+        });
+        this.logger.log(
+          `Region ${reg.region}: bank=${reg.bankAccountId}, cash=${reg.cashAccountId} (from ${reg.sampleRegisterName})`
+        );
+      }
+    }
+
+    // Update each store configuration
+    for (const store of stores) {
+      try {
+        const region = store.region || 'AE'; // Default to AE if no region
+        const accountIds = regionAccountMap.get(region);
+
+        if (!accountIds) {
+          const error = `No account IDs found for region ${region} (store ${store.branchCode})`;
+          errors.push(error);
+          this.logger.warn(error);
+          skipped++;
+          continue;
+        }
+
+        const updateData: any = {};
+        if (store.bankAccountId === null) {
+          updateData.bankAccountId = accountIds.bankAccountId;
+        }
+        if (store.cashAccountId === null) {
+          updateData.cashAccountId = accountIds.cashAccountId;
+        }
+
+        if (Object.keys(updateData).length > 0) {
+          await this.prisma.storeConfiguration.update({
+            where: { id: store.id },
+            data: {
+              ...updateData,
+              validationStatus: ValidationStatus.PENDING,
+              updatedAt: new Date(),
+            },
+          });
+
+          this.logger.log(
+            `Updated store ${store.branchCode}: ` +
+            `bank=${updateData.bankAccountId || 'unchanged'}, ` +
+            `cash=${updateData.cashAccountId || 'unchanged'}`
+          );
+          updated++;
+        } else {
+          skipped++;
+        }
+      } catch (err) {
+        const errorMsg = `Failed to update store ${store.branchCode}: ${err instanceof Error ? err.message : String(err)}`;
+        errors.push(errorMsg);
+        this.logger.error(errorMsg);
+        skipped++;
+      }
+    }
+
+    this.logger.log(
+      `Completed: ${updated} updated, ${skipped} skipped out of ${stores.length} stores`
+    );
+
+    // Clear cache after updates
+    this.clearCache();
+
+    return {
+      totalStores: stores.length,
+      updated,
+      skipped,
+      errors,
+    };
   }
 
   /**
@@ -469,6 +637,39 @@ export class StoreConfigService {
       `Found ${fusionMetadata.length} FusionSalesMetadata records`,
     );
 
+    // ── Step 4.5: Get VendHqRegister data by region for account IDs ─────────
+    const registersByRegion = await this.prisma.$queryRaw<
+      Array<{
+        region: string;
+        bankAccountId: bigint | null;
+        cashAccountId: bigint | null;
+      }>
+    >`
+      SELECT DISTINCT ON (region)
+        region,
+        "bankAccountId",
+        "cashAccountId"
+      FROM "VendHqRegister"
+      WHERE "bankAccountId" IS NOT NULL
+        AND "cashAccountId" IS NOT NULL
+        AND "deletedAt" IS NULL
+      ORDER BY region, "createdAt" DESC
+    `;
+
+    const regionAccountMap = new Map<string, { bankAccountId: number; cashAccountId: number }>();
+    for (const reg of registersByRegion) {
+      if (reg.bankAccountId && reg.cashAccountId) {
+        regionAccountMap.set(reg.region, {
+          bankAccountId: Number(reg.bankAccountId),
+          cashAccountId: Number(reg.cashAccountId),
+        });
+      }
+    }
+
+    this.logger.log(
+      `Found account IDs for ${regionAccountMap.size} regions from VendHqRegister`,
+    );
+
     // ── Step 5: Create StoreConfiguration for each branch ───────────────────
     let created = 0;
     let skipped = 0;
@@ -506,6 +707,9 @@ export class StoreConfigService {
           continue;
         }
 
+        const region = branch.region || metadata.region;
+        const accountIds = regionAccountMap.get(region);
+
         // Create StoreConfiguration
         await this.prisma.storeConfiguration.create({
           data: {
@@ -518,20 +722,23 @@ export class StoreConfigService {
             billToLocation: metadata.siteNumber || undefined,
             bankAccountName: `BANK_${metadata.region}`,
             cashAccountName: `CASH_${metadata.region}`,
+            bankAccountId: accountIds?.bankAccountId,
+            cashAccountId: accountIds?.cashAccountId,
             paymentTermsName: 'IMMEDIATE',
             taxClassificationCode: undefined,
             transactionSource: metadata.txnSource,
             transactionType: metadata.txnType,
             invoiceCurrencyCode: 'AED',
-            region: branch.region || metadata.region,
+            region,
             isActive: true,
-            validationStatus: ValidationStatus.PENDING,
+            validationStatus: accountIds ? ValidationStatus.PENDING : ValidationStatus.PARTIAL,
             createdBy: 'SYSTEM_POPULATE_API',
           },
         });
 
         this.logger.log(
-          `Created StoreConfiguration for branch ${branchCode} (${branch.branchName || 'N/A'})`,
+          `Created StoreConfiguration for branch ${branchCode} (${branch.branchName || 'N/A'})` +
+          (accountIds ? ` with account IDs` : ` without account IDs - needs manual update`),
         );
         created++;
       } catch (err) {

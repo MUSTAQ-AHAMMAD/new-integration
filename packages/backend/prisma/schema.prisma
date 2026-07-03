@@ -279,6 +279,20 @@ enum ValidationStatus {
   PARTIAL
 }
 
+/// Backup snapshots of store configurations for rollback capability
+model ConfigurationBackup {
+  id                String   @id @default(uuid())
+  backupReason      String   // e.g., "pre_batch_update", "manual_backup"
+  backupData        Json     // Array of store configurations
+  affectedBranches  String[] // List of branch codes in this backup
+  recordCount       Int      // Number of configs in backup
+  createdBy         String   @default("SYSTEM")
+  createdAt         DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("ConfigurationBackup")
+}
+
 model FailedTransaction {
   id               String    @id @default(cuid())
   orderSyncQueueId String?

@@ -10,14 +10,19 @@ import {
   Put,
   Query,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { StoreConfigService } from './store-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 
 @ApiTags('store-config')
 @Controller('store-config')
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class StoreConfigController {
   constructor(
     private readonly service: StoreConfigService,
@@ -97,12 +102,74 @@ export class StoreConfigController {
   }
 
   @Post('populate/all-branches')
+  @Roles('ADMIN')
   @ApiOperation({
     summary:
       'Populate StoreConfiguration for all branches (Option B) - creates configs for all branches found in backup tables',
   })
   async populateAllBranches() {
     return this.service.populateAllBranches();
+  }
+
+  @Post('populate/bank-cash-accounts')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary:
+      'Populate missing bank/cash account IDs for all store configurations using VendHqRegister data by region',
+  })
+  async populateBankCashAccounts() {
+    return this.service.populateBankCashAccountIds();
+  }
+
+  @Post('batch/populate-accounts')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Atomically populate bank/cash accounts with backup and rollback support',
+  })
+  async batchPopulateAccounts(
+    @Body() body?: { dryRun?: boolean; autoRollbackOnError?: boolean }
+  ) {
+    // This endpoint uses the BatchOperationsService which will be injected
+    // For now, return a message that it's available
+    return {
+      message: 'This endpoint requires BatchOperationsService to be registered',
+      suggestion: 'Use POST /store-config/populate/bank-cash-accounts for now',
+    };
+  }
+
+  @Post('batch/rollback/:backupId')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Rollback store configurations from a backup',
+  })
+  async rollbackFromBackup(@Param('backupId') backupId: string) {
+    return {
+      message: 'Rollback endpoint - requires BatchOperationsService',
+      backupId,
+    };
+  }
+
+  @Get('batch/backups')
+  @Roles('ADMIN', 'OPERATOR')
+  @ApiOperation({
+    summary: 'List configuration backups',
+  })
+  async listBackups(@Query('limit') limit?: string) {
+    return {
+      message: 'Backups list endpoint - requires BatchOperationsService',
+    };
+  }
+
+  @Post('batch/backup')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Create a manual backup',
+  })
+  async createBackup(@Body() body: { reason: string }) {
+    return {
+      message: 'Create backup endpoint - requires BatchOperationsService',
+      reason: body.reason,
+    };
   }
 
   @Get('health/check')
@@ -159,6 +226,8 @@ export class StoreConfigController {
           hasConfig: true,
           configStatus: config.validationStatus,
           isActive: config.isActive,
+          hasBankAccountId: config.bankAccountId !== null,
+          hasCashAccountId: config.cashAccountId !== null,
           config: {
             branchName: config.branchName,
             region: config.region,
@@ -168,6 +237,8 @@ export class StoreConfigController {
             businessUnit: config.oracleBusinessUnit,
             bankAccount: config.bankAccountName,
             cashAccount: config.cashAccountName,
+            bankAccountId: config.bankAccountId,
+            cashAccountId: config.cashAccountId,
           },
         });
       } catch (error) {
@@ -196,6 +267,15 @@ export class StoreConfigController {
       ).length,
       configsPending: results.filter(
         (r) => r.hasConfig && r.configStatus === 'PENDING',
+      ).length,
+      missingBankAccountId: results.filter(
+        (r) => r.hasConfig && !r.hasBankAccountId,
+      ).length,
+      missingCashAccountId: results.filter(
+        (r) => r.hasConfig && !r.hasCashAccountId,
+      ).length,
+      missingBothAccountIds: results.filter(
+        (r) => r.hasConfig && !r.hasBankAccountId && !r.hasCashAccountId,
       ).length,
     };
 

@@ -24,6 +24,8 @@
     "seed:csv:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts",
     "populate:store-config": "node dist/scripts/populate-store-config.js",
     "populate:store-config:dev": "ts-node -r tsconfig-paths/register src/scripts/populate-store-config.ts",
+    "populate:bank-cash-accounts": "node dist/scripts/populate-bank-cash-accounts.js",
+    "populate:bank-cash-accounts:dev": "ts-node -r tsconfig-paths/register src/scripts/populate-bank-cash-accounts.ts",
     "debug:oracle": "ts-node -r tsconfig-paths/register src/scripts/debug-oracle-invoice.ts",
     "query:failed-orders": "ts-node -r tsconfig-paths/register src/scripts/query-failed-orders.ts"
   },
