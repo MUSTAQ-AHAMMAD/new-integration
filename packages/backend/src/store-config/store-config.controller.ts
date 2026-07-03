@@ -105,6 +105,15 @@ export class StoreConfigController {
     return this.service.populateAllBranches();
   }
 
+  @Post('populate/bank-cash-accounts')
+  @ApiOperation({
+    summary:
+      'Populate missing bank/cash account IDs for all store configurations using VendHqRegister data by region',
+  })
+  async populateBankCashAccounts() {
+    return this.service.populateBankCashAccountIds();
+  }
+
   @Get('health/check')
   @ApiOperation({
     summary: 'Health check - verify store configurations for all branches',
