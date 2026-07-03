@@ -577,7 +577,51 @@ export class OracleSoapClient implements OnModuleInit {
       this.withRetries(async () => {
         this.logger.log(`Creating invoice for ${header.billToCustomerName}...`);
 
+        // ✅ Log complete invoice payload structure before sending
+        this.logger.log(
+          `📤 Oracle Invoice Payload Details:\n` +
+            `  Header:\n` +
+            `    - Business Unit: ${header.businessUnit}\n` +
+            `    - Transaction Source: ${header.transactionSource}\n` +
+            `    - Transaction Type: ${header.transactionType}\n` +
+            `    - Trx Date: ${header.trxDate?.toISOString() || 'N/A'}\n` +
+            `    - GL Date: ${header.saleDate?.toISOString()}\n` +
+            `    - Bill To Customer: ${header.billToCustomerName}\n` +
+            `    - Bill To Account: ${header.billToAccountNumber}\n` +
+            `    - Bill To Location: ${header.billToLocation}\n` +
+            `    - Payment Terms: ${header.paymentTermsName || 'N/A'}\n` +
+            `    - Currency: ${header.invoiceCurrencyCode}\n` +
+            `    - Conversion Rate Type: ${header.conversionRateType}\n` +
+            `    - Conversion Rate: ${header.conversionRate ?? 'N/A'}\n` +
+            `    - Conversion Date: ${header.conversionDate?.toISOString() || 'N/A'}\n` +
+            `    - Bill To Contact: ${header.billToContact || 'N/A'}\n` +
+            `    - Sold To Customer: ${header.soldToCustomerName || 'N/A'}\n` +
+            `    - Purchase Order: ${header.purchaseOrder || 'N/A'}\n` +
+            `  Lines (${header.invoiceLines.length}):\n` +
+            header.invoiceLines
+              .map(
+                (line, idx) =>
+                  `    [${idx + 1}] Line ${line.lineNumber}:\n` +
+                  `        - Memo Line: ${line.memoLineName || 'N/A'}\n` +
+                  `        - Item Number: ${line.itemNumber || 'N/A'}\n` +
+                  `        - Description: ${line.description || 'N/A'}\n` +
+                  `        - Quantity: ${line.quantity} ${line.uomCode || 'Ea'}\n` +
+                  `        - Unit Price: ${line.unitSellingPrice} ${line.currencyCode}\n` +
+                  `        - Tax Classification: ${line.taxClassificationCode || 'N/A'}\n` +
+                  `        - Sales Order: ${line.salesOrder || 'N/A'}\n` +
+                  `        - Sales Order Line: ${line.salesOrderLine || 'N/A'}`,
+              )
+              .join('\n'),
+        );
+
         const body = buildInvoiceSoap(header);
+        
+        // ✅ Log the actual SOAP XML being sent (truncate if too long)
+        const truncatedBody = body.length > 5000 ? body.substring(0, 5000) + '\n... (truncated)' : body;
+        this.logger.debug(
+          `📤 Oracle SOAP XML Payload (${body.length} chars):\n${truncatedBody}`,
+        );
+
         const resp = await this.http.post(
           '/fscmService/RecInvoiceService',
           body,

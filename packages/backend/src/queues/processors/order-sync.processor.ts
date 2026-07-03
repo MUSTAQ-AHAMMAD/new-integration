@@ -402,6 +402,46 @@ export class OrderSyncProcessor {
             `  - Invoice Lines: ${invoiceHeader.invoiceLines.length}`,
         );
 
+        // ✅ Log complete invoice header structure for debugging
+        this.logger.debug(
+          `[${odooOrderId}] 📋 Complete Invoice Header Payload:\n${JSON.stringify(
+            {
+              billToCustomerName: invoiceHeader.billToCustomerName,
+              billToLocation: invoiceHeader.billToLocation,
+              billToAccountNumber: invoiceHeader.billToAccountNumber,
+              businessUnit: invoiceHeader.businessUnit,
+              transactionSource: invoiceHeader.transactionSource,
+              transactionType: invoiceHeader.transactionType,
+              trxDate: invoiceHeader.trxDate?.toISOString(),
+              saleDate: invoiceHeader.saleDate?.toISOString(),
+              invoiceCurrencyCode: invoiceHeader.invoiceCurrencyCode,
+              conversionRateType: invoiceHeader.conversionRateType,
+              conversionRate: invoiceHeader.conversionRate,
+              conversionDate: invoiceHeader.conversionDate?.toISOString(),
+              paymentTermsName: invoiceHeader.paymentTermsName,
+              billToContact: invoiceHeader.billToContact,
+              soldToCustomerName: invoiceHeader.soldToCustomerName,
+              purchaseOrder: invoiceHeader.purchaseOrder,
+              invoiceLines: invoiceHeader.invoiceLines.map((line, idx) => ({
+                index: idx + 1,
+                lineNumber: line.lineNumber,
+                memoLineName: line.memoLineName,
+                itemNumber: line.itemNumber,
+                description: line.description,
+                quantity: line.quantity,
+                uomCode: line.uomCode,
+                unitSellingPrice: line.unitSellingPrice,
+                currencyCode: line.currencyCode,
+                taxClassificationCode: line.taxClassificationCode,
+                salesOrder: line.salesOrder,
+                salesOrderLine: line.salesOrderLine,
+              })),
+            },
+            null,
+            2,
+          )}`,
+        );
+
         // ✅ CRITICAL: Ensure trxDate is set (defaults to saleDate if missing)
         if (!invoiceHeader.trxDate) {
           this.logger.warn(
