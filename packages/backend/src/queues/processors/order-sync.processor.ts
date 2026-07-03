@@ -389,27 +389,135 @@ export class OrderSyncProcessor {
         );
 
         // ── 8. Push Invoice ───────────────────────────────────────
+        // Validate invoice payload before sending to Oracle
         this.logger.log(
-          `[${odooOrderId}] Step 8a/14: Creating Oracle invoice...\n` +
+          `[${odooOrderId}] Step 8a/14: Validating and creating Oracle invoice...\n` +
             `  - Bill To: ${invoiceHeader.billToCustomerName}\n` +
             `  - Business Unit: ${invoiceHeader.businessUnit}\n` +
             `  - Account Number: ${invoiceHeader.billToAccountNumber}\n` +
+            `  - Transaction Date (trxDate): ${invoiceHeader.trxDate?.toISOString() || 'MISSING - will use saleDate'}\n` +
+            `  - Sale Date (glDate): ${invoiceHeader.saleDate?.toISOString()}\n` +
+            `  - Payment Terms: ${invoiceHeader.paymentTermsName || 'N/A'}\n` +
+            `  - Conversion Rate Type: ${invoiceHeader.conversionRateType}\n` +
             `  - Invoice Lines: ${invoiceHeader.invoiceLines.length}`,
         );
+
+        // ✅ Log complete invoice header structure for debugging
+        this.logger.debug(
+          `[${odooOrderId}] 📋 Complete Invoice Header Payload:\n${JSON.stringify(
+            {
+              billToCustomerName: invoiceHeader.billToCustomerName,
+              billToLocation: invoiceHeader.billToLocation,
+              billToAccountNumber: invoiceHeader.billToAccountNumber,
+              businessUnit: invoiceHeader.businessUnit,
+              transactionSource: invoiceHeader.transactionSource,
+              transactionType: invoiceHeader.transactionType,
+              trxDate: invoiceHeader.trxDate?.toISOString(),
+              saleDate: invoiceHeader.saleDate?.toISOString(),
+              invoiceCurrencyCode: invoiceHeader.invoiceCurrencyCode,
+              conversionRateType: invoiceHeader.conversionRateType,
+              conversionRate: invoiceHeader.conversionRate,
+              conversionDate: invoiceHeader.conversionDate?.toISOString(),
+              paymentTermsName: invoiceHeader.paymentTermsName,
+              billToContact: invoiceHeader.billToContact,
+              soldToCustomerName: invoiceHeader.soldToCustomerName,
+              purchaseOrder: invoiceHeader.purchaseOrder,
+              invoiceLines: invoiceHeader.invoiceLines.map((line, idx) => ({
+                index: idx + 1,
+                lineNumber: line.lineNumber,
+                memoLineName: line.memoLineName,
+                itemNumber: line.itemNumber,
+                description: line.description,
+                quantity: line.quantity,
+                uomCode: line.uomCode,
+                unitSellingPrice: line.unitSellingPrice,
+                currencyCode: line.currencyCode,
+                taxClassificationCode: line.taxClassificationCode,
+                salesOrder: line.salesOrder,
+                salesOrderLine: line.salesOrderLine,
+              })),
+            },
+            null,
+            2,
+          )}`,
+        );
+
+        // ✅ CRITICAL: Ensure trxDate is set (defaults to saleDate if missing)
+        if (!invoiceHeader.trxDate) {
+          this.logger.warn(
+            `[${odooOrderId}] ⚠️  trxDate is missing, defaulting to saleDate: ${invoiceHeader.saleDate.toISOString()}`,
+          );
+          invoiceHeader.trxDate = invoiceHeader.saleDate;
+        }
+
+        // ✅ Validate required fields
+        const missingFields: string[] = [];
+        if (!invoiceHeader.billToCustomerName) missingFields.push('billToCustomerName');
+        if (!invoiceHeader.billToLocation) missingFields.push('billToLocation');
+        if (!invoiceHeader.billToAccountNumber) missingFields.push('billToAccountNumber');
+        if (!invoiceHeader.businessUnit) missingFields.push('businessUnit');
+        if (!invoiceHeader.saleDate) missingFields.push('saleDate');
+        if (!invoiceHeader.transactionSource) missingFields.push('transactionSource');
+        if (!invoiceHeader.transactionType) missingFields.push('transactionType');
+        if (!invoiceHeader.invoiceCurrencyCode) missingFields.push('invoiceCurrencyCode');
+        if (!invoiceHeader.conversionRateType) missingFields.push('conversionRateType');
+        if (invoiceHeader.invoiceLines.length === 0) missingFields.push('invoiceLines (empty)');
+
+        if (missingFields.length > 0) {
+          const errorMsg = `Invoice validation failed - missing required fields: ${missingFields.join(', ')}`;
+          this.logger.error(`[${odooOrderId}] ❌ ${errorMsg}`);
+          await this.prisma.fusionInvoiceHeader.create({
+            data: {
+              status: 'ERROR',
+              message: errorMsg,
+              requestDate: new Date(),
+              billToCustName: invoiceHeader.billToCustomerName || 'MISSING',
+              billToLocation: invoiceHeader.billToLocation || 'MISSING',
+              billToAccNumber:
+                invoiceHeader.billToAccountNumber != null
+                  ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+                  : null,
+              businessUnit: invoiceHeader.businessUnit || 'MISSING',
+              txnSource: invoiceHeader.transactionSource || 'MISSING',
+              txnType: invoiceHeader.transactionType || 'MISSING',
+              txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+              glDate: invoiceHeader.saleDate,
+              currencyCode: invoiceHeader.invoiceCurrencyCode || 'MISSING',
+              totalAmount: order.totalAmount,
+              region: effectiveRegion,
+            },
+          });
+          throw new Error(errorMsg);
+        }
 
         let invoiceResult: any;
         try {
           invoiceResult =
             await this.soapClient.createSimpleInvoice(invoiceHeader);
         } catch (invoiceError) {
+          const errorMessage = invoiceError instanceof Error ? invoiceError.message : String(invoiceError);
           this.logger.error(
-            `[${odooOrderId}] ❌ Oracle invoice creation failed: ${invoiceError instanceof Error ? invoiceError.message : String(invoiceError)}`,
+            `[${odooOrderId}] ❌ Oracle invoice creation failed:\n` +
+              `  Error: ${errorMessage}\n` +
+              `  Invoice Header: ${JSON.stringify({
+                billToCustomerName: invoiceHeader.billToCustomerName,
+                billToLocation: invoiceHeader.billToLocation,
+                billToAccountNumber: invoiceHeader.billToAccountNumber,
+                businessUnit: invoiceHeader.businessUnit,
+                transactionSource: invoiceHeader.transactionSource,
+                transactionType: invoiceHeader.transactionType,
+                trxDate: invoiceHeader.trxDate?.toISOString(),
+                saleDate: invoiceHeader.saleDate?.toISOString(),
+                invoiceCurrencyCode: invoiceHeader.invoiceCurrencyCode,
+                conversionRateType: invoiceHeader.conversionRateType,
+                lineCount: invoiceHeader.invoiceLines.length,
+              }, null, 2)}`,
           );
           // Store failed invoice attempt
           await this.prisma.fusionInvoiceHeader.create({
             data: {
               status: 'ERROR',
-              message: invoiceError instanceof Error ? invoiceError.message : String(invoiceError),
+              message: errorMessage,
               requestDate: new Date(),
               billToCustName: invoiceHeader.billToCustomerName,
               billToLocation: invoiceHeader.billToLocation,
@@ -428,7 +536,7 @@ export class OrderSyncProcessor {
             },
           });
           throw new Error(
-            `Oracle invoice creation failed: ${invoiceError instanceof Error ? invoiceError.message : String(invoiceError)}`,
+            `Oracle invoice creation failed: ${errorMessage}`,
           );
         }
 
@@ -490,6 +598,49 @@ export class OrderSyncProcessor {
             headerId: auditHeader.id,
           })),
         });
+
+        // ── 8b. Create Inventory Transactions for Each Line ───────
+        this.logger.log(
+          `[${odooOrderId}] Step 8b/14: Creating ${invoiceHeader.invoiceLines.length} inventory transaction(s)...`,
+        );
+        
+        const inventoryTxns = invoiceHeader.invoiceLines
+          .filter((il) => il.itemNumber && il.quantity > 0) // Only create for valid items with quantity
+          .map((il) => ({
+            status: 'SUCCESS',
+            requestDate: new Date(),
+            organizationName: invoiceHeader.businessUnit,
+            itemNumber: il.itemNumber!,
+            txnSourceName: invoiceHeader.transactionSource,
+            subInventory: null, // Could be enriched from store config if needed
+            txnUom: il.uomCode || 'Ea',
+            txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+            txnQty: il.quantity,
+            region: effectiveRegion,
+            integMode: `${effectiveRegion}-ORDER-SYNC`,
+          }));
+
+        if (inventoryTxns.length > 0) {
+          try {
+            await this.prisma.fusionInvTxn.createMany({
+              data: inventoryTxns,
+            });
+            this.logger.log(
+              `[${odooOrderId}] ✅ Step 8b/14: Created ${inventoryTxns.length} inventory transaction(s)`,
+            );
+          } catch (invTxnError) {
+            // Log error but don't fail the entire sync
+            this.logger.warn(
+              `[${odooOrderId}] ⚠️  Inventory transaction creation failed (non-critical): ${
+                invTxnError instanceof Error ? invTxnError.message : String(invTxnError)
+              }`,
+            );
+          }
+        } else {
+          this.logger.log(
+            `[${odooOrderId}] ⏭️  Step 8b/14: No valid items for inventory transactions`,
+          );
+        }
 
         // ── 9. Push Standard Receipts ─────────────────────────────
         this.logger.log(

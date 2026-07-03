@@ -380,6 +380,38 @@ export class OracleNativeService {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * Extracts a human-readable identifier from an Oracle row for error messages.
+   * Tries common ID/name/code columns to help identify which row failed.
+   */
+  private getRowIdentifier(
+    row: Record<string, unknown>,
+    mapping: OracleTableMapping,
+  ): string | null {
+    // Try common identifier columns
+    const identifierKeys = [
+      'ROW_ID',
+      'ID',
+      'ITEM_ID',
+      'NAME',
+      'OUTLET_NAME',
+      'REGION',
+      'CODE',
+      'BUSINESS_UNIT_NAME',
+      'BILL_TO_NAME',
+      'SERVICE_PROVIDER',
+    ];
+
+    for (const key of identifierKeys) {
+      const value = col(row, key);
+      if (value != null && String(value).trim() !== '') {
+        return `${key}=${value}`;
+      }
+    }
+
+    return null;
+  }
+
   private getConnectionConfig() {
     const host = this.config.get<string>('ORACLE_DB_HOST');
     const port = this.config.get<number>('ORACLE_DB_PORT') ?? 1521;
@@ -494,7 +526,8 @@ export class OracleNativeService {
         const rows = queryResult.rows ?? [];
         const delegate = mapping.prismaDelegate(this.prisma);
 
-        for (const row of rows) {
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          const row = rows[rowIndex];
           try {
             const data = mapping.mapRow(row);
             const where = mapping.upsertWhere(row);
@@ -502,8 +535,17 @@ export class OracleNativeService {
             result.imported++;
           } catch (rowErr: unknown) {
             result.skipped++;
+            const errorMsg =
+              rowErr instanceof Error ? rowErr.message : String(rowErr);
+            // Enhanced error message with row context and identification
+            const rowIdentifier = this.getRowIdentifier(row, mapping);
             result.errors.push(
-              rowErr instanceof Error ? rowErr.message : String(rowErr),
+              `Row ${rowIndex + 1}${rowIdentifier ? ` (${rowIdentifier})` : ''}: ${errorMsg}`,
+            );
+            // Log detailed error for debugging
+            this.logger.warn(
+              `Oracle import error in ${mapping.oracleTable} row ${rowIndex + 1}: ${errorMsg}`,
+              row,
             );
           }
         }

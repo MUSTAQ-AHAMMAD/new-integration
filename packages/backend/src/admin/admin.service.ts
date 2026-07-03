@@ -356,13 +356,34 @@ export class AdminService {
     let skipped = 0;
     const errors: string[] = [];
 
-    for (const row of rows) {
+    // Get valid field names for detailed error reporting
+    const validFields = Array.from(fieldTypes.keys());
+
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
       try {
         // Normalise keys first so UPPER_SNAKE_CASE headers from external CSVs
         // are mapped to the camelCase field names expected by Prisma.
         const normalizedRow = Object.fromEntries(
           Object.entries(row).map(([k, v]) => [normalizeKey(k), v]),
         );
+
+        // Track unknown fields for better error messages
+        const unknownFields = Object.keys(normalizedRow).filter(
+          (k) =>
+            k !== 'id' &&
+            k !== 'createdAt' &&
+            k !== 'updatedAt' &&
+            !validFields.includes(k),
+        );
+
+        if (unknownFields.length > 0) {
+          const msg = `Row ${rowIndex + 1}: Unknown fields [${unknownFields.join(', ')}]. Valid fields: ${validFields.join(', ')}`;
+          skipped++;
+          errors.push(msg);
+          continue;
+        }
+
         // Strip system / read-only columns so the DB generates them
         const {
           id: _id,
@@ -385,7 +406,10 @@ export class AdminService {
         imported++;
       } catch (err: unknown) {
         skipped++;
-        errors.push(err instanceof Error ? err.message : String(err));
+        const errorMsg =
+          err instanceof Error ? err.message : String(err);
+        // Enhanced error message with row context
+        errors.push(`Row ${rowIndex + 1}: ${errorMsg}`);
       }
     }
 

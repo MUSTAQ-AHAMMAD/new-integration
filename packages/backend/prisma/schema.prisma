@@ -62,9 +62,11 @@ enum JobStatus {
 
 model SyncControl {
   id          String    @id @default(cuid())
-  serviceName String    @unique
+  serviceName String
   displayName String
   description String?
+  /// Region identifier (e.g. "AE", "KW"). NULL means global/all-regions service.
+  region      String?
   enabled     Boolean   @default(true)
   isRunning   Boolean   @default(false)
   lastRunAt   DateTime?
@@ -74,8 +76,10 @@ model SyncControl {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  @@unique([serviceName, region])
   @@index([enabled])
   @@index([serviceName])
+  @@index([region])
 }
 
 model OrderSyncQueue {

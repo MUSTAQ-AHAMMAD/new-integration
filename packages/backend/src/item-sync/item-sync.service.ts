@@ -151,6 +151,10 @@ export class ItemSyncService {
     // ── 4. Push each item to VendHQ and track in VendHqItemMeta ─────────────
     for (const item of allItems) {
       if (!item.ItemNumber) {
+        this.logger.warn(
+          `Skipping item (region=${region}): ItemNumber is null or empty`,
+          { item },
+        );
         result.skipped++;
         continue;
       }

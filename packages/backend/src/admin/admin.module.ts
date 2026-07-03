@@ -5,6 +5,7 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { OracleNativeService } from './oracle-native.service';
 import { SyncControlController } from './sync-control.controller';
+import { AdminDiagnosticsController } from './admin-diagnostics.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { SyncModule } from '../sync/sync.module';
 
@@ -15,7 +16,7 @@ import { SyncModule } from '../sync/sync.module';
     MulterModule.register({ limits: { fileSize: 50 * 1024 * 1024 } }),
     forwardRef(() => SyncModule),
   ],
-  controllers: [AdminController, SyncControlController],
+  controllers: [AdminController, SyncControlController, AdminDiagnosticsController],
   providers: [AdminService, OracleNativeService],
 })
 export class AdminModule {}
