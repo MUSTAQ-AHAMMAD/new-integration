@@ -82,10 +82,10 @@ export class SyncControlService implements OnModuleInit {
         where: { 
           serviceName_region: {
             serviceName: service.serviceName,
-            region: null as string | null, // Global service
+            region: null!, // Global service
           },
         },
-        create: { ...service, region: null as string | null },
+        create: { ...service, region: null },
         update: {
           displayName: service.displayName,
           description: service.description,
@@ -102,7 +102,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
     });
@@ -119,7 +119,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
       data: {
@@ -142,7 +142,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
       data: {
@@ -161,7 +161,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
       data: { enabled: true },
@@ -178,7 +178,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
       data: { enabled: false },
@@ -205,7 +205,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: (region ?? null) as string | null,
+          region: (region ?? null)!,
         },
       },
     });
