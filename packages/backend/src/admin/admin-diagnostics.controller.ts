@@ -219,8 +219,8 @@ export class AdminDiagnosticsController {
       this.prisma.odooCredential.findMany({
         select: {
           id: true,
-          name: true,
           baseUrl: true,
+          region: true,
           active: true,
           createdAt: true,
         },
@@ -228,8 +228,8 @@ export class AdminDiagnosticsController {
       this.prisma.ibqCredential.findMany({
         select: {
           id: true,
-          name: true,
           baseUrl: true,
+          region: true,
           active: true,
           createdAt: true,
         },
