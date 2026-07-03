@@ -23,6 +23,7 @@ import { SyncService } from './sync.service';
 import { SyncControlService } from './sync-control.service';
 import { TimezoneService } from './timezone.service';
 import { ValidationService } from './validation.service';
+import { BulkRetryService } from './bulk-retry.service';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ValidationService } from './validation.service';
     PipelineSchedulerService,
     SyncControlService,
     FusionMetadataService,
+    BulkRetryService,
   ],
   exports: [
     SyncService,
@@ -68,6 +70,7 @@ import { ValidationService } from './validation.service';
     PipelineSchedulerService,
     SyncControlService,
     FusionMetadataService,
+    BulkRetryService,
   ],
 })
 export class SyncModule {}
