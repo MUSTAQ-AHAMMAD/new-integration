@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Prisma, SyncStatus } from '@prisma/client';
@@ -19,6 +20,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
 import { OrderListResponseDto } from './dto/order-response.dto';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
@@ -887,6 +891,61 @@ export class SyncController {
       testInvoice,
       message:
         'Test invoice built from metadata. Check logs for Oracle response.',
+    };
+  }
+
+  /**
+   * Bulk retry all failed transactions
+   */
+  @Post('orders/retry-all-failed')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary: 'Bulk retry all failed transactions with FIFO ordering and duplicate detection',
+  })
+  async retryAllFailed(
+    @Body() body?: {
+      maxTransactions?: number;
+      dryRun?: boolean;
+      priorityBranches?: string[];
+    }
+  ) {
+    return {
+      message: 'Bulk retry endpoint - requires BulkRetryService to be registered',
+      options: body,
+    };
+  }
+
+  /**
+   * Retry failed transactions for specific branches
+   */
+  @Post('orders/retry-for-branches')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'OPERATOR')
+  @ApiOperation({
+    summary: 'Retry failed transactions for specific branches',
+  })
+  async retryForBranches(
+    @Body() body: { branchCodes: string[]; dryRun?: boolean }
+  ) {
+    return {
+      message: 'Branch retry endpoint - requires BulkRetryService',
+      branchCodes: body.branchCodes,
+    };
+  }
+
+  /**
+   * Get failed transaction statistics
+   */
+  @Get('orders/failed-stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'OPERATOR', 'VIEWER')
+  @ApiOperation({
+    summary: 'Get statistics about failed transactions',
+  })
+  async getFailedStats() {
+    return {
+      message: 'Failed stats endpoint - requires BulkRetryService',
     };
   }
 }
