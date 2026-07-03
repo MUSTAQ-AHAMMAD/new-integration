@@ -153,7 +153,7 @@ export class BulkRetryService {
               });
 
               // Add to BullMQ queue
-              await this.queuesService.addOrderSyncJob({
+              await this.queuesService.enqueueOrderSync({
                 orderSyncQueueId: order.id,
                 odooOrderId: order.odooOrderId,
                 branchCode: order.branchCode,
