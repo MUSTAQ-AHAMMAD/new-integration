@@ -82,10 +82,10 @@ export class SyncControlService implements OnModuleInit {
         where: { 
           serviceName_region: {
             serviceName: service.serviceName,
-            region: null, // Global service
+            region: null as string | null, // Global service
           },
         },
-        create: { ...service, region: null },
+        create: { ...service, region: null as string | null },
         update: {
           displayName: service.displayName,
           description: service.description,
@@ -102,7 +102,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
     });
@@ -119,7 +119,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
       data: {
@@ -142,7 +142,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
       data: {
@@ -161,7 +161,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
       data: { enabled: true },
@@ -178,7 +178,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
       data: { enabled: false },
@@ -205,7 +205,7 @@ export class SyncControlService implements OnModuleInit {
       where: { 
         serviceName_region: {
           serviceName,
-          region: region ?? null,
+          region: (region ?? null) as string | null,
         },
       },
     });
