@@ -168,6 +168,8 @@ export class StoreConfigController {
           hasConfig: true,
           configStatus: config.validationStatus,
           isActive: config.isActive,
+          hasBankAccountId: config.bankAccountId !== null,
+          hasCashAccountId: config.cashAccountId !== null,
           config: {
             branchName: config.branchName,
             region: config.region,
@@ -177,6 +179,8 @@ export class StoreConfigController {
             businessUnit: config.oracleBusinessUnit,
             bankAccount: config.bankAccountName,
             cashAccount: config.cashAccountName,
+            bankAccountId: config.bankAccountId,
+            cashAccountId: config.cashAccountId,
           },
         });
       } catch (error) {
@@ -205,6 +209,15 @@ export class StoreConfigController {
       ).length,
       configsPending: results.filter(
         (r) => r.hasConfig && r.configStatus === 'PENDING',
+      ).length,
+      missingBankAccountId: results.filter(
+        (r) => r.hasConfig && !r.hasBankAccountId,
+      ).length,
+      missingCashAccountId: results.filter(
+        (r) => r.hasConfig && !r.hasCashAccountId,
+      ).length,
+      missingBothAccountIds: results.filter(
+        (r) => r.hasConfig && !r.hasBankAccountId && !r.hasCashAccountId,
       ).length,
     };
 

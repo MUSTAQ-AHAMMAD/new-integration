@@ -314,19 +314,33 @@ export class StoreConfigService {
 
   async validateConfig(
     branchCode: string,
-  ): Promise<{ isValid: boolean; errors: string[] }> {
+  ): Promise<{ isValid: boolean; errors: string[]; warnings: string[] }> {
     const config = await this.prisma.storeConfiguration.findUnique({
       where: { branchCode },
     });
-    if (!config) return { isValid: false, errors: ['Store config not found'] };
+    if (!config) return { isValid: false, errors: ['Store config not found'], warnings: [] };
 
     const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    // Critical fields - will block sync
     if (!config.billToSiteName) errors.push('billToSiteName is required');
     if (!config.bankAccountName) errors.push('bankAccountName is required');
     if (!config.cashAccountName) errors.push('cashAccountName is required');
     if (!config.paymentTermsName) errors.push('paymentTermsName is required');
-    if (!config.oracleBusinessUnit)
-      errors.push('oracleBusinessUnit is required');
+    if (!config.oracleBusinessUnit) errors.push('oracleBusinessUnit is required');
+    
+    // Account ID validation - critical for receipt creation
+    if (config.bankAccountId === null) {
+      errors.push('bankAccountId is required for receipt creation - receipts will be skipped');
+    }
+    if (config.cashAccountId === null) {
+      errors.push('cashAccountId is required for receipt creation - cash receipts will be skipped');
+    }
+    
+    // Warning fields - won't block sync but should be reviewed
+    if (!config.region) warnings.push('region should be set for proper configuration matching');
+    if (!config.taxClassificationCode) warnings.push('taxClassificationCode not set - may affect tax calculation');
 
     const status =
       errors.length === 0
@@ -352,7 +366,7 @@ export class StoreConfigService {
       });
     }
 
-    return { isValid: errors.length === 0, errors };
+    return { isValid: errors.length === 0, errors, warnings };
   }
 
   async listStores(activeOnly = false) {
