@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, RotateCcw, Search } from 'lucide-react';
+import { useRegion } from '@/providers/region-provider';
+import { Download, RotateCcw, Search, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type OrderQueueEntry } from '@/lib/api';
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
@@ -51,6 +52,7 @@ function downloadCsv(filename: string, headers: string[], rows: string[][]): voi
 
 export default function OrdersPage() {
   const queryClient = useQueryClient();
+  const { selectedRegion } = useRegion();
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -62,7 +64,7 @@ export default function OrdersPage() {
   const [detailRow, setDetailRow] = useState<OrderQueueEntry | null>(null);
 
   const { data: orders = [], isLoading, isError } = useQuery({
-    queryKey: ['order-queue'],
+    queryKey: ['order-queue', selectedRegion],
     queryFn: () => api.listOrderQueue({ limit: 500 }),
     refetchInterval: 15000,
   });
@@ -103,6 +105,7 @@ export default function OrdersPage() {
           || (order.customerName ?? '').toLowerCase().includes(normalizedSearch);
         if (!match) return false;
       }
+      if (selectedRegion && order.region !== selectedRegion) return false;
       if (branchFilter !== 'ALL' && order.branchCode !== branchFilter) return false;
       if (statusFilter !== 'ALL' && order.status !== statusFilter) return false;
       const dateKey = getDateKey(order.createdAt, timezone);
@@ -110,7 +113,7 @@ export default function OrdersPage() {
       if (endDate && dateKey > endDate) return false;
       return true;
     });
-  }, [orders, search, branchFilter, statusFilter, startDate, endDate, timezone]);
+  }, [orders, search, branchFilter, statusFilter, startDate, endDate, timezone, selectedRegion]);
 
   const visibleRows = filteredRows.slice(0, visibleCount);
   const visibleIds = visibleRows.map((r) => r.id);
@@ -155,7 +158,11 @@ export default function OrdersPage() {
           <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
           <div>
             <h1 className="text-xl font-bold text-slate-900">Order Sync Manager</h1>
-            <p className="mt-0.5 text-sm text-slate-500">Search, filter, retry, and export order synchronisation activity.</p>
+            <p className="mt-0.5 text-sm text-slate-500">
+              {selectedRegion 
+                ? `Search, filter, retry, and export order synchronisation activity for region: ${selectedRegion}` 
+                : 'Search, filter, retry, and export order synchronisation activity.'}
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -174,6 +181,18 @@ export default function OrdersPage() {
           </Button>
         </div>
       </div>
+
+      {selectedRegion && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            <span>Filtered to region: <strong>{selectedRegion}</strong></span>
+            <span className="text-xs text-indigo-600">
+              (Use the region selector in the header to view all regions)
+            </span>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
