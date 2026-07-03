@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tantml:react-query';
+import { useRegion } from '@/providers/region-provider';
 import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -9,19 +10,21 @@ import { CreateSyncJobModal } from '@/components/sync/create-sync-job-modal';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState } from '@/components/ui/error-state';
+import { Globe } from 'lucide-react';
 
 export default function SyncJobsPage() {
   const qc = useQueryClient();
+  const { selectedRegion } = useRegion();
   const [statusFilter, setStatusFilter] = useState<string>('');
 
   const { data: jobs, isLoading, isError } = useQuery({
-    queryKey: ['sync-jobs', statusFilter],
+    queryKey: ['sync-jobs', statusFilter, selectedRegion],
     queryFn: () => api.listSyncJobs(statusFilter || undefined),
     refetchInterval: 5000,
   });
 
   const { data: queueStats } = useQuery({
-    queryKey: ['queue-stats'],
+    queryKey: ['queue-stats', selectedRegion],
     queryFn: api.getQueueStats,
     refetchInterval: 5000,
   });
@@ -61,7 +64,11 @@ export default function SyncJobsPage() {
           <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
           <div>
             <h1 className="text-xl font-bold text-slate-900">Sync Jobs</h1>
-            <p className="mt-0.5 text-sm text-slate-500">Manage and monitor synchronization jobs</p>
+            <p className="mt-0.5 text-sm text-slate-500">
+              {selectedRegion 
+                ? `Manage and monitor synchronization jobs for region: ${selectedRegion}` 
+                : 'Manage and monitor synchronization jobs across all regions'}
+            </p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -75,6 +82,18 @@ export default function SyncJobsPage() {
           <CreateSyncJobModal />
         </div>
       </div>
+
+      {selectedRegion && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            <span>Viewing jobs for region: <strong>{selectedRegion}</strong></span>
+            <span className="text-xs text-indigo-600">
+              (Use the region selector in the header to view all regions)
+            </span>
+          </div>
+        </div>
+      )}
 
       {queueStats && (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

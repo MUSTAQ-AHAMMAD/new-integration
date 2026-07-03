@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRegion } from '@/providers/region-provider';
 import { api, OrderQueueEntry } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -9,17 +10,23 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState } from '@/components/ui/error-state';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw, Globe } from 'lucide-react';
 
 export default function SkippedOrdersPage() {
   const qc = useQueryClient();
+  const { selectedRegion } = useRegion();
   const [searchTerm, setSearchTerm] = useState('');
 
   const { data: orders, isLoading, isError } = useQuery({
-    queryKey: ['order-queue', 'SKIPPED', searchTerm],
+    queryKey: ['order-queue', 'SKIPPED', searchTerm, selectedRegion],
     queryFn: () => api.listOrderQueue({ status: 'SKIPPED', search: searchTerm }),
     refetchInterval: 10000,
   });
+
+  // Filter orders by region on the client side
+  const filteredOrders = selectedRegion
+    ? orders?.filter(order => order.region === selectedRegion)
+    : orders;
 
   const retrySkippedMutation = useMutation({
     mutationFn: () => api.retrySkippedOrders(),
@@ -47,7 +54,9 @@ export default function SkippedOrdersPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Skipped Orders</h1>
             <p className="mt-0.5 text-sm text-slate-500">
-              Orders that were skipped during sync - review and retry
+              {selectedRegion 
+                ? `Orders that were skipped during sync in region: ${selectedRegion}` 
+                : 'Orders that were skipped during sync - review and retry'}
             </p>
           </div>
         </div>
@@ -61,10 +70,22 @@ export default function SkippedOrdersPage() {
         </Button>
       </div>
 
+      {selectedRegion && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4" />
+            <span>Filtered to region: <strong>{selectedRegion}</strong></span>
+            <span className="text-xs text-indigo-600">
+              (Use the region selector in the header to view all regions)
+            </span>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
-            <CardTitle>Skipped Orders ({orders?.length || 0})</CardTitle>
+            <CardTitle>Skipped Orders ({filteredOrders?.length || 0})</CardTitle>
             <input
               type="text"
               placeholder="Search by order ID or number..."
@@ -81,8 +102,8 @@ export default function SkippedOrdersPage() {
             <ErrorState />
           ) : (
             <div className="space-y-4">
-              {orders && orders.length > 0 ? (
-                orders.map((order: OrderQueueEntry) => (
+              {filteredOrders && filteredOrders.length > 0 ? (
+                filteredOrders.map((order: OrderQueueEntry) => (
                   <div 
                     key={order.id}
                     className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 transition-colors"
