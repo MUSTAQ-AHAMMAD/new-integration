@@ -24,10 +24,14 @@ export interface InvoiceHeader {
   businessUnit: string;
   outletName?: string;
   saleDate: Date;
+  trxDate?: Date; // Transaction date - critical for Oracle invoice posting
   transactionSource: string;
   transactionType: string;
   invoiceCurrencyCode: string;
   conversionRateType: string;
+  conversionRate?: number;
+  conversionDate?: Date;
+  paymentTermsName?: string;
   invoiceLines: InvoiceLine[];
 }
 
@@ -151,10 +155,14 @@ export class OrderEnrichmentService {
       businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
       outletName: order.branchName || branchCode,
       saleDate,
+      trxDate: saleDate, // ✅ CRITICAL: Set transaction date (defaults to sale date)
       transactionSource: metadata.txnSource || 'Vend',
       transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
       conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
+      conversionRate: metadata.rateIsCorporate ? 1 : undefined,
+      conversionDate: saleDate,
+      paymentTermsName: undefined, // Will be set later if customer profile is resolved
       invoiceLines: [], // Now properly typed as InvoiceLine[]
     };
 
@@ -321,10 +329,14 @@ export class OrderEnrichmentService {
       businessUnit: metadata.businessUnit || 'AlQurashi-KSA',
       outletName: order.branchName || branchCode,
       saleDate,
+      trxDate: saleDate, // ✅ CRITICAL: Set transaction date
       transactionSource: metadata.txnSource || 'Vend',
       transactionType: metadata.txnType || 'Vend Invoice',
       invoiceCurrencyCode: order.currency || 'AED',
       conversionRateType: metadata.rateIsCorporate ? 'Corporate' : 'User',
+      conversionRate: metadata.rateIsCorporate ? 1 : undefined,
+      conversionDate: saleDate,
+      paymentTermsName: undefined,
       invoiceLines: [
         {
           lineNumber: 1,
