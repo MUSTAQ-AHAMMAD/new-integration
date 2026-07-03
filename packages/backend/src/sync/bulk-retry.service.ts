@@ -51,13 +51,7 @@ export class BulkRetryService {
 
       const failedOrders = await this.prisma.orderSyncQueue.findMany({
         where: {
-          syncStatus: {
-            in: [SyncStatus.FAILED, SyncStatus.PARTIAL_SUCCESS],
-          },
-          // Don't retry orders that are already in queue
-          NOT: {
-            syncStatus: SyncStatus.QUEUED,
-          },
+          status: SyncStatus.FAILED,
         },
         orderBy: [
           { createdAt: 'asc' }, // FIFO ordering
@@ -65,11 +59,10 @@ export class BulkRetryService {
         take: maxTransactions,
         select: {
           id: true,
-          orderId: true,
+          odooOrderId: true,
           branchCode: true,
-          syncStatus: true,
-          errorMessage: true,
-          retryCount: true,
+          status: true,
+          syncAttempts: true,
           createdAt: true,
         },
       });
@@ -101,11 +94,10 @@ export class BulkRetryService {
         this.logger.log('DRY-RUN MODE: Showing what would be retried...');
         
         const preview = sortedOrders.slice(0, 10).map((order) => ({
-          orderId: order.orderId,
+          odooOrderId: order.odooOrderId,
           branchCode: order.branchCode,
-          status: order.syncStatus,
-          retryCount: order.retryCount,
-          errorMessage: order.errorMessage?.substring(0, 100),
+          status: order.status,
+          syncAttempts: order.syncAttempts,
         }));
 
         this.logger.log('Preview (first 10):');
@@ -123,17 +115,17 @@ export class BulkRetryService {
       // === STEP 3: DUPLICATE DETECTION ===
       this.logger.log('Step 3/5: Checking for duplicates...');
 
-      const orderIds = sortedOrders.map((o) => o.orderId);
+      const orderIds = sortedOrders.map((o) => o.odooOrderId);
       const alreadyQueued = await this.prisma.orderSyncQueue.findMany({
         where: {
-          orderId: { in: orderIds },
-          syncStatus: SyncStatus.QUEUED,
+          odooOrderId: { in: orderIds },
+          status: SyncStatus.QUEUED_FOR_RETRY,
         },
-        select: { orderId: true },
+        select: { odooOrderId: true },
       });
 
-      const queuedOrderIds = new Set(alreadyQueued.map((o) => o.orderId));
-      const ordersToRetry = sortedOrders.filter((o) => !queuedOrderIds.has(o.orderId));
+      const queuedOrderIds = new Set(alreadyQueued.map((o) => o.odooOrderId));
+      const ordersToRetry = sortedOrders.filter((o) => !queuedOrderIds.has(o.odooOrderId));
 
       this.logger.log(`Filtered out ${queuedOrderIds.size} already queued orders`);
       this.logger.log(`Will retry ${ordersToRetry.length} orders`);
@@ -150,13 +142,12 @@ export class BulkRetryService {
         await this.prisma.$transaction(async (tx) => {
           for (const order of batch) {
             try {
-              // Update status to QUEUED
+              // Update status to QUEUED_FOR_RETRY
               await tx.orderSyncQueue.update({
                 where: { id: order.id },
                 data: {
-                  syncStatus: SyncStatus.QUEUED,
-                  retryCount: { increment: 1 },
-                  errorMessage: null,
+                  status: SyncStatus.QUEUED_FOR_RETRY,
+                  syncAttempts: { increment: 1 },
                   updatedAt: new Date(),
                 },
               });
@@ -164,9 +155,8 @@ export class BulkRetryService {
               // Add to BullMQ queue
               await this.queuesService.addOrderSyncJob({
                 orderSyncQueueId: order.id,
-                orderId: order.orderId,
+                odooOrderId: order.odooOrderId,
                 branchCode: order.branchCode,
-                retryCount: order.retryCount + 1,
               });
 
               queued++;
@@ -175,7 +165,7 @@ export class BulkRetryService {
                 this.logger.log(`Progress: ${queued}/${ordersToRetry.length} queued`);
               }
             } catch (err) {
-              const errorMsg = `Failed to queue order ${order.orderId}: ${err instanceof Error ? err.message : String(err)}`;
+              const errorMsg = `Failed to queue order ${order.odooOrderId}: ${err instanceof Error ? err.message : String(err)}`;
               errors.push(errorMsg);
               this.logger.error(errorMsg);
               skipped++;
@@ -189,7 +179,7 @@ export class BulkRetryService {
 
       const nowQueued = await this.prisma.orderSyncQueue.count({
         where: {
-          syncStatus: SyncStatus.QUEUED,
+          status: SyncStatus.QUEUED_FOR_RETRY,
         },
       });
 
@@ -242,26 +232,20 @@ export class BulkRetryService {
     const [totalFailed, byStatus, byBranch, oldestOrder] = await Promise.all([
       this.prisma.orderSyncQueue.count({
         where: {
-          syncStatus: {
-            in: [SyncStatus.FAILED, SyncStatus.PARTIAL_SUCCESS],
-          },
+          status: SyncStatus.FAILED,
         },
       }),
       this.prisma.orderSyncQueue.groupBy({
-        by: ['syncStatus'],
+        by: ['status'],
         where: {
-          syncStatus: {
-            in: [SyncStatus.FAILED, SyncStatus.PARTIAL_SUCCESS],
-          },
+          status: SyncStatus.FAILED,
         },
         _count: true,
       }),
       this.prisma.orderSyncQueue.groupBy({
         by: ['branchCode'],
         where: {
-          syncStatus: {
-            in: [SyncStatus.FAILED, SyncStatus.PARTIAL_SUCCESS],
-          },
+          status: SyncStatus.FAILED,
         },
         _count: true,
         orderBy: {
@@ -273,9 +257,7 @@ export class BulkRetryService {
       }),
       this.prisma.orderSyncQueue.findFirst({
         where: {
-          syncStatus: {
-            in: [SyncStatus.FAILED, SyncStatus.PARTIAL_SUCCESS],
-          },
+          status: SyncStatus.FAILED,
         },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
@@ -284,7 +266,7 @@ export class BulkRetryService {
 
     return {
       totalFailed,
-      byStatus: Object.fromEntries(byStatus.map((s) => [s.syncStatus, s._count])),
+      byStatus: Object.fromEntries(byStatus.map((s) => [s.status, s._count])),
       byBranch: byBranch.map((b) => ({
         branchCode: b.branchCode,
         count: b._count,
