@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tantml:react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRegion } from '@/providers/region-provider';
 import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
