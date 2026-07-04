@@ -37,7 +37,7 @@ export class SyncControlService implements OnModuleInit {
   }
 
   private async initializeSyncControls() {
-    const services: SyncServiceConfig[] = [
+    const services: Array<Omit<SyncServiceConfig, 'region'>> = [
       {
         serviceName: 'odoo-backup',
         displayName: 'Odoo Backup Service',
@@ -90,19 +90,28 @@ export class SyncControlService implements OnModuleInit {
     ];
 
     for (const service of services) {
-      await this.prisma.syncControl.upsert({
-        where: { 
-          serviceName_region: {
-            serviceName: service.serviceName,
-            region: null!, // Global service
-          },
-        },
-        create: { ...service, region: null },
-        update: {
-          displayName: service.displayName,
-          description: service.description,
+      // For global services (region = null), we need to handle upsert manually
+      // because Prisma doesn't handle null well in composite unique constraints
+      const existing = await this.prisma.syncControl.findFirst({
+        where: {
+          serviceName: service.serviceName,
+          region: null,
         },
       });
+
+      if (existing) {
+        await this.prisma.syncControl.update({
+          where: { id: existing.id },
+          data: {
+            displayName: service.displayName,
+            description: service.description,
+          },
+        });
+      } else {
+        await this.prisma.syncControl.create({
+          data: service,
+        });
+      }
     }
   }
 
