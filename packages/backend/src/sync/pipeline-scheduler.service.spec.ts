@@ -3,6 +3,7 @@ import { JobType, ScopeType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PipelineSchedulerService } from './pipeline-scheduler.service';
 import { SyncService } from './sync.service';
+import { SyncControlService } from './sync-control.service';
 
 describe('PipelineSchedulerService', () => {
   let service: PipelineSchedulerService;
@@ -27,6 +28,14 @@ describe('PipelineSchedulerService', () => {
           provide: SyncService,
           useValue: {
             createSyncJob: jest.fn(),
+          },
+        },
+        {
+          provide: SyncControlService,
+          useValue: {
+            isEnabled: jest.fn().mockResolvedValue(true),
+            markRunning: jest.fn().mockResolvedValue(undefined),
+            markStopped: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

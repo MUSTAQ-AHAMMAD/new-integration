@@ -23,6 +23,14 @@ function makeAlerts() {
   };
 }
 
+function makeSyncControl() {
+  return {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    markRunning: jest.fn().mockResolvedValue(undefined),
+    markStopped: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 function makeConfig(thresholdHours?: number) {
   return {
     get: jest.fn().mockImplementation((key: string) => {
@@ -60,6 +68,7 @@ describe('StalledOrdersService', () => {
     service = new StalledOrdersService(
       prisma as unknown as PrismaService,
       alerts as unknown as AlertsService,
+      makeSyncControl() as never,
       makeConfig() as unknown as ConfigService,
     );
     jest.clearAllMocks();
@@ -176,6 +185,7 @@ describe('StalledOrdersService', () => {
       const svc = new StalledOrdersService(
         prisma as unknown as PrismaService,
         alerts as unknown as AlertsService,
+        makeSyncControl() as never,
         makeConfig(12) as unknown as ConfigService,
       );
       prisma.orderSyncQueue.count.mockResolvedValueOnce(0);
@@ -193,6 +203,7 @@ describe('StalledOrdersService', () => {
       const svc = new StalledOrdersService(
         prisma as unknown as PrismaService,
         alerts as unknown as AlertsService,
+        makeSyncControl() as never,
         makeConfig(0) as unknown as ConfigService,
       );
       prisma.orderSyncQueue.count.mockResolvedValueOnce(0);

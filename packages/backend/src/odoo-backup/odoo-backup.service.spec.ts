@@ -86,17 +86,27 @@ function makeOrderSyncService() {
   };
 }
 
+function makeSyncControl() {
+  return {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    markRunning: jest.fn().mockResolvedValue(undefined),
+    markStopped: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 function makeService(
   prisma = makePrisma(),
   odooClient = makeOdooClient(),
   orderSyncService = makeOrderSyncService(),
+  syncControl = makeSyncControl(),
 ) {
   const service = new OdooBackupService(
     prisma as never,
     odooClient as never,
     orderSyncService as never,
+    syncControl as never,
   );
-  return { service, prisma, odooClient, orderSyncService };
+  return { service, prisma, odooClient, orderSyncService, syncControl };
 }
 
 function makeCredential(overrides: Record<string, unknown> = {}) {

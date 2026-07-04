@@ -177,6 +177,7 @@ describe('FusionTransformationService', () => {
 
     mockCustomerService = {
       getCustomerId: jest.fn().mockResolvedValue(null),
+      getCustomerProfile: jest.fn().mockResolvedValue(null),
     } as unknown as jest.Mocked<OracleCustomerService>;
 
     service = new FusionTransformationService(

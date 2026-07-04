@@ -80,8 +80,16 @@ function makeCred(overrides: Record<string, unknown> = {}) {
 // ---------------------------------------------------------------------------
 
 function makeService(prisma = makePrisma()) {
-  const service = new VendHqSalesBackupService(prisma as never);
-  return { service, prisma };
+  const syncControl = {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    markRunning: jest.fn().mockResolvedValue(undefined),
+    markStopped: jest.fn().mockResolvedValue(undefined),
+  };
+  const service = new VendHqSalesBackupService(
+    prisma as never,
+    syncControl as never,
+  );
+  return { service, prisma, syncControl };
 }
 
 // ---------------------------------------------------------------------------

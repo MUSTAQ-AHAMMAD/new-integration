@@ -30,6 +30,8 @@ const BASE_ORDER = {
   odooOrderNumber: 'S00001',
   branchCode: 'DXB',
   branchName: 'Dubai Store',
+  orderDate: new Date('2024-06-15T10:00:00Z'),
+  currency: 'AED',
   isPaid: true,
   isCancelled: false,
   isRefund: false,
@@ -64,6 +66,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
   let mockQueues: jest.Mocked<Partial<QueuesService>>;
   let mockSoapClient: jest.Mocked<Partial<OracleSoapClient>>;
   let mockTransformation: jest.Mocked<Partial<FusionTransformationService>>;
+  let mockEnrichment: { enrichOrder: jest.Mock };
 
   beforeEach(() => {
     mockPrisma = {
@@ -188,6 +191,36 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       }),
     };
 
+    mockEnrichment = {
+      enrichOrder: jest.fn().mockResolvedValue({
+        invoiceHeader: {
+          billToCustomerName: 'Test',
+          billToLocation: 'L1',
+          billToAccountNumber: '12345',
+          businessUnit: 'BU1',
+          transactionSource: 'SRC',
+          transactionType: 'TYPE',
+          saleDate: new Date(),
+          invoiceCurrencyCode: 'AED',
+          conversionRateType: 'User',
+          invoiceLines: [
+            {
+              lineNumber: 1,
+              itemNumber: 'ITEM-001',
+              description: 'Test Product',
+              quantity: 1,
+              unitSellingPrice: 100,
+              currencyCode: 'AED',
+            },
+          ],
+        },
+        standardReceipts: [],
+        miscReceipts: [],
+        applyReceipts: [],
+        journalHeaders: [],
+      }),
+    };
+
     processor = new OrderSyncProcessor(
       mockPrisma as unknown as PrismaService,
       mockGateway as unknown as GatewayService,
@@ -200,6 +233,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       mockSoapClient as unknown as OracleSoapClient,
       mockTransformation as unknown as FusionTransformationService,
       {} as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
+      mockEnrichment as unknown as import('../../sync/order-enrichment.service').OrderEnrichmentService,
     );
 
     jest.clearAllMocks();
@@ -419,21 +453,22 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     });
   });
 
-  describe('no backup source (Path C)', () => {
+  describe('enrichment failure handling', () => {
+    // The enrichment service owns backup resolution and only throws for
+    // orders it genuinely cannot process (e.g. the OrderSyncQueue row was
+    // deleted). The processor must surface that failure safely: mark the
+    // order FAILED, avoid Oracle calls, and never record a SUCCESS. (Orders
+    // that merely lack backup data are handled by the enrichment service's
+    // minimal-fallback path and do not reach here.)
     beforeEach(() => {
-      // No odooBackupOrderId and no VendHQ sale → Path C
-      (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue({
-        ...BASE_ORDER,
-        odooBackupOrderId: null,
-      });
-      (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue(
-        null,
+      mockEnrichment.enrichOrder.mockRejectedValue(
+        new Error('Order not found: q-001'),
       );
     });
 
-    it('marks the order as FAILED when no backup data exists', async () => {
+    it('marks the order as FAILED when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow(
-        'No backup data found',
+        'Order not found',
       );
 
       const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
@@ -444,7 +479,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(failedUpdate).toBeDefined();
     });
 
-    it('does NOT mark the order as SYNCED when no backup data exists', async () => {
+    it('does NOT mark the order as SYNCED when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
       const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
@@ -455,25 +490,25 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(syncedUpdate).toBeUndefined();
     });
 
-    it('does NOT call Oracle when no backup data exists', async () => {
+    it('does NOT call Oracle when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
       expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
     });
 
-    it('creates a FailedTransaction record when no backup data exists', async () => {
+    it('creates a FailedTransaction record when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
       expect(mockPrisma.failedTransaction!.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            errorMessage: expect.stringContaining('No backup data found'),
+            errorMessage: expect.stringContaining('Order not found'),
           }),
         }),
       );
     });
 
-    it('does NOT record an idempotency SUCCESS when no backup data exists', async () => {
+    it('does NOT record an idempotency SUCCESS when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
       const calls = (mockIdempotency.recordOperation as jest.Mock).mock
