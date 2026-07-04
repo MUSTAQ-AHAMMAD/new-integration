@@ -17,7 +17,7 @@ export async function withTimeout<T>(
   timeoutMs: number,
   operationName = 'Operation',
 ): Promise<T> {
-  let timeoutHandle: NodeJS.Timeout;
+  let timeoutHandle: NodeJS.Timeout | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
@@ -31,10 +31,10 @@ export async function withTimeout<T>(
 
   try {
     const result = await Promise.race([promise, timeoutPromise]);
-    clearTimeout(timeoutHandle!);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
     return result;
   } catch (err) {
-    clearTimeout(timeoutHandle!);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
     throw err;
   }
 }

@@ -128,15 +128,12 @@ export class MetricsService implements OnModuleInit {
   }
 
   async onModuleInit() {
+    // No initialization needed - gauges are refreshed on each scrape
     await withTimeout(
-      this.initializeMetrics(),
+      Promise.resolve(),
       MODULE_INIT_TIMEOUT_MS,
       'MetricsService.onModuleInit',
     );
-  }
-
-  private async initializeMetrics() {
-    // Gauges are refreshed on each scrape
   }
 
   async getMetrics(): Promise<string> {
