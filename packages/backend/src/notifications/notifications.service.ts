@@ -4,10 +4,7 @@ import { NotificationRole } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  withTimeout,
-  MODULE_INIT_TIMEOUT_MS,
-} from '../common/utils/timeout';
+import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 @Injectable()
 export class NotificationsService implements OnModuleInit {
@@ -27,6 +24,7 @@ export class NotificationsService implements OnModuleInit {
     );
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- async signature required for withTimeout wrapping in onModuleInit
   private async initializeTransporter() {
     const smtpHost = this.config.get<string>('SMTP_HOST');
     const smtpUser = this.config.get<string>('SMTP_USER');

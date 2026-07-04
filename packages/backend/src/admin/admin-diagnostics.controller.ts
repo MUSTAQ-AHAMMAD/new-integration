@@ -64,11 +64,15 @@ export class AdminDiagnosticsController {
       }
 
       if (order.validationErrors) {
-        reasons.push(`Validation errors: ${JSON.stringify(order.validationErrors)}`);
+        reasons.push(
+          `Validation errors: ${JSON.stringify(order.validationErrors)}`,
+        );
       }
 
       if (reasons.length === 0) {
-        reasons.push('Unknown reason - order meets all criteria but was skipped');
+        reasons.push(
+          'Unknown reason - order meets all criteria but was skipped',
+        );
       }
 
       return {
@@ -83,9 +87,8 @@ export class AdminDiagnosticsController {
       summary: {
         notPaid: analysis.filter((o) => !o.isPaid).length,
         cancelled: analysis.filter((o) => o.isCancelled).length,
-        validationErrors: analysis.filter(
-          (o) => o.validationErrors !== null,
-        ).length,
+        validationErrors: analysis.filter((o) => o.validationErrors !== null)
+          .length,
       },
     };
   }
@@ -120,7 +123,9 @@ export class AdminDiagnosticsController {
     }
 
     if (orderQueue.validationErrors) {
-      reasons.push(`Validation errors: ${JSON.stringify(orderQueue.validationErrors)}`);
+      reasons.push(
+        `Validation errors: ${JSON.stringify(orderQueue.validationErrors)}`,
+      );
       recommendations.push(
         'Fix the validation errors in the source data and re-ingest the order.',
       );
@@ -129,7 +134,8 @@ export class AdminDiagnosticsController {
     return {
       found: true,
       order: orderQueue,
-      skipReasons: reasons.length > 0 ? reasons : ['Order should be eligible for sync'],
+      skipReasons:
+        reasons.length > 0 ? reasons : ['Order should be eligible for sync'],
       recommendations,
       canRetry: orderQueue.status === 'SKIPPED' && !orderQueue.isCancelled,
     };
@@ -173,7 +179,8 @@ export class AdminDiagnosticsController {
         total,
         successCount,
         errorCount,
-        successRate: total > 0 ? ((successCount / total) * 100).toFixed(2) : '0',
+        successRate:
+          total > 0 ? ((successCount / total) * 100).toFixed(2) : '0',
       },
       recentItems,
       recentErrors: errors,

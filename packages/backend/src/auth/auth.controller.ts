@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { IsEmail, IsString } from 'class-validator';
+import { IsString } from 'class-validator';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
 

@@ -358,7 +358,9 @@ describe('OracleSoapClient', () => {
       await client.createSimpleInvoice(makeInvoiceHeader());
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
-      expect(soapBody).toMatch(/<typ1:Quantity unitCode="Ea">2<\/typ1:Quantity>/);
+      expect(soapBody).toMatch(
+        /<typ1:Quantity unitCode="Ea">2<\/typ1:Quantity>/,
+      );
     });
 
     it('includes currencyCode attribute in UnitSellingPrice field', async () => {
@@ -369,7 +371,9 @@ describe('OracleSoapClient', () => {
       await client.createSimpleInvoice(makeInvoiceHeader());
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
-      expect(soapBody).toMatch(/<typ1:UnitSellingPrice currencyCode="AED">50<\/typ1:UnitSellingPrice>/);
+      expect(soapBody).toMatch(
+        /<typ1:UnitSellingPrice currencyCode="AED">50<\/typ1:UnitSellingPrice>/,
+      );
     });
 
     it('uses custom uomCode when provided', async () => {
@@ -394,7 +398,9 @@ describe('OracleSoapClient', () => {
       );
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
-      expect(soapBody).toMatch(/<typ1:Quantity unitCode="Box">5<\/typ1:Quantity>/);
+      expect(soapBody).toMatch(
+        /<typ1:Quantity unitCode="Box">5<\/typ1:Quantity>/,
+      );
     });
 
     it('prioritizes MemoLineName over ItemNumber for discount items', async () => {
@@ -419,8 +425,12 @@ describe('OracleSoapClient', () => {
       );
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
-      expect(soapBody).toContain('<typ1:MemoLineName>Discount Item</typ1:MemoLineName>');
-      expect(soapBody).not.toContain('<typ1:ItemNumber>ITEM-001</typ1:ItemNumber>');
+      expect(soapBody).toContain(
+        '<typ1:MemoLineName>Discount Item</typ1:MemoLineName>',
+      );
+      expect(soapBody).not.toContain(
+        '<typ1:ItemNumber>ITEM-001</typ1:ItemNumber>',
+      );
     });
 
     it('uses ItemNumber when MemoLineName is not provided', async () => {

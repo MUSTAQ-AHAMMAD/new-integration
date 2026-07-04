@@ -164,7 +164,7 @@ export class StoreConfigService {
 
     // Try to get bank/cash account IDs from VendHqRegister for this region
     const register = await this.prisma.vendHqRegister.findFirst({
-      where: { 
+      where: {
         region,
         bankAccountId: { not: null },
         cashAccountId: { not: null },
@@ -173,15 +173,23 @@ export class StoreConfigService {
       orderBy: { createdAt: 'desc' },
     });
 
-    const bankAccountId = register?.bankAccountId ? Number(register.bankAccountId) : undefined;
-    const cashAccountId = register?.cashAccountId ? Number(register.cashAccountId) : undefined;
+    const bankAccountId = register?.bankAccountId
+      ? Number(register.bankAccountId)
+      : undefined;
+    const cashAccountId = register?.cashAccountId
+      ? Number(register.cashAccountId)
+      : undefined;
 
     const validationErrors: string[] = [];
     if (!bankAccountId || !cashAccountId) {
-      validationErrors.push('Bank or cash account IDs missing - receipt creation will fail');
+      validationErrors.push(
+        'Bank or cash account IDs missing - receipt creation will fail',
+      );
     }
     if (!fusionMetadata) {
-      validationErrors.push('No FusionSalesMetadata found for region - using defaults');
+      validationErrors.push(
+        'No FusionSalesMetadata found for region - using defaults',
+      );
     }
 
     // Create the configuration
@@ -191,7 +199,10 @@ export class StoreConfigService {
         branchName,
         odooBranchId: numberToBigInt(branchId),
         oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
-        oracleBusinessUnit: fusionMetadata?.businessUnit || businessUnitMap?.businessUnitName || 'DEFAULT_BU',
+        oracleBusinessUnit:
+          fusionMetadata?.businessUnit ||
+          businessUnitMap?.businessUnitName ||
+          'DEFAULT_BU',
         billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
         billToLocation: fusionMetadata?.siteNumber || undefined,
         bankAccountName: register?.bankAccount || `BANK_${region}`,
@@ -206,8 +217,12 @@ export class StoreConfigService {
         invoiceCurrencyCode: 'AED',
         region,
         isActive: true,
-        validationStatus: bankAccountId && cashAccountId ? ValidationStatus.PENDING : ValidationStatus.PARTIAL,
-        validationErrors: validationErrors.length > 0 ? validationErrors : undefined,
+        validationStatus:
+          bankAccountId && cashAccountId
+            ? ValidationStatus.PENDING
+            : ValidationStatus.PARTIAL,
+        validationErrors:
+          validationErrors.length > 0 ? validationErrors : undefined,
         createdBy: 'SYSTEM_AUTO_CREATE',
       },
     });
@@ -318,29 +333,43 @@ export class StoreConfigService {
     const config = await this.prisma.storeConfiguration.findUnique({
       where: { branchCode },
     });
-    if (!config) return { isValid: false, errors: ['Store config not found'], warnings: [] };
+    if (!config)
+      return {
+        isValid: false,
+        errors: ['Store config not found'],
+        warnings: [],
+      };
 
     const errors: string[] = [];
     const warnings: string[] = [];
-    
+
     // Critical fields - will block sync
     if (!config.billToSiteName) errors.push('billToSiteName is required');
     if (!config.bankAccountName) errors.push('bankAccountName is required');
     if (!config.cashAccountName) errors.push('cashAccountName is required');
     if (!config.paymentTermsName) errors.push('paymentTermsName is required');
-    if (!config.oracleBusinessUnit) errors.push('oracleBusinessUnit is required');
-    
+    if (!config.oracleBusinessUnit)
+      errors.push('oracleBusinessUnit is required');
+
     // Account ID validation - critical for receipt creation
     if (config.bankAccountId === null) {
-      errors.push('bankAccountId is required for receipt creation - receipts will be skipped');
+      errors.push(
+        'bankAccountId is required for receipt creation - receipts will be skipped',
+      );
     }
     if (config.cashAccountId === null) {
-      errors.push('cashAccountId is required for receipt creation - cash receipts will be skipped');
+      errors.push(
+        'cashAccountId is required for receipt creation - cash receipts will be skipped',
+      );
     }
-    
+
     // Warning fields - won't block sync but should be reviewed
-    if (!config.region) warnings.push('region should be set for proper configuration matching');
-    if (!config.taxClassificationCode) warnings.push('taxClassificationCode not set - may affect tax calculation');
+    if (!config.region)
+      warnings.push('region should be set for proper configuration matching');
+    if (!config.taxClassificationCode)
+      warnings.push(
+        'taxClassificationCode not set - may affect tax calculation',
+      );
 
     const status =
       errors.length === 0
@@ -414,7 +443,7 @@ export class StoreConfigService {
   /**
    * Populate missing bank/cash account IDs for store configurations
    * Uses VendHqRegister data as the source of truth for account IDs by region
-   * 
+   *
    * @returns Summary of updated configurations
    */
   async populateBankCashAccountIds(): Promise<{
@@ -423,7 +452,9 @@ export class StoreConfigService {
     skipped: number;
     errors: string[];
   }> {
-    this.logger.log('Starting bank/cash account ID population for store configurations');
+    this.logger.log(
+      'Starting bank/cash account ID population for store configurations',
+    );
 
     const errors: string[] = [];
     let updated = 0;
@@ -432,10 +463,7 @@ export class StoreConfigService {
     // Get all store configurations that need account IDs
     const stores = await this.prisma.storeConfiguration.findMany({
       where: {
-        OR: [
-          { bankAccountId: null },
-          { cashAccountId: null },
-        ],
+        OR: [{ bankAccountId: null }, { cashAccountId: null }],
       },
       orderBy: { branchCode: 'asc' },
     });
@@ -463,10 +491,15 @@ export class StoreConfigService {
       ORDER BY region, "createdAt" DESC
     `;
 
-    this.logger.log(`Found ${registersByRegion.length} regions with account IDs`);
+    this.logger.log(
+      `Found ${registersByRegion.length} regions with account IDs`,
+    );
 
     // Create a map of region -> account IDs
-    const regionAccountMap = new Map<string, { bankAccountId: number; cashAccountId: number }>();
+    const regionAccountMap = new Map<
+      string,
+      { bankAccountId: number; cashAccountId: number }
+    >();
     for (const reg of registersByRegion) {
       if (reg.bankAccountId && reg.cashAccountId) {
         regionAccountMap.set(reg.region, {
@@ -474,7 +507,7 @@ export class StoreConfigService {
           cashAccountId: Number(reg.cashAccountId),
         });
         this.logger.log(
-          `Region ${reg.region}: bank=${reg.bankAccountId}, cash=${reg.cashAccountId} (from ${reg.sampleRegisterName})`
+          `Region ${reg.region}: bank=${reg.bankAccountId}, cash=${reg.cashAccountId} (from ${reg.sampleRegisterName})`,
         );
       }
     }
@@ -513,8 +546,8 @@ export class StoreConfigService {
 
           this.logger.log(
             `Updated store ${store.branchCode}: ` +
-            `bank=${updateData.bankAccountId || 'unchanged'}, ` +
-            `cash=${updateData.cashAccountId || 'unchanged'}`
+              `bank=${updateData.bankAccountId || 'unchanged'}, ` +
+              `cash=${updateData.cashAccountId || 'unchanged'}`,
           );
           updated++;
         } else {
@@ -529,7 +562,7 @@ export class StoreConfigService {
     }
 
     this.logger.log(
-      `Completed: ${updated} updated, ${skipped} skipped out of ${stores.length} stores`
+      `Completed: ${updated} updated, ${skipped} skipped out of ${stores.length} stores`,
     );
 
     // Clear cache after updates
@@ -656,7 +689,10 @@ export class StoreConfigService {
       ORDER BY region, "createdAt" DESC
     `;
 
-    const regionAccountMap = new Map<string, { bankAccountId: number; cashAccountId: number }>();
+    const regionAccountMap = new Map<
+      string,
+      { bankAccountId: number; cashAccountId: number }
+    >();
     for (const reg of registersByRegion) {
       if (reg.bankAccountId && reg.cashAccountId) {
         regionAccountMap.set(reg.region, {
@@ -731,14 +767,18 @@ export class StoreConfigService {
             invoiceCurrencyCode: 'AED',
             region,
             isActive: true,
-            validationStatus: accountIds ? ValidationStatus.PENDING : ValidationStatus.PARTIAL,
+            validationStatus: accountIds
+              ? ValidationStatus.PENDING
+              : ValidationStatus.PARTIAL,
             createdBy: 'SYSTEM_POPULATE_API',
           },
         });
 
         this.logger.log(
           `Created StoreConfiguration for branch ${branchCode} (${branch.branchName || 'N/A'})` +
-          (accountIds ? ` with account IDs` : ` without account IDs - needs manual update`),
+            (accountIds
+              ? ` with account IDs`
+              : ` without account IDs - needs manual update`),
         );
         created++;
       } catch (err) {

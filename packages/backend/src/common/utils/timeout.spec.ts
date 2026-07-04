@@ -16,9 +16,9 @@ describe('withTimeout', () => {
       setTimeout(() => resolve('too late'), 2000);
     });
 
-    await expect(
-      withTimeout(promise, 100, 'TestOperation'),
-    ).rejects.toThrow('TestOperation timed out after 100ms');
+    await expect(withTimeout(promise, 100, 'TestOperation')).rejects.toThrow(
+      'TestOperation timed out after 100ms',
+    );
   });
 
   it('should propagate errors from the original promise', async () => {
@@ -56,7 +56,7 @@ describe('withTimeout', () => {
 
     try {
       await withTimeout(promise, 1000, 'TestOperation');
-    } catch (err) {
+    } catch (_err) {
       // Expected
     }
 

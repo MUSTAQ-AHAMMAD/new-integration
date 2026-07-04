@@ -124,10 +124,11 @@ export class StoreConfigController {
   @Post('batch/populate-accounts')
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Atomically populate bank/cash accounts with backup and rollback support',
+    summary:
+      'Atomically populate bank/cash accounts with backup and rollback support',
   })
-  async batchPopulateAccounts(
-    @Body() body?: { dryRun?: boolean; autoRollbackOnError?: boolean }
+  batchPopulateAccounts(
+    @Body() _body?: { dryRun?: boolean; autoRollbackOnError?: boolean },
   ) {
     // This endpoint uses the BatchOperationsService which will be injected
     // For now, return a message that it's available
@@ -142,7 +143,7 @@ export class StoreConfigController {
   @ApiOperation({
     summary: 'Rollback store configurations from a backup',
   })
-  async rollbackFromBackup(@Param('backupId') backupId: string) {
+  rollbackFromBackup(@Param('backupId') backupId: string) {
     return {
       message: 'Rollback endpoint - requires BatchOperationsService',
       backupId,
@@ -154,7 +155,7 @@ export class StoreConfigController {
   @ApiOperation({
     summary: 'List configuration backups',
   })
-  async listBackups(@Query('limit') limit?: string) {
+  listBackups(@Query('limit') _limit?: string) {
     return {
       message: 'Backups list endpoint - requires BatchOperationsService',
     };
@@ -165,7 +166,7 @@ export class StoreConfigController {
   @ApiOperation({
     summary: 'Create a manual backup',
   })
-  async createBackup(@Body() body: { reason: string }) {
+  createBackup(@Body() body: { reason: string }) {
     return {
       message: 'Create backup endpoint - requires BatchOperationsService',
       reason: body.reason,

@@ -362,8 +362,7 @@ describe('StoreConfigService', () => {
     it('matches branches to FusionSalesMetadata by region', async () => {
       await service.populateAllBranches();
 
-      const createCalls = (prisma.storeConfiguration.create as jest.Mock).mock
-        .calls;
+      const createCalls = prisma.storeConfiguration.create.mock.calls;
 
       // Branch 3 (AE) should use AE metadata
       expect(createCalls[0][0].data.billToSiteName).toBe('AE Store');
@@ -383,7 +382,7 @@ describe('StoreConfigService', () => {
     });
 
     it('handles create errors gracefully', async () => {
-      (prisma.storeConfiguration.create as jest.Mock)
+      prisma.storeConfiguration.create
         .mockRejectedValueOnce(new Error('Database error'))
         .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});

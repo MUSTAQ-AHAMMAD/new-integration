@@ -139,8 +139,7 @@ async function testStoreConfig() {
   console.log('\n🔄 Testing after cache clear...');
   const testBranchCode = String(failingBranches[0]);
   const startTime = Date.now();
-  const configAfterClear =
-    await storeConfigService.getOrCreateStoreConfig(testBranchCode);
+  await storeConfigService.getOrCreateStoreConfig(testBranchCode);
   const elapsed = Date.now() - startTime;
   console.log(
     `   ✅ Config obtained in ${elapsed}ms (cache was cleared, so DB lookup expected)`,

@@ -87,12 +87,14 @@ export class BulkRetryService {
         ...failedOrders.filter((o) => !priorityBranches.includes(o.branchCode)),
       ];
 
-      this.logger.log(`Sorted ${sortedOrders.length} transactions (${priorityBranches.length} priority branches)`);
+      this.logger.log(
+        `Sorted ${sortedOrders.length} transactions (${priorityBranches.length} priority branches)`,
+      );
 
       // === DRY-RUN MODE ===
       if (dryRun) {
         this.logger.log('DRY-RUN MODE: Showing what would be retried...');
-        
+
         const preview = sortedOrders.slice(0, 10).map((order) => ({
           odooOrderId: order.odooOrderId,
           branchCode: order.branchCode,
@@ -125,9 +127,13 @@ export class BulkRetryService {
       });
 
       const queuedOrderIds = new Set(alreadyQueued.map((o) => o.odooOrderId));
-      const ordersToRetry = sortedOrders.filter((o) => !queuedOrderIds.has(o.odooOrderId));
+      const ordersToRetry = sortedOrders.filter(
+        (o) => !queuedOrderIds.has(o.odooOrderId),
+      );
 
-      this.logger.log(`Filtered out ${queuedOrderIds.size} already queued orders`);
+      this.logger.log(
+        `Filtered out ${queuedOrderIds.size} already queued orders`,
+      );
       this.logger.log(`Will retry ${ordersToRetry.length} orders`);
 
       // === STEP 4: ATOMIC RETRY QUEUEING ===
@@ -135,10 +141,10 @@ export class BulkRetryService {
 
       // Process in batches of 50 to avoid overwhelming the queue
       const BATCH_SIZE = 50;
-      
+
       for (let i = 0; i < ordersToRetry.length; i += BATCH_SIZE) {
         const batch = ordersToRetry.slice(i, i + BATCH_SIZE);
-        
+
         await this.prisma.$transaction(async (tx) => {
           for (const order of batch) {
             try {
@@ -160,9 +166,11 @@ export class BulkRetryService {
               });
 
               queued++;
-              
+
               if (queued % 100 === 0) {
-                this.logger.log(`Progress: ${queued}/${ordersToRetry.length} queued`);
+                this.logger.log(
+                  `Progress: ${queued}/${ordersToRetry.length} queued`,
+                );
               }
             } catch (err) {
               const errorMsg = `Failed to queue order ${order.odooOrderId}: ${err instanceof Error ? err.message : String(err)}`;
@@ -183,8 +191,12 @@ export class BulkRetryService {
         },
       });
 
-      this.logger.log(`✅ Queue status: ${nowQueued} orders waiting for processing`);
-      this.logger.log(`✅ Bulk retry complete: ${queued} queued, ${skipped} skipped`);
+      this.logger.log(
+        `✅ Queue status: ${nowQueued} orders waiting for processing`,
+      );
+      this.logger.log(
+        `✅ Bulk retry complete: ${queued} queued, ${skipped} skipped`,
+      );
 
       return {
         totalFailed: sortedOrders.length,
@@ -193,7 +205,6 @@ export class BulkRetryService {
         errors,
         dryRun: false,
       };
-
     } catch (error) {
       this.logger.error('❌ Bulk retry failed:', error);
       errors.push(error instanceof Error ? error.message : String(error));
@@ -212,7 +223,9 @@ export class BulkRetryService {
    * Retry failed transactions for specific branches
    */
   async retryForBranches(branchCodes: string[], dryRun = false): Promise<any> {
-    this.logger.log(`Retrying failed transactions for branches: ${branchCodes.join(', ')}`);
+    this.logger.log(
+      `Retrying failed transactions for branches: ${branchCodes.join(', ')}`,
+    );
 
     return this.retryAllFailed({
       priorityBranches: branchCodes,

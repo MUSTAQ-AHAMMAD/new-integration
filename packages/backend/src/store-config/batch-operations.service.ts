@@ -35,10 +35,12 @@ export class BatchOperationsService {
     dryRun: boolean;
   }> {
     const { dryRun = false, autoRollbackOnError = true } = options || {};
-    
+
     this.logger.log('=== ATOMIC BATCH UPDATE: Populate Bank/Cash Accounts ===');
     this.logger.log(`Mode: ${dryRun ? 'DRY-RUN' : 'LIVE'}`);
-    this.logger.log(`Auto-rollback: ${autoRollbackOnError ? 'ENABLED' : 'DISABLED'}`);
+    this.logger.log(
+      `Auto-rollback: ${autoRollbackOnError ? 'ENABLED' : 'DISABLED'}`,
+    );
 
     const errors: string[] = [];
     let updated = 0;
@@ -48,7 +50,7 @@ export class BatchOperationsService {
     try {
       // === STEP 1: FETCH DATA (outside transaction) ===
       this.logger.log('Step 1/6: Fetching VendHQ register data by region...');
-      
+
       const registersByRegion = await this.prisma.$queryRaw<
         Array<{
           region: string;
@@ -68,21 +70,24 @@ export class BatchOperationsService {
       `;
 
       if (registersByRegion.length === 0) {
-        throw new Error('No VendHqRegister data found with bankAccountId/cashAccountId');
+        throw new Error(
+          'No VendHqRegister data found with bankAccountId/cashAccountId',
+        );
       }
 
-      this.logger.log(`Found registers for ${registersByRegion.length} regions`);
+      this.logger.log(
+        `Found registers for ${registersByRegion.length} regions`,
+      );
 
       // === STEP 2: IDENTIFY STORES NEEDING UPDATE ===
-      this.logger.log('Step 2/6: Identifying stores with missing account IDs...');
-      
+      this.logger.log(
+        'Step 2/6: Identifying stores with missing account IDs...',
+      );
+
       const stores = await this.prisma.storeConfiguration.findMany({
         where: {
           isActive: true,
-          OR: [
-            { bankAccountId: null },
-            { cashAccountId: null },
-          ],
+          OR: [{ bankAccountId: null }, { cashAccountId: null }],
         },
         select: {
           branchCode: true,
@@ -108,26 +113,34 @@ export class BatchOperationsService {
       // === DRY-RUN MODE: Return preview ===
       if (dryRun) {
         this.logger.log('DRY-RUN MODE: Showing what would be updated...');
-        
+
         const preview = stores.map((store) => {
-          const regionData = registersByRegion.find((r) => r.region === store.region);
+          const regionData = registersByRegion.find(
+            (r) => r.region === store.region,
+          );
           return {
             branchCode: store.branchCode,
             region: store.region,
             currentBankId: store.bankAccountId,
             currentCashId: store.cashAccountId,
-            newBankId: regionData?.bankAccountId ? Number(regionData.bankAccountId) : null,
-            newCashId: regionData?.cashAccountId ? Number(regionData.cashAccountId) : null,
+            newBankId: regionData?.bankAccountId
+              ? Number(regionData.bankAccountId)
+              : null,
+            newCashId: regionData?.cashAccountId
+              ? Number(regionData.cashAccountId)
+              : null,
             wouldUpdate: !!regionData,
           };
         });
 
-        this.logger.log(`Would update ${preview.filter(p => p.wouldUpdate).length} stores`);
-        
+        this.logger.log(
+          `Would update ${preview.filter((p) => p.wouldUpdate).length} stores`,
+        );
+
         return {
           totalStores: stores.length,
-          updated: preview.filter(p => p.wouldUpdate).length,
-          skipped: preview.filter(p => !p.wouldUpdate).length,
+          updated: preview.filter((p) => p.wouldUpdate).length,
+          skipped: preview.filter((p) => !p.wouldUpdate).length,
           errors: [],
           dryRun: true,
         };
@@ -135,7 +148,7 @@ export class BatchOperationsService {
 
       // === STEP 3: CREATE BACKUP ===
       this.logger.log('Step 3/6: Creating backup snapshot...');
-      
+
       const backupData = stores.map((s) => ({
         branchCode: s.branchCode,
         bankAccountId: s.bankAccountId,
@@ -157,37 +170,43 @@ export class BatchOperationsService {
 
       // === STEP 4: ATOMIC TRANSACTION ===
       this.logger.log('Step 4/6: Executing atomic batch update...');
-      
+
       await this.prisma.$transaction(
         async (tx) => {
           // Process in batches of 10 for better performance
           const BATCH_SIZE = 10;
-          
+
           for (let i = 0; i < stores.length; i += BATCH_SIZE) {
             const batch = stores.slice(i, i + BATCH_SIZE);
-            
+
             await Promise.all(
               batch.map(async (store) => {
                 if (!store.region) {
-                  errors.push(`Store ${store.branchCode} has no region - skipped`);
+                  errors.push(
+                    `Store ${store.branchCode} has no region - skipped`,
+                  );
                   skipped++;
                   return;
                 }
 
-                const regionData = registersByRegion.find((r) => r.region === store.region);
-                
+                const regionData = registersByRegion.find(
+                  (r) => r.region === store.region,
+                );
+
                 if (!regionData) {
-                  errors.push(`No register data for region ${store.region} - skipped`);
+                  errors.push(
+                    `No register data for region ${store.region} - skipped`,
+                  );
                   skipped++;
                   return;
                 }
 
                 const updateData: any = {};
-                
+
                 if (!store.bankAccountId && regionData.bankAccountId) {
                   updateData.bankAccountId = Number(regionData.bankAccountId);
                 }
-                
+
                 if (!store.cashAccountId && regionData.cashAccountId) {
                   updateData.cashAccountId = Number(regionData.cashAccountId);
                 }
@@ -197,15 +216,15 @@ export class BatchOperationsService {
                     where: { branchCode: store.branchCode },
                     data: updateData,
                   });
-                  
+
                   this.logger.log(
-                    `Updated ${store.branchCode}: bank=${updateData.bankAccountId || 'unchanged'}, cash=${updateData.cashAccountId || 'unchanged'}`
+                    `Updated ${store.branchCode}: bank=${updateData.bankAccountId || 'unchanged'}, cash=${updateData.cashAccountId || 'unchanged'}`,
                   );
                   updated++;
                 } else {
                   skipped++;
                 }
-              })
+              }),
             );
           }
 
@@ -213,33 +232,34 @@ export class BatchOperationsService {
           const missingAfterUpdate = await tx.storeConfiguration.count({
             where: {
               isActive: true,
-              OR: [
-                { bankAccountId: null },
-                { cashAccountId: null },
-              ],
+              OR: [{ bankAccountId: null }, { cashAccountId: null }],
             },
           });
 
           if (missingAfterUpdate > 0) {
             throw new Error(
-              `Integrity check failed: ${missingAfterUpdate} active stores still have NULL account IDs after update`
+              `Integrity check failed: ${missingAfterUpdate} active stores still have NULL account IDs after update`,
             );
           }
 
-          this.logger.log('✅ Integrity check passed: All active stores have account IDs');
+          this.logger.log(
+            '✅ Integrity check passed: All active stores have account IDs',
+          );
         },
         {
           maxWait: 10000, // 10 seconds max wait for transaction to start
           timeout: 60000, // 60 seconds transaction timeout
-        }
+        },
       );
 
       // === STEP 5: RESOLVE ALERTS ===
       this.logger.log('Step 5/6: Resolving related alerts...');
-      await this.resolveStoreConfigAlerts(stores.map(s => s.branchCode));
+      await this.resolveStoreConfigAlerts(stores.map((s) => s.branchCode));
 
       // === STEP 6: SUCCESS ===
-      this.logger.log(`✅ Completed: ${updated} updated, ${skipped} skipped out of ${stores.length} stores`);
+      this.logger.log(
+        `✅ Completed: ${updated} updated, ${skipped} skipped out of ${stores.length} stores`,
+      );
 
       return {
         totalStores: stores.length,
@@ -249,26 +269,29 @@ export class BatchOperationsService {
         backupId,
         dryRun: false,
       };
-
     } catch (error) {
       this.logger.error('❌ Batch update failed:', error);
-      
+
       // AUTO-ROLLBACK
       if (autoRollbackOnError && backupId) {
-        this.logger.error('🔄 Auto-rollback triggered - attempting to restore from backup...');
+        this.logger.error(
+          '🔄 Auto-rollback triggered - attempting to restore from backup...',
+        );
         try {
           await this.rollbackFromBackup(backupId);
           this.logger.log('✅ Rollback successful');
           errors.push('Update failed and was rolled back successfully');
         } catch (rollbackError) {
           this.logger.error('❌ Rollback also failed:', rollbackError);
-          errors.push('CRITICAL: Update failed AND rollback failed - manual intervention required');
+          errors.push(
+            'CRITICAL: Update failed AND rollback failed - manual intervention required',
+          );
           errors.push(`Backup ID for manual recovery: ${backupId}`);
         }
       }
 
       errors.push(error instanceof Error ? error.message : String(error));
-      
+
       return {
         totalStores: 0,
         updated,
@@ -283,7 +306,9 @@ export class BatchOperationsService {
   /**
    * Resolve store configuration alerts for specific branches
    */
-  private async resolveStoreConfigAlerts(branchCodes: string[]): Promise<number> {
+  private async resolveStoreConfigAlerts(
+    branchCodes: string[],
+  ): Promise<number> {
     if (branchCodes.length === 0) return 0;
 
     const result = await this.prisma.alertLog.updateMany({
@@ -344,10 +369,12 @@ export class BatchOperationsService {
       },
       {
         timeout: 60000,
-      }
+      },
     );
 
-    this.logger.log(`✅ Rollback complete: ${restored} configurations restored`);
+    this.logger.log(
+      `✅ Rollback complete: ${restored} configurations restored`,
+    );
 
     return { restored, errors };
   }
@@ -388,13 +415,15 @@ export class BatchOperationsService {
       data: {
         backupReason: reason,
         backupData: stores,
-        affectedBranches: stores.map(s => s.branchCode),
+        affectedBranches: stores.map((s) => s.branchCode),
         recordCount: stores.length,
         createdBy: 'MANUAL',
       },
     });
 
-    this.logger.log(`Manual backup created: ${backup.id} (${stores.length} stores)`);
+    this.logger.log(
+      `Manual backup created: ${backup.id} (${stores.length} stores)`,
+    );
     return backup.id;
   }
 }

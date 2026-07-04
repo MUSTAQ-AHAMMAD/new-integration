@@ -1,9 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  withTimeout,
-  MODULE_INIT_TIMEOUT_MS,
-} from '../common/utils/timeout';
+import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 export interface SyncServiceConfig {
   serviceName: string;
@@ -53,13 +50,15 @@ export class SyncControlService implements OnModuleInit {
       {
         serviceName: 'vendhq-backup',
         displayName: 'VendHQ Backup Service',
-        description: 'Fetches sales from VendHQ API every 10 minutes (per region)',
+        description:
+          'Fetches sales from VendHQ API every 10 minutes (per region)',
         enabled: true,
       },
       {
         serviceName: 'vendhq-to-oracle',
         displayName: 'VendHQ→Oracle Sync Service',
-        description: 'Syncs VendHQ sales to Oracle every 10 minutes (per region)',
+        description:
+          'Syncs VendHQ sales to Oracle every 10 minutes (per region)',
         enabled: true,
       },
       {
@@ -123,7 +122,7 @@ export class SyncControlService implements OnModuleInit {
    */
   async isEnabled(serviceName: string, region?: string): Promise<boolean> {
     const control = await this.prisma.syncControl.findUnique({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,
@@ -140,7 +139,7 @@ export class SyncControlService implements OnModuleInit {
    */
   async markRunning(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,
@@ -163,7 +162,7 @@ export class SyncControlService implements OnModuleInit {
     region?: string,
   ): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,
@@ -182,7 +181,7 @@ export class SyncControlService implements OnModuleInit {
    */
   async enable(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,
@@ -191,7 +190,9 @@ export class SyncControlService implements OnModuleInit {
       data: { enabled: true },
     });
     const regionLabel = region ? ` (region=${region})` : '';
-    this.logger.log(`Sync service "${serviceName}"${regionLabel} has been ENABLED`);
+    this.logger.log(
+      `Sync service "${serviceName}"${regionLabel} has been ENABLED`,
+    );
   }
 
   /**
@@ -199,7 +200,7 @@ export class SyncControlService implements OnModuleInit {
    */
   async disable(serviceName: string, region?: string): Promise<void> {
     await this.prisma.syncControl.update({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,
@@ -208,7 +209,9 @@ export class SyncControlService implements OnModuleInit {
       data: { enabled: false },
     });
     const regionLabel = region ? ` (region=${region})` : '';
-    this.logger.warn(`Sync service "${serviceName}"${regionLabel} has been DISABLED`);
+    this.logger.warn(
+      `Sync service "${serviceName}"${regionLabel} has been DISABLED`,
+    );
   }
 
   /**
@@ -226,7 +229,7 @@ export class SyncControlService implements OnModuleInit {
    */
   async getOne(serviceName: string, region?: string) {
     return this.prisma.syncControl.findUnique({
-      where: { 
+      where: {
         serviceName_region: {
           serviceName,
           region: (region ?? null)!,

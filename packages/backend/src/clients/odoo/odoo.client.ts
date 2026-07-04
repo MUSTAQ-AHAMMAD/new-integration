@@ -177,7 +177,6 @@ export class OdooClient {
         );
 
         while (true) {
-          let pageOrders: OdooOrder[];
           let rawData: unknown;
 
           this.logger.debug(
@@ -231,7 +230,7 @@ export class OdooClient {
             }
           }
 
-          pageOrders = this.extractList<OdooOrder>(rawData);
+          const pageOrders = this.extractList<OdooOrder>(rawData);
 
           this.logger.log(
             `[Odoo Pagination] Fetched page ${Math.floor(offset / pageSize) + 1}: ` +
