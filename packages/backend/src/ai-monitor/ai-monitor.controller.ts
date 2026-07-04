@@ -1,6 +1,8 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { AiMonitorService } from './ai-monitor.service';
 import type { AnalysisResult, DiagnosticSignals } from './ai-monitor.types';
 
@@ -11,6 +13,7 @@ import type { AnalysisResult, DiagnosticSignals } from './ai-monitor.types';
  */
 @ApiTags('ai-monitor')
 @Controller('ai-monitor')
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('ADMIN')
 export class AiMonitorController {
   constructor(private readonly aiMonitor: AiMonitorService) {}
