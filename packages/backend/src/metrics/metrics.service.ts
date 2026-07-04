@@ -10,6 +10,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { StalledOrdersService } from '../sync/stalled-orders.service';
 import { SyncStatus } from '@prisma/client';
+import {
+  withTimeout,
+  MODULE_INIT_TIMEOUT_MS,
+} from '../common/utils/timeout';
 
 @Injectable()
 export class MetricsService implements OnModuleInit {
@@ -123,7 +127,15 @@ export class MetricsService implements OnModuleInit {
     });
   }
 
-  onModuleInit() {
+  async onModuleInit() {
+    await withTimeout(
+      this.initializeMetrics(),
+      MODULE_INIT_TIMEOUT_MS,
+      'MetricsService.onModuleInit',
+    );
+  }
+
+  private async initializeMetrics() {
     // Gauges are refreshed on each scrape
   }
 

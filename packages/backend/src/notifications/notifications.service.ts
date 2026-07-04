@@ -4,6 +4,10 @@ import { NotificationRole } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  withTimeout,
+  MODULE_INIT_TIMEOUT_MS,
+} from '../common/utils/timeout';
 
 @Injectable()
 export class NotificationsService implements OnModuleInit {
@@ -15,7 +19,15 @@ export class NotificationsService implements OnModuleInit {
     private readonly config: ConfigService,
   ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
+    await withTimeout(
+      this.initializeTransporter(),
+      MODULE_INIT_TIMEOUT_MS,
+      'NotificationsService.onModuleInit',
+    );
+  }
+
+  private async initializeTransporter() {
     const smtpHost = this.config.get<string>('SMTP_HOST');
     const smtpUser = this.config.get<string>('SMTP_USER');
     const smtpPass = this.config.get<string>('SMTP_PASS');
