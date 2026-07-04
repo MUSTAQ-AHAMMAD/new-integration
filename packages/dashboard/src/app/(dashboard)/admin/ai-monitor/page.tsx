@@ -85,6 +85,7 @@ export default function AiMonitorPage() {
     queryKey: ['ai-monitor-analyze'],
     queryFn: () => api.aiMonitorAnalyze(),
     refetchInterval: 60_000,
+    refetchOnWindowFocus: false,
   });
 
   return (
