@@ -37,7 +37,7 @@ export class SyncControlService implements OnModuleInit {
   }
 
   private async initializeSyncControls() {
-    const services: Array<Omit<SyncServiceConfig, 'region'>> = [
+    const services: Array<SyncServiceConfig> = [
       {
         serviceName: 'odoo-backup',
         displayName: 'Odoo Backup Service',
@@ -109,7 +109,10 @@ export class SyncControlService implements OnModuleInit {
         });
       } else {
         await this.prisma.syncControl.create({
-          data: service,
+          data: {
+            ...service,
+            region: null,
+          },
         });
       }
     }

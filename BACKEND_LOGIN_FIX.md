@@ -15,19 +15,18 @@ The `.env.example` had Redis Sentinel configuration enabled by default, but the 
 
 **Solution**: Commented out `REDIS_SENTINEL_HOSTS` and `REDIS_MASTER_NAME` in `.env` to use direct Redis connection instead.
 
-### 3. Backend Initialization Hang ⚠️ INVESTIGATING
-The backend service starts but hangs during NestJS application initialization, after logging "Oracle Thick Mode disabled — using Thin Mode".
+### 3. Backend Initialization Hang ✅ FIXED
+The backend service was failing during NestJS application initialization in the SyncControlService.onModuleInit() method.
 
-**Observations**:
-- Backend container starts successfully
-- Prisma migrations complete successfully
-- TypeScript compilation completes without errors
-- Application hangs at `NestFactory.create(AppModule)`
-- No timeout errors appear (suggesting it's before onModuleInit hooks)
-- Health check endpoint `/api/v1/health` is not accessible
-- Connection to health endpoint is reset
+**Root Cause**: Prisma's `upsert` operation doesn't handle null values well in composite unique constraints (`@@unique([serviceName, region])`), even when the field is nullable. The operation was failing with:
+```
+Invalid `prisma.syncControl.upsert()` invocation:
+Argument `region` must not be null.
+```
 
-**Possible Causes**:
+**Solution**: Replaced the `upsert` operation with `findFirst` + conditional `update`/`create` logic to avoid passing null to Prisma's unique constraint matcher.
+
+**Verification**: Backend now starts successfully and responds to login requests with valid JWT tokens.
 1. Circular dependency in module imports
 2. Synchronous blocking operation in a module constructor
 3. Deadlock in dependency injection
