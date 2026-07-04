@@ -5,7 +5,6 @@
  * and handle responses correctly.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OracleSoapClient } from './oracle-soap.client';
 import { OracleCustomerService } from './oracle-customer.service';

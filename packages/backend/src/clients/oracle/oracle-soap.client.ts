@@ -622,9 +622,12 @@ export class OracleSoapClient implements OnModuleInit {
         );
 
         const body = buildInvoiceSoap(header);
-        
+
         // ✅ Log the actual SOAP XML being sent (truncate if too long)
-        const truncatedBody = body.length > 5000 ? body.substring(0, 5000) + '\n... (truncated)' : body;
+        const truncatedBody =
+          body.length > 5000
+            ? body.substring(0, 5000) + '\n... (truncated)'
+            : body;
         this.logger.debug(
           `📤 Oracle SOAP XML Payload (${body.length} chars):\n${truncatedBody}`,
         );

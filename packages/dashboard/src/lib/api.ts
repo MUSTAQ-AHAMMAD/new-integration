@@ -241,6 +241,10 @@ export const api = {
 
   /** Export store configs as CSV */
   exportStoresCsvUrl: () => `${API_BASE}/store-config/export`,
+
+  // ─── AI Monitor ───────────────────────────────────────────────────
+  /** Run the AI-powered diagnostic analysis of the whole integration */
+  aiMonitorAnalyze: () => apiRequest<AiAnalysisResult>('/ai-monitor/analyze'),
 };
 
 export interface DashboardOverview {
@@ -743,4 +747,36 @@ export interface ApiEndpointConfig {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── AI Monitor ────────────────────────────────────────────────────
+export type FindingSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
+export type OverallStatus = 'healthy' | 'degraded' | 'unhealthy';
+
+export interface AiFinding {
+  id: string;
+  severity: FindingSeverity;
+  category: string;
+  title: string;
+  detail: string;
+  recommendation: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface AiAnalysisResult {
+  status: OverallStatus;
+  healthScore: number;
+  generatedAt: string;
+  findings: AiFinding[];
+  counts: { critical: number; warning: number; info: number };
+  summary: string;
+  summarySource: 'ai' | 'rule-based';
+  signals: {
+    collectedAt: string;
+    credentials: Record<string, { active: number; total: number }>;
+    queue: { pending: number; processing: number; skipped: number; failed: number; synced: number };
+    recentJobs: { windowHours: number; total: number; failed: number; partial: number; completed: number; stale: number };
+    failedTransactions: { unresolved: number; byType: Record<string, number> };
+    itemSyncErrors: number;
+  };
 }

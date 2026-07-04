@@ -406,8 +406,7 @@ export class AdminService {
         imported++;
       } catch (err: unknown) {
         skipped++;
-        const errorMsg =
-          err instanceof Error ? err.message : String(err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
         // Enhanced error message with row context
         errors.push(`Row ${rowIndex + 1}: ${errorMsg}`);
       }

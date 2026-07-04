@@ -125,8 +125,7 @@ export class VendHqToOracleSyncService {
     let txnNumber: string;
 
     try {
-      invoiceResult =
-        await this.soapClient.createSimpleInvoice(invoiceHeader);
+      invoiceResult = await this.soapClient.createSimpleInvoice(invoiceHeader);
       txnNumber = String(
         invoiceResult.customerTrxId ??
           invoiceResult.transactionNumber ??
@@ -145,8 +144,7 @@ export class VendHqToOracleSyncService {
 
     // Calculate total amount from invoice lines
     const totalAmount = invoiceHeader.invoiceLines.reduce(
-      (sum, line) =>
-        sum + (line.unitSellingPrice ?? 0) * (line.quantity ?? 0),
+      (sum, line) => sum + (line.unitSellingPrice ?? 0) * (line.quantity ?? 0),
       0,
     );
 

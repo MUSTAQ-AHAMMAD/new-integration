@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 
 export interface ValidationResult {

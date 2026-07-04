@@ -255,7 +255,7 @@ export function normalizeOrderForIngestion(
 
   // Determine if order is paid using multi-layered logic:
   let isPaid = false;
-  let paymentDetectionReason = 'not_determined';
+  let _paymentDetectionReason = 'not_determined';
 
   if (!isCancelled) {
     // 1. Check if state explicitly indicates unpaid (draft, quotation, etc.)
@@ -267,7 +267,7 @@ export function normalizeOrderForIngestion(
     if (isExplicitlyUnpaid) {
       // Order is in draft or quotation state - definitely not paid
       isPaid = false;
-      paymentDetectionReason = `unpaid_state:${normalizedState}`;
+      _paymentDetectionReason = `unpaid_state:${normalizedState}`;
 
       if (DEBUG_PAYMENT_DETECTION) {
         console.log(
@@ -283,7 +283,7 @@ export function normalizeOrderForIngestion(
       if (stateIndicatesPaid) {
         // State explicitly indicates payment
         isPaid = true;
-        paymentDetectionReason = `paid_state:${normalizedState}`;
+        _paymentDetectionReason = `paid_state:${normalizedState}`;
 
         if (DEBUG_PAYMENT_DETECTION) {
           console.log(
@@ -298,7 +298,7 @@ export function normalizeOrderForIngestion(
         if (hasPayments) {
           // Has payment data, so likely paid even if state is unusual/null
           isPaid = true;
-          paymentDetectionReason = normalizedState
+          _paymentDetectionReason = normalizedState
             ? `payment_data_found:${normalizedState}`
             : 'payment_data_found:null_state';
 
@@ -311,7 +311,7 @@ export function normalizeOrderForIngestion(
         } else {
           // Unknown/null state and no payments - mark as unpaid to be safe
           isPaid = false;
-          paymentDetectionReason = normalizedState
+          _paymentDetectionReason = normalizedState
             ? `unknown_state_no_payment:${normalizedState}`
             : 'null_state_no_payment';
 
@@ -330,7 +330,7 @@ export function normalizeOrderForIngestion(
       }
     }
   } else {
-    paymentDetectionReason = 'cancelled';
+    _paymentDetectionReason = 'cancelled';
 
     if (DEBUG_PAYMENT_DETECTION) {
       console.log(

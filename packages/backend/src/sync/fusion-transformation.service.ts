@@ -320,7 +320,7 @@ export class FusionTransformationService {
       const periodName = this.getPeriodName(saleDate);
 
       const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
-        (il, idx) => ({
+        (il, _idx) => ({
           ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
           periodName, // Java line 84: getPeriodName(invoice.getSaleDate())
           accountingDate: saleDate,

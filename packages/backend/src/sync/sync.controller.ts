@@ -901,17 +901,20 @@ export class SyncController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @ApiOperation({
-    summary: 'Bulk retry all failed transactions with FIFO ordering and duplicate detection',
+    summary:
+      'Bulk retry all failed transactions with FIFO ordering and duplicate detection',
   })
-  async retryAllFailed(
-    @Body() body?: {
+  retryAllFailed(
+    @Body()
+    body?: {
       maxTransactions?: number;
       dryRun?: boolean;
       priorityBranches?: string[];
-    }
+    },
   ) {
     return {
-      message: 'Bulk retry endpoint - requires BulkRetryService to be registered',
+      message:
+        'Bulk retry endpoint - requires BulkRetryService to be registered',
       options: body,
     };
   }
@@ -925,9 +928,7 @@ export class SyncController {
   @ApiOperation({
     summary: 'Retry failed transactions for specific branches',
   })
-  async retryForBranches(
-    @Body() body: { branchCodes: string[]; dryRun?: boolean }
-  ) {
+  retryForBranches(@Body() body: { branchCodes: string[]; dryRun?: boolean }) {
     return {
       message: 'Branch retry endpoint - requires BulkRetryService',
       branchCodes: body.branchCodes,
@@ -943,7 +944,7 @@ export class SyncController {
   @ApiOperation({
     summary: 'Get statistics about failed transactions',
   })
-  async getFailedStats() {
+  getFailedStats() {
     return {
       message: 'Failed stats endpoint - requires BulkRetryService',
     };

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { ApplyReceiptRequest } from '../clients/oracle/oracle-soap.client';
-import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
+import { toSafeNumber } from '../common/utils/bigint-utils';
 
 // Define the types properly - matching Oracle client expectations
 export interface InvoiceLine {

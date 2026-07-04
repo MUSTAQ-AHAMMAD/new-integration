@@ -3,7 +3,7 @@ import { Histogram, Counter, Gauge, Registry } from 'prom-client';
 
 /**
  * VendHQ Sync Metrics Service
- * 
+ *
  * Provides custom Prometheus metrics for VendHQ → Oracle sync operations:
  * - Sync duration histograms per region
  * - Success/failure counters
@@ -122,7 +122,11 @@ export class VendHqSyncMetricsService {
   /**
    * Record sync duration for a single sale
    */
-  recordSyncDuration(region: string, duration: number, status: 'success' | 'failure'): void {
+  recordSyncDuration(
+    region: string,
+    duration: number,
+    status: 'success' | 'failure',
+  ): void {
     this.syncDurationHistogram.observe({ region, status }, duration);
     this.logger.debug(`Sync duration for ${region}: ${duration}s (${status})`);
   }
@@ -136,8 +140,13 @@ export class VendHqSyncMetricsService {
     duration: number,
     status: 'success' | 'failure',
   ): void {
-    this.soapCallDurationHistogram.observe({ region, operation, status }, duration);
-    this.logger.debug(`SOAP call ${operation} for ${region}: ${duration}s (${status})`);
+    this.soapCallDurationHistogram.observe(
+      { region, operation, status },
+      duration,
+    );
+    this.logger.debug(
+      `SOAP call ${operation} for ${region}: ${duration}s (${status})`,
+    );
   }
 
   /**
@@ -186,7 +195,11 @@ export class VendHqSyncMetricsService {
   /**
    * Record SOAP call error
    */
-  recordSoapCallError(region: string, operation: string, errorCode: string): void {
+  recordSoapCallError(
+    region: string,
+    operation: string,
+    errorCode: string,
+  ): void {
     this.soapCallErrorCounter.inc({ region, operation, error_code: errorCode });
     this.logger.warn(`SOAP error for ${region} ${operation}: ${errorCode}`);
   }
@@ -229,7 +242,10 @@ export class VendHqSyncMetricsService {
     if (message.includes('not found')) {
       return 'not_found';
     }
-    if (message.includes('unauthorized') || message.includes('authentication')) {
+    if (
+      message.includes('unauthorized') ||
+      message.includes('authentication')
+    ) {
       return 'authentication';
     }
     if (message.includes('rate limit')) {

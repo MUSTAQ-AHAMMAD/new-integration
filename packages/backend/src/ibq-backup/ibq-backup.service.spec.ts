@@ -75,15 +75,25 @@ function makeOrderSyncService() {
   };
 }
 
+function makeSyncControl() {
+  return {
+    isEnabled: jest.fn().mockResolvedValue(true),
+    markRunning: jest.fn().mockResolvedValue(undefined),
+    markStopped: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
 function makeService(
   prisma = makePrisma(),
   orderSyncService = makeOrderSyncService(),
+  syncControl = makeSyncControl(),
 ) {
   const service = new IbqBackupService(
     prisma as never,
     orderSyncService as never,
+    syncControl as never,
   );
-  return { service, prisma, orderSyncService };
+  return { service, prisma, orderSyncService, syncControl };
 }
 
 // ---------------------------------------------------------------------------

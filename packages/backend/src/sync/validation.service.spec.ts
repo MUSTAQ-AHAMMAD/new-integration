@@ -16,6 +16,14 @@ const mockAlerts = {
   createAlert: jest.fn().mockResolvedValue({}),
 };
 
+const mockStoreConfig = {
+  // Delegate to the Prisma mock so existing `storeConfiguration.findUnique`
+  // expectations continue to drive the store config returned to the service.
+  getOrCreateStoreConfig: jest.fn(() =>
+    mockPrisma.storeConfiguration.findUnique(),
+  ),
+};
+
 /** Helper: a valid paid order with no negative inventory */
 function makePaidOrder(overrides: Record<string, unknown> = {}) {
   return {
@@ -44,6 +52,7 @@ describe('ValidationService', () => {
     service = new ValidationService(
       mockPrisma as unknown as PrismaService,
       mockAlerts as unknown as AlertsService,
+      mockStoreConfig as never,
     );
     jest.clearAllMocks();
   });
@@ -86,7 +95,9 @@ describe('ValidationService', () => {
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(
-      result.errors.some((e) => e.includes('No store configuration')),
+      result.errors.some((e) =>
+        e.includes('Failed to get or create store configuration'),
+      ),
     ).toBe(true);
   });
 

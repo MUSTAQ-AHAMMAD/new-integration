@@ -5,10 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import {
-  withTimeout,
-  MODULE_INIT_TIMEOUT_MS,
-} from '../common/utils/timeout';
+import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 /** Queries slower than this threshold are logged as warnings. */
 const SLOW_QUERY_THRESHOLD_MS = 1_000;

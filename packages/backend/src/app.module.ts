@@ -32,6 +32,7 @@ import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 import { ItemSyncModule } from './item-sync/item-sync.module';
 import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
 import { OdooBackupModule } from './odoo-backup/odoo-backup.module';
+import { AiMonitorModule } from './ai-monitor/ai-monitor.module';
 import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
 
 @Module({
@@ -109,6 +110,7 @@ import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
     ItemSyncModule,
     IbqBackupModule,
     OdooBackupModule,
+    AiMonitorModule,
   ],
   providers: [
     // Global BigInt serialization interceptor (applied before all other processing)

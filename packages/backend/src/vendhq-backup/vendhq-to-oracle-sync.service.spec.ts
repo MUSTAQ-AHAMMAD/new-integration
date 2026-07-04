@@ -131,10 +131,16 @@ describe('VendHqToOracleSyncService', () => {
     prisma = makePrisma();
     transformation = makeTransformation();
     soapClient = makeSoapClient();
+    const syncControl = {
+      isEnabled: jest.fn().mockResolvedValue(true),
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      markStopped: jest.fn().mockResolvedValue(undefined),
+    };
     service = new VendHqToOracleSyncService(
       prisma as unknown as PrismaService,
       transformation as unknown as FusionTransformationService,
       soapClient as unknown as OracleSoapClient,
+      syncControl as never,
     );
     jest.clearAllMocks();
   });

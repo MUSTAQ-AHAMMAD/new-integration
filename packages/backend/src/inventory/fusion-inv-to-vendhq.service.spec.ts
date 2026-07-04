@@ -66,10 +66,16 @@ describe('FusionInvToVendHqService', () => {
     prisma = makePrisma();
     oracle = makeOracle();
     vendHq = makeVendHq();
+    const syncControl = {
+      isEnabled: jest.fn().mockResolvedValue(true),
+      markRunning: jest.fn().mockResolvedValue(undefined),
+      markStopped: jest.fn().mockResolvedValue(undefined),
+    };
     service = new FusionInvToVendHqService(
       prisma as unknown as PrismaService,
       oracle as unknown as OracleClient,
       vendHq as unknown as VendHqClient,
+      syncControl as never,
     );
     jest.clearAllMocks();
   });

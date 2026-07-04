@@ -251,7 +251,7 @@ describe('AdminService', () => {
 
     it('imports valid rows and returns count', async () => {
       delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'name,region\nCash,AE\nVisa,AE';
+      const csv = 'receiptMethodName,region\nCash,AE\nVisa,AE';
       const result = await service.importCsv('fusion-receipt-methods', csv);
       expect(result.imported).toBe(2);
       expect(result.skipped).toBe(0);
@@ -260,7 +260,7 @@ describe('AdminService', () => {
 
     it('counts rows that fail create as skipped with error messages', async () => {
       delegate.create.mockRejectedValue(new Error('Unique constraint failed'));
-      const csv = 'name,region\nCash,AE';
+      const csv = 'receiptMethodName,region\nCash,AE';
       const result = await service.importCsv('fusion-receipt-methods', csv);
       expect(result.imported).toBe(0);
       expect(result.skipped).toBe(1);
@@ -271,7 +271,7 @@ describe('AdminService', () => {
       delegate.create
         .mockResolvedValueOnce({ id: 'ok' })
         .mockRejectedValueOnce(new Error('oops'));
-      const csv = 'name,region\nCash,AE\nVisa,AE';
+      const csv = 'receiptMethodName,region\nCash,AE\nVisa,AE';
       const result = await service.importCsv('fusion-receipt-methods', csv);
       expect(result.imported).toBe(1);
       expect(result.skipped).toBe(1);
@@ -288,7 +288,7 @@ describe('AdminService', () => {
 
     it('strips id, createdAt, updatedAt from imported rows', async () => {
       delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'id,createdAt,name\nold-id,2024-01-01,Cash';
+      const csv = 'id,createdAt,receiptMethodName\nold-id,2024-01-01,Cash';
       await service.importCsv('fusion-receipt-methods', csv);
       const [callArgs] = delegate.create.mock.calls;
       expect(callArgs[0].data.id).toBeUndefined();
@@ -297,10 +297,10 @@ describe('AdminService', () => {
 
     it('handles quoted CSV fields correctly', async () => {
       delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'name,region\n"Cash, Rounded",AE';
+      const csv = 'receiptMethodName,region\n"Cash, Rounded",AE';
       await service.importCsv('fusion-receipt-methods', csv);
       const [callArgs] = delegate.create.mock.calls;
-      expect(callArgs[0].data.name).toBe('Cash, Rounded');
+      expect(callArgs[0].data.receiptMethodName).toBe('Cash, Rounded');
     });
   });
 });

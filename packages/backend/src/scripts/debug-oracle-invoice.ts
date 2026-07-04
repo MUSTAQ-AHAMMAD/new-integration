@@ -1,20 +1,20 @@
 /**
  * Debug Oracle Invoice Creation - Comprehensive diagnostic tool
- * 
+ *
  * This script helps diagnose Oracle Status E errors by:
  * 1. Analyzing failed orders in the sync queue
  * 2. Validating all required fields
  * 3. Showing the exact SOAP payload that would be sent
  * 4. Attempting invoice creation with detailed error reporting
  * 5. Providing actionable recommendations
- * 
+ *
  * Usage:
  *   # Analyze the most recent failed order
  *   npm run debug:oracle
- * 
+ *
  *   # Analyze a specific order by ID
  *   npm run debug:oracle -- --orderId=12345 --branch=CCNTRBHR
- * 
+ *
  *   # Dry run (don't actually call Oracle)
  *   npm run debug:oracle -- --dryRun
  */
@@ -49,9 +49,15 @@ class OracleInvoiceDebugger {
   ) {}
 
   async run(options: DebugOptions = {}) {
-    console.log('╔══════════════════════════════════════════════════════════════╗');
-    console.log('║   Oracle Invoice Debug Tool - Status E Diagnostic           ║');
-    console.log('╚══════════════════════════════════════════════════════════════╝\n');
+    console.log(
+      '╔══════════════════════════════════════════════════════════════╗',
+    );
+    console.log(
+      '║   Oracle Invoice Debug Tool - Status E Diagnostic           ║',
+    );
+    console.log(
+      '╚══════════════════════════════════════════════════════════════╝\n',
+    );
 
     try {
       // Step 1: Find the order to debug
@@ -62,7 +68,9 @@ class OracleInvoiceDebugger {
       }
 
       console.log('📋 Order Selected for Analysis:');
-      console.log('─────────────────────────────────────────────────────────────');
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
       this.printOrderSummary(order);
 
       // Step 2: Get backup data
@@ -76,7 +84,7 @@ class OracleInvoiceDebugger {
       console.log('\n✅ Backup order found');
       console.log(`   - Lines: ${backupOrder.orderLines.length}`);
       console.log(`   - Payments: ${backupOrder.orderPayments.length}`);
-      console.log(`   - Order Date: ${backupOrder.dateOrder}`);
+      console.log(`   - Order Date: ${String(backupOrder.dateOrder)}`);
       console.log(`   - Amount Total: ${backupOrder.amountTotal}`);
 
       // Step 3: Get and validate store configuration
@@ -87,7 +95,9 @@ class OracleInvoiceDebugger {
       }
 
       console.log('\n📍 Store Configuration:');
-      console.log('─────────────────────────────────────────────────────────────');
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
       this.printStoreConfig(storeConfig);
 
       // Step 4: Transform to invoice payload
@@ -99,32 +109,47 @@ class OracleInvoiceDebugger {
       );
 
       console.log('\n📦 Invoice Header Generated:');
-      console.log('─────────────────────────────────────────────────────────────');
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
       this.printInvoiceHeader(payloads.invoiceHeader);
 
       // Step 5: Validate all fields
       console.log('\n🔍 Field Validation:');
-      console.log('─────────────────────────────────────────────────────────────');
-      const validationIssues = this.validateInvoiceHeader(payloads.invoiceHeader);
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
+      const validationIssues = this.validateInvoiceHeader(
+        payloads.invoiceHeader,
+      );
       this.printValidationIssues(validationIssues);
 
       // Step 6: Show SOAP XML if requested
       if (options.showXml) {
         console.log('\n📄 SOAP XML Request Preview:');
-        console.log('─────────────────────────────────────────────────────────────');
+        console.log(
+          '─────────────────────────────────────────────────────────────',
+        );
         this.printSoapPreview(payloads.invoiceHeader);
       }
 
       // Step 7: Check for common issues
       console.log('\n⚠️  Common Issue Checks:');
-      console.log('─────────────────────────────────────────────────────────────');
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
       await this.checkCommonIssues(order, storeConfig, payloads.invoiceHeader);
 
       // Step 8: Attempt invoice creation (if not dry run)
       if (!options.dryRun) {
         console.log('\n🚀 Attempting Invoice Creation...');
-        console.log('─────────────────────────────────────────────────────────────');
-        await this.attemptInvoiceCreation(payloads.invoiceHeader, order.odooOrderId);
+        console.log(
+          '─────────────────────────────────────────────────────────────',
+        );
+        await this.attemptInvoiceCreation(
+          payloads.invoiceHeader,
+          order.odooOrderId,
+        );
       } else {
         console.log('\n🔒 DRY RUN MODE - Skipping actual Oracle API call');
         console.log('   Remove --dryRun flag to attempt real invoice creation');
@@ -132,9 +157,10 @@ class OracleInvoiceDebugger {
 
       // Step 9: Recommendations
       console.log('\n💡 Recommendations:');
-      console.log('─────────────────────────────────────────────────────────────');
+      console.log(
+        '─────────────────────────────────────────────────────────────',
+      );
       this.printRecommendations(validationIssues, order);
-
     } catch (error) {
       console.error('\n❌ Debug script failed with error:');
       console.error(error);
@@ -163,7 +189,7 @@ class OracleInvoiceDebugger {
       take: 1,
       include: { orderSyncQueue: true },
     });
-    
+
     return failedTransactions[0]?.orderSyncQueue || null;
   }
 
@@ -192,7 +218,9 @@ class OracleInvoiceDebugger {
     console.log(`   Is Paid: ${order.isPaid}`);
     console.log(`   Is Cancelled: ${order.isCancelled}`);
     if (order.lastErrorMessage) {
-      console.log(`   Last Error: ${order.lastErrorMessage.substring(0, 200)}...`);
+      console.log(
+        `   Last Error: ${order.lastErrorMessage.substring(0, 200)}...`,
+      );
     }
   }
 
@@ -208,7 +236,9 @@ class OracleInvoiceDebugger {
     console.log(`   Is Active: ${config.isActive}`);
     console.log(`   Validation Status: ${config.validationStatus}`);
     if (config.validationErrors) {
-      console.log(`   Validation Errors: ${JSON.stringify(config.validationErrors)}`);
+      console.log(
+        `   Validation Errors: ${JSON.stringify(config.validationErrors)}`,
+      );
     }
   }
 
@@ -226,7 +256,7 @@ class OracleInvoiceDebugger {
     console.log(`   conversionRate: ${header.conversionRate || 'NOT SET'}`);
     console.log(`   conversionDate: ${header.conversionDate || 'NOT SET'}`);
     console.log(`   Invoice Lines: ${header.invoiceLines.length}`);
-    
+
     if (header.invoiceLines.length > 0) {
       console.log('\n   Sample Line Items:');
       header.invoiceLines.slice(0, 3).forEach((line: any, i: number) => {
@@ -236,10 +266,14 @@ class OracleInvoiceDebugger {
         console.log(`       - Unit Price: ${line.unitSellingPrice}`);
         console.log(`       - Sales Order: ${line.salesOrder || 'N/A'}`);
         console.log(`       - Item Number: ${line.itemNumber || 'N/A'}`);
-        console.log(`       - Tax Code: ${line.taxClassificationCode || 'N/A'}`);
+        console.log(
+          `       - Tax Code: ${line.taxClassificationCode || 'N/A'}`,
+        );
       });
       if (header.invoiceLines.length > 3) {
-        console.log(`     ... and ${header.invoiceLines.length - 3} more lines`);
+        console.log(
+          `     ... and ${header.invoiceLines.length - 3} more lines`,
+        );
       }
     }
   }
@@ -266,7 +300,10 @@ class OracleInvoiceDebugger {
       });
     }
 
-    if (!header.billToAccountNumber || header.billToAccountNumber.trim() === '') {
+    if (
+      !header.billToAccountNumber ||
+      header.billToAccountNumber.trim() === ''
+    ) {
       issues.push({
         field: 'billToAccountNumber',
         severity: 'ERROR',
@@ -302,7 +339,10 @@ class OracleInvoiceDebugger {
       });
     }
 
-    if (!header.invoiceCurrencyCode || header.invoiceCurrencyCode.trim() === '') {
+    if (
+      !header.invoiceCurrencyCode ||
+      header.invoiceCurrencyCode.trim() === ''
+    ) {
       issues.push({
         field: 'invoiceCurrencyCode',
         severity: 'ERROR',
@@ -395,8 +435,8 @@ class OracleInvoiceDebugger {
   }
 
   private printValidationIssues(issues: ValidationIssue[]) {
-    const errors = issues.filter(i => i.severity === 'ERROR');
-    const warnings = issues.filter(i => i.severity === 'WARNING');
+    const errors = issues.filter((i) => i.severity === 'ERROR');
+    const warnings = issues.filter((i) => i.severity === 'WARNING');
 
     if (errors.length === 0 && warnings.length === 0) {
       console.log('✅ All required fields present and valid');
@@ -405,7 +445,7 @@ class OracleInvoiceDebugger {
 
     if (errors.length > 0) {
       console.log(`\n❌ ERRORS (${errors.length}):`);
-      errors.forEach(issue => {
+      errors.forEach((issue) => {
         console.log(`   • ${issue.field}: ${issue.message}`);
         if (issue.recommendation) {
           console.log(`     → ${issue.recommendation}`);
@@ -415,7 +455,7 @@ class OracleInvoiceDebugger {
 
     if (warnings.length > 0) {
       console.log(`\n⚠️  WARNINGS (${warnings.length}):`);
-      warnings.forEach(issue => {
+      warnings.forEach((issue) => {
         console.log(`   • ${issue.field}: ${issue.message}`);
         if (issue.recommendation) {
           console.log(`     → ${issue.recommendation}`);
@@ -427,49 +467,77 @@ class OracleInvoiceDebugger {
   private printSoapPreview(header: any) {
     console.log('   <typ:createSimpleInvoice>');
     console.log('     <typ:invoice>');
-    console.log(`       <typ1:BillToCustomerName>${header.billToCustomerName}</typ1:BillToCustomerName>`);
-    console.log(`       <typ1:BillToLocation>${header.billToLocation}</typ1:BillToLocation>`);
-    console.log(`       <typ1:BusinessUnit>${header.businessUnit}</typ1:BusinessUnit>`);
-    console.log(`       <typ1:TransactionSource>${header.transactionSource}</typ1:TransactionSource>`);
-    console.log(`       <typ1:TransactionType>${header.transactionType}</typ1:TransactionType>`);
-    console.log(`       <typ1:TrxDate>${header.trxDate || header.saleDate}</typ1:TrxDate>`);
-    console.log(`       <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>`);
+    console.log(
+      `       <typ1:BillToCustomerName>${header.billToCustomerName}</typ1:BillToCustomerName>`,
+    );
+    console.log(
+      `       <typ1:BillToLocation>${header.billToLocation}</typ1:BillToLocation>`,
+    );
+    console.log(
+      `       <typ1:BusinessUnit>${header.businessUnit}</typ1:BusinessUnit>`,
+    );
+    console.log(
+      `       <typ1:TransactionSource>${header.transactionSource}</typ1:TransactionSource>`,
+    );
+    console.log(
+      `       <typ1:TransactionType>${header.transactionType}</typ1:TransactionType>`,
+    );
+    console.log(
+      `       <typ1:TrxDate>${header.trxDate || header.saleDate}</typ1:TrxDate>`,
+    );
+    console.log(
+      `       <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>`,
+    );
     console.log('       <!-- ... invoice lines ... -->');
     console.log('     </typ:invoice>');
     console.log('   </typ:createSimpleInvoice>');
   }
 
-  private async checkCommonIssues(order: any, storeConfig: any, header: any) {
+  private async checkCommonIssues(order: any, storeConfig: any, _header: any) {
     const issues: string[] = [];
 
     // Check if business unit might be invalid
-    if (storeConfig.oracleBusinessUnit?.includes('placeholder') || 
-        storeConfig.oracleBusinessUnit?.includes('FIXME')) {
+    if (
+      storeConfig.oracleBusinessUnit?.includes('placeholder') ||
+      storeConfig.oracleBusinessUnit?.includes('FIXME')
+    ) {
       issues.push('⚠️  Business Unit appears to be a placeholder value');
     }
 
     // Check if transaction source/type might be invalid
-    if (storeConfig.transactionSource?.includes('placeholder') ||
-        storeConfig.transactionType?.includes('placeholder')) {
-      issues.push('⚠️  Transaction Source/Type appears to be placeholder values');
+    if (
+      storeConfig.transactionSource?.includes('placeholder') ||
+      storeConfig.transactionType?.includes('placeholder')
+    ) {
+      issues.push(
+        '⚠️  Transaction Source/Type appears to be placeholder values',
+      );
     }
 
     // Check if store config was auto-created
-    if (storeConfig.validationStatus === 'PENDING' || 
-        storeConfig.validationStatus === 'PARTIAL') {
-      issues.push('⚠️  Store configuration was auto-created and needs manual validation');
+    if (
+      storeConfig.validationStatus === 'PENDING' ||
+      storeConfig.validationStatus === 'PARTIAL'
+    ) {
+      issues.push(
+        '⚠️  Store configuration was auto-created and needs manual validation',
+      );
     }
 
     // Check for very old orders (Oracle might reject)
     const orderAge = Date.now() - new Date(order.orderDate).getTime();
     const daysOld = Math.floor(orderAge / (1000 * 60 * 60 * 24));
     if (daysOld > 90) {
-      issues.push(`⚠️  Order is ${daysOld} days old - Oracle may reject old transactions`);
+      issues.push(
+        `⚠️  Order is ${daysOld} days old - Oracle may reject old transactions`,
+      );
     }
 
     // Check for missing region mapping
     if (!storeConfig.region) {
-      issues.push('⚠️  StoreConfig has no region set - may affect receipt creation');
+      issues.push(
+        '⚠️  StoreConfig has no region set - may affect receipt creation',
+      );
     }
 
     // Check if similar orders succeeded
@@ -482,50 +550,62 @@ class OracleInvoiceDebugger {
     });
 
     if (!similarSucceeded) {
-      issues.push('⚠️  No successful syncs found for this branch - may indicate branch-level config issue');
+      issues.push(
+        '⚠️  No successful syncs found for this branch - may indicate branch-level config issue',
+      );
     }
 
     if (issues.length === 0) {
       console.log('✅ No common issues detected');
     } else {
-      issues.forEach(issue => console.log(issue));
+      issues.forEach((issue) => console.log(issue));
     }
   }
 
-  private async attemptInvoiceCreation(header: any, orderId: string) {
+  private async attemptInvoiceCreation(header: any, _orderId: string) {
     console.log('⏳ Calling Oracle API...');
     console.log('   (Check backend logs for full SOAP XML request/response)\n');
 
     try {
       const result = await this.soapClient.createSimpleInvoice(header);
-      
+
       console.log('✅ SUCCESS! Invoice created successfully\n');
       console.log('   Service Status:', result.serviceStatus);
       console.log('   Transaction Number:', result.transactionNumber);
       console.log('   Customer Trx ID:', result.customerTrxId);
-      
+
       console.log('\n📊 This means:');
       console.log('   • The SOAP request was valid');
       console.log('   • Oracle accepted all field values');
       console.log('   • The invoice was created in Oracle EBS');
-      console.log('\n💡 If this succeeded in the debug script but fails in production,');
-      console.log('   the issue may be with the data transformation or order enrichment.');
-
+      console.log(
+        '\n💡 If this succeeded in the debug script but fails in production,',
+      );
+      console.log(
+        '   the issue may be with the data transformation or order enrichment.',
+      );
     } catch (error: any) {
       console.log('❌ FAILED! Oracle returned an error\n');
       console.log('   Error Message:', error.message);
-      
+
       console.log('\n📊 Error Analysis:');
       if (error.message.includes('Status E')) {
         console.log('   • Oracle rejected the invoice with Status E');
         console.log('   • Check the error message above for specific details');
-        console.log('   • The full SOAP XML response should be in backend logs');
+        console.log(
+          '   • The full SOAP XML response should be in backend logs',
+        );
       } else if (error.message.includes('timeout')) {
-        console.log('   • Request timed out - Oracle may be slow or unreachable');
+        console.log(
+          '   • Request timed out - Oracle may be slow or unreachable',
+        );
       } else if (error.message.includes('ECONNREFUSED')) {
         console.log('   • Cannot connect to Oracle SOAP endpoint');
         console.log('   • Check ORACLE_SOAP_BASE_URL in .env');
-      } else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+      } else if (
+        error.message.includes('401') ||
+        error.message.includes('Unauthorized')
+      ) {
         console.log('   • Authentication failed');
         console.log('   • Check ORACLE_USERNAME and ORACLE_PASSWORD in .env');
       } else {
@@ -533,19 +613,28 @@ class OracleInvoiceDebugger {
       }
 
       console.log('\n🔍 Next Steps:');
-      console.log('   1. Check backend logs for full SOAP request/response XML');
-      console.log('   2. Look for "⚠️  Status E detected" or "FULL Response XML"');
+      console.log(
+        '   1. Check backend logs for full SOAP request/response XML',
+      );
+      console.log(
+        '   2. Look for "⚠️  Status E detected" or "FULL Response XML"',
+      );
       console.log('   3. Compare the error with Oracle EBS error messages');
       console.log('   4. Verify the field values against Oracle setup');
     }
   }
 
-  private printRecommendations(validationIssues: ValidationIssue[], order: any) {
-    const errors = validationIssues.filter(i => i.severity === 'ERROR');
+  private printRecommendations(
+    validationIssues: ValidationIssue[],
+    order: any,
+  ) {
+    const errors = validationIssues.filter((i) => i.severity === 'ERROR');
 
     if (errors.length > 0) {
       console.log('1️⃣  Fix the validation errors listed above');
-      console.log('   These are blocking issues that will prevent invoice creation\n');
+      console.log(
+        '   These are blocking issues that will prevent invoice creation\n',
+      );
     }
 
     console.log('2️⃣  Check backend logs for detailed SOAP XML:');
@@ -559,7 +648,9 @@ class OracleInvoiceDebugger {
 
     console.log('4️⃣  Query similar successful orders:');
     console.log(`   SELECT * FROM "FusionInvoiceHeader"`);
-    console.log(`   WHERE status = 'SUCCESS' AND region = '${order.region || 'AE'}'`);
+    console.log(
+      `   WHERE status = 'SUCCESS' AND region = '${order.region || 'AE'}'`,
+    );
     console.log('   LIMIT 5;\n');
 
     console.log('5️⃣  Update store configuration if needed:');
@@ -570,7 +661,13 @@ class OracleInvoiceDebugger {
     console.log('6️⃣  Retry the order after fixing:');
     console.log('   curl -X POST http://localhost:3000/sync/orders/retry \\');
     console.log('     -H "Content-Type: application/json" \\');
-    console.log('     -d \'{"odooOrderId":"' + order.odooOrderId + '","branchCode":"' + order.branchCode + '"}\'');
+    console.log(
+      '     -d \'{"odooOrderId":"' +
+        order.odooOrderId +
+        '","branchCode":"' +
+        order.branchCode +
+        '"}\'',
+    );
   }
 }
 
@@ -582,7 +679,7 @@ async function main() {
   };
 
   // Parse orderId and branchCode
-  args.forEach(arg => {
+  args.forEach((arg) => {
     if (arg.startsWith('--orderId=')) {
       options.odooOrderId = arg.split('=')[1];
     }
@@ -611,7 +708,7 @@ async function main() {
   await app.close();
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

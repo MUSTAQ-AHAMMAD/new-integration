@@ -46,9 +46,9 @@ async function main() {
       console.log(`   Order Name: ${backupOdoo.orderName}`);
       console.log(`   State: ${backupOdoo.state}`);
       console.log(`   Amount: ${backupOdoo.amountTotal}`);
-      console.log(`   Date: ${backupOdoo.dateOrder}`);
+      console.log(`   Date: ${String(backupOdoo.dateOrder)}`);
       console.log(`   Branch ID: ${JSON.stringify(backupOdoo.branchId)}`);
-      console.log(`   Created At: ${backupOdoo.createdAt}`);
+      console.log(`   Created At: ${String(backupOdoo.createdAt)}`);
       console.log();
       console.log(
         '   RECOMMENDATION: Re-ingest from backup using POST /odoo-backup/reingest-from-backup',
@@ -59,9 +59,9 @@ async function main() {
       console.log(`   Order Name: ${backupIbq.orderName}`);
       console.log(`   State: ${backupIbq.state}`);
       console.log(`   Amount: ${backupIbq.amountTotal}`);
-      console.log(`   Date: ${backupIbq.dateOrder}`);
+      console.log(`   Date: ${String(backupIbq.dateOrder)}`);
       console.log(`   Branch ID: ${JSON.stringify(backupIbq.branchId)}`);
-      console.log(`   Created At: ${backupIbq.createdAt}`);
+      console.log(`   Created At: ${String(backupIbq.createdAt)}`);
       console.log();
       console.log(
         '   RECOMMENDATION: Re-ingest from backup using POST /ibq-backup/reingest-from-backup',
@@ -85,13 +85,13 @@ async function main() {
       console.log(`isPaid: ${entry.isPaid}`);
       console.log(`isCancelled: ${entry.isCancelled}`);
       console.log(`isRefund: ${entry.isRefund}`);
-      console.log(`Total Amount: ${entry.totalAmount}`);
+      console.log(`Total Amount: ${String(entry.totalAmount)}`);
       console.log(`Currency: ${entry.currency}`);
       console.log(`Negative Inventory: ${entry.negativeInventoryFlag}`);
       console.log(`Sync Attempts: ${entry.syncAttempts}`);
-      console.log(`Last Sync: ${entry.lastSyncAt}`);
-      console.log(`Created: ${entry.createdAt}`);
-      console.log(`Updated: ${entry.updatedAt}`);
+      console.log(`Last Sync: ${String(entry.lastSyncAt)}`);
+      console.log(`Created: ${String(entry.createdAt)}`);
+      console.log(`Updated: ${String(entry.updatedAt)}`);
 
       if (entry.validationErrors) {
         console.log(

@@ -34,6 +34,7 @@ function makePrisma() {
     storeConfiguration: {
       findUnique: jest.fn().mockResolvedValue(makeStoreConfig()),
       findMany: jest.fn().mockResolvedValue([makeStoreConfig()]),
+      create: jest.fn().mockResolvedValue(makeStoreConfig()),
       update: jest.fn().mockResolvedValue(makeStoreConfig()),
       delete: jest.fn().mockResolvedValue({}),
       upsert: jest.fn().mockResolvedValue(makeStoreConfig()),
@@ -277,6 +278,14 @@ describe('StoreConfigService', () => {
             region: 'OM',
             orderCount: 30,
           },
+        ])
+        .mockResolvedValueOnce([
+          // VendHqRegister account IDs by region (Step 4.5)
+          {
+            region: 'AE',
+            bankAccountId: BigInt(2001),
+            cashAccountId: BigInt(2002),
+          },
         ]);
 
       // Mock fusionSalesMetadata
@@ -311,6 +320,11 @@ describe('StoreConfigService', () => {
       (
         prisma as unknown as Record<string, { create: jest.Mock }>
       ).storeConfiguration.create = jest.fn().mockResolvedValue({});
+
+      // By default no branch has an existing configuration, so each is
+      // treated as new. Individual tests override this to simulate existing
+      // configs (e.g. the "skips branches that already have configurations").
+      prisma.storeConfiguration.findUnique.mockReset().mockResolvedValue(null);
     });
 
     it('creates configurations for all unique branches', async () => {
@@ -348,8 +362,7 @@ describe('StoreConfigService', () => {
     it('matches branches to FusionSalesMetadata by region', async () => {
       await service.populateAllBranches();
 
-      const createCalls = (prisma.storeConfiguration.create as jest.Mock).mock
-        .calls;
+      const createCalls = prisma.storeConfiguration.create.mock.calls;
 
       // Branch 3 (AE) should use AE metadata
       expect(createCalls[0][0].data.billToSiteName).toBe('AE Store');
@@ -369,7 +382,7 @@ describe('StoreConfigService', () => {
     });
 
     it('handles create errors gracefully', async () => {
-      (prisma.storeConfiguration.create as jest.Mock)
+      prisma.storeConfiguration.create
         .mockRejectedValueOnce(new Error('Database error'))
         .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});

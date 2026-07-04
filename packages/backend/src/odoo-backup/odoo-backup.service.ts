@@ -912,6 +912,12 @@ export class OdooBackupService {
    */
   private extractTotalFromResponse(payload: unknown): number | null {
     if (typeof payload !== 'object' || payload === null) return null;
+    // A bare array does not advertise a separate total count — its own
+    // `.length` property is just the number of records on this page, not a
+    // server-reported grand total.  Treating it as a total would make
+    // pagination stop after the first full page (fetched === length), so
+    // return null here and let short-page detection drive the loop instead.
+    if (Array.isArray(payload)) return null;
     const p = payload as Record<string, unknown>;
 
     if (typeof p['length'] === 'number') return p['length'];

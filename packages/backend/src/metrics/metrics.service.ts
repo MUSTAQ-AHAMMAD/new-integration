@@ -10,10 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { StalledOrdersService } from '../sync/stalled-orders.service';
 import { SyncStatus } from '@prisma/client';
-import {
-  withTimeout,
-  MODULE_INIT_TIMEOUT_MS,
-} from '../common/utils/timeout';
+import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 @Injectable()
 export class MetricsService implements OnModuleInit {

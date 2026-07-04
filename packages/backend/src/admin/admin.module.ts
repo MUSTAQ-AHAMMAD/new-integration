@@ -16,7 +16,11 @@ import { SyncModule } from '../sync/sync.module';
     MulterModule.register({ limits: { fileSize: 50 * 1024 * 1024 } }),
     forwardRef(() => SyncModule),
   ],
-  controllers: [AdminController, SyncControlController, AdminDiagnosticsController],
+  controllers: [
+    AdminController,
+    SyncControlController,
+    AdminDiagnosticsController,
+  ],
   providers: [AdminService, OracleNativeService],
 })
 export class AdminModule {}

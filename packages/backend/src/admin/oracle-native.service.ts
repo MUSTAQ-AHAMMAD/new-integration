@@ -386,7 +386,7 @@ export class OracleNativeService {
    */
   private getRowIdentifier(
     row: Record<string, unknown>,
-    mapping: OracleTableMapping,
+    _mapping: OracleTableMapping,
   ): string | null {
     // Try common identifier columns
     const identifierKeys = [
@@ -404,8 +404,13 @@ export class OracleNativeService {
 
     for (const key of identifierKeys) {
       const value = col(row, key);
-      if (value != null && String(value).trim() !== '') {
-        return `${key}=${value}`;
+      if (value == null) {
+        continue;
+      }
+      const strValue =
+        typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+      if (strValue.trim() !== '') {
+        return `${key}=${strValue}`;
       }
     }
 

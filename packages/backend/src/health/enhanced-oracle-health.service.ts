@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import axios from 'axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { HealthStatus, ServiceName } from '@prisma/client';
 import { OracleClient } from '../clients/oracle/oracle.client';
@@ -223,9 +224,7 @@ export class EnhancedOracleHealthService {
       if (!baseUrl) {
         throw new Error('ORACLE_REST_BASE_URL not configured');
       }
-
       // Try to reach the server (timeout after 5 seconds)
-      const axios = require('axios');
       await axios.head(baseUrl, {
         timeout: 5000,
         validateStatus: (status: number) => status < 500, // Accept any non-500 status
@@ -280,8 +279,6 @@ export class EnhancedOracleHealthService {
       if (!baseUrl) {
         throw new Error('ORACLE_SOAP_BASE_URL not configured');
       }
-
-      const axios = require('axios');
       await axios.head(baseUrl, {
         timeout: 5000,
         validateStatus: (status: number) => status < 500,
@@ -297,6 +294,7 @@ export class EnhancedOracleHealthService {
   /**
    * Test Oracle SOAP authentication
    */
+  // eslint-disable-next-line @typescript-eslint/require-await -- async signature required for Promise.allSettled rejection semantics
   private async testSoapAuthentication(): Promise<void> {
     try {
       // SOAP uses HTTP Basic Auth - test it with a simple call
@@ -321,6 +319,7 @@ export class EnhancedOracleHealthService {
   /**
    * Test Oracle SOAP WSDL availability
    */
+  // eslint-disable-next-line @typescript-eslint/require-await -- async signature required for Promise.allSettled rejection semantics
   private async testSoapWsdlAvailability(): Promise<void> {
     try {
       const wsdlUrl = this.configService.get<string>('ORACLE_SOAP_WSDL_URL');
@@ -512,6 +511,7 @@ export class EnhancedOracleHealthService {
   /**
    * Get health statistics
    */
+  // eslint-disable-next-line @typescript-eslint/require-await -- public async API contract retained
   async getHealthStatistics(): Promise<{
     rest: {
       status: string;
