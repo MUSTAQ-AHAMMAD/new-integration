@@ -9,6 +9,10 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
 import { FusionCredentialResolver } from './fusion-credential.resolver';
+import {
+  withTimeout,
+  MODULE_INIT_TIMEOUT_MS,
+} from '../../common/utils/timeout';
 
 export interface OracleInvoiceData {
   customerTransactionId?: string;
@@ -106,8 +110,11 @@ export class OracleClient implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (!this.credentialResolver) return;
     try {
-      const settings =
-        await this.credentialResolver.resolveOracleConnectionSettings();
+      const settings = await withTimeout(
+        this.credentialResolver.resolveOracleConnectionSettings(),
+        MODULE_INIT_TIMEOUT_MS,
+        'OracleClient.onModuleInit',
+      );
       if (!settings || settings.source === 'environment') return;
 
       this.http = axios.create({

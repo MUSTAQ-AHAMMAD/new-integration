@@ -1,5 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  withTimeout,
+  MODULE_INIT_TIMEOUT_MS,
+} from '../common/utils/timeout';
 
 export interface SyncServiceConfig {
   serviceName: string;
@@ -25,6 +29,14 @@ export class SyncControlService implements OnModuleInit {
    * Initialize sync control records for all known sync services
    */
   async onModuleInit() {
+    await withTimeout(
+      this.initializeSyncControls(),
+      MODULE_INIT_TIMEOUT_MS,
+      'SyncControlService.onModuleInit',
+    );
+  }
+
+  private async initializeSyncControls() {
     const services: SyncServiceConfig[] = [
       {
         serviceName: 'odoo-backup',
