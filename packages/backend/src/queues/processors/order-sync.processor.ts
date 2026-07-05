@@ -918,6 +918,42 @@ export class OrderSyncProcessor {
       );
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+      // A circuit-breaker rejection means the downstream Oracle service is
+      // temporarily unavailable and the request never actually reached it.
+      // This is a transient condition, not a permanent failure — do not mark
+      // the order FAILED (which would require manual intervention) or generate
+      // FailedTransaction / error-alert noise. Instead, return the order to
+      // PENDING so the pipeline scheduler retries it automatically once the
+      // circuit recovers.
+      if (this.isTransientCircuitError(errorMessage)) {
+        this.logger.warn(
+          `[${odooOrderId}] ⏳ Sync deferred (transient): ${errorMessage}. ` +
+            `Order returned to PENDING for automatic retry.`,
+        );
+        await this.prisma.orderSyncQueue
+          .update({
+            where: { id: order.id },
+            data: {
+              status: SyncStatus.PENDING,
+              validationErrors: { error: errorMessage },
+            },
+          })
+          .catch(() => undefined);
+
+        if (syncJobId) {
+          await this.incrementSyncJobCounters(syncJobId, 'skipped').catch(
+            () => undefined,
+          );
+        }
+
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: SyncStatus.PENDING,
+        });
+        return;
+      }
+
       this.logger.error(`Order sync failed: ${odooOrderId} - ${errorMessage}`);
       await this.prisma.orderSyncQueue
         .update({
@@ -960,6 +996,22 @@ export class OrderSyncProcessor {
       });
       throw err;
     }
+  }
+
+  /**
+   * Detects transient circuit-breaker rejections thrown by
+   * CircuitBreakerService. When a circuit is OPEN (or HALF_OPEN and busy) the
+   * request is rejected before it ever reaches the downstream service, so the
+   * failure is temporary and the order should be retried rather than
+   * permanently failed. The message is matched (rather than the exception
+   * type) because the circuit error is often re-wrapped by callers
+   * (e.g. "Oracle invoice creation failed: Circuit ... is open and recovering").
+   */
+  private isTransientCircuitError(message: string): boolean {
+    return (
+      /circuit \S+ is open and recovering/i.test(message) ||
+      /circuit \S+ is half-open and busy/i.test(message)
+    );
   }
 
   /**

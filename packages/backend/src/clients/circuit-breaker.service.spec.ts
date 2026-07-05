@@ -114,4 +114,34 @@ describe('CircuitBreakerService', () => {
       expect(status?.state).toBe(CircuitState.CLOSED);
     });
   });
+
+  describe('isAnyOpen', () => {
+    it('returns false when no circuits are open', async () => {
+      await service.execute(
+        'oracle:createInvoice',
+        jest.fn().mockResolvedValue('ok'),
+      );
+      expect(await service.isAnyOpen('oracle:')).toBe(false);
+    });
+
+    it('returns true when a circuit matching the prefix is open', async () => {
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
+      for (let i = 0; i < 10; i++) {
+        await service
+          .execute('oracle:createInvoice', fn)
+          .catch(() => undefined);
+      }
+      expect(await service.isAnyOpen('oracle:')).toBe(true);
+    });
+
+    it('ignores open circuits that do not match the prefix', async () => {
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
+      for (let i = 0; i < 10; i++) {
+        await service.execute('vendhq:getSales', fn).catch(() => undefined);
+      }
+      expect(await service.isAnyOpen('oracle:')).toBe(false);
+      // Without a prefix, the open vendhq circuit is detected.
+      expect(await service.isAnyOpen()).toBe(true);
+    });
+  });
 });

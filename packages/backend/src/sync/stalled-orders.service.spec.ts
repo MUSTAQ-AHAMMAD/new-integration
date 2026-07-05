@@ -13,6 +13,10 @@ function makePrisma() {
     orderSyncQueue: {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    failedTransaction: {
+      create: jest.fn().mockResolvedValue({}),
     },
   };
 }
@@ -161,6 +165,108 @@ describe('StalledOrdersService', () => {
       await service.detectStalledOrders();
       const [callArg] = alerts.createAlert.mock.calls[0];
       expect(String(callArg.message)).toContain('RAW-001');
+    });
+  });
+
+  describe('cleanupStalePendingOrders', () => {
+    it('skips when the service is disabled', async () => {
+      const syncControl = makeSyncControl();
+      syncControl.isEnabled.mockResolvedValueOnce(false);
+      const svc = new StalledOrdersService(
+        prisma as unknown as PrismaService,
+        alerts as unknown as AlertsService,
+        syncControl as never,
+        makeConfig() as unknown as ConfigService,
+      );
+      await svc.cleanupStalePendingOrders();
+      expect(prisma.orderSyncQueue.findMany).not.toHaveBeenCalled();
+    });
+
+    it('cancels stale requests older than the cancel threshold', async () => {
+      // First findMany call → stale-by-age; second call → exhausted retries.
+      prisma.orderSyncQueue.findMany
+        .mockResolvedValueOnce([
+          makeStalledOrder({
+            status: SyncStatus.PENDING,
+            syncAttempts: 1,
+            createdAt: new Date('2024-01-01T00:00:00Z'),
+          }),
+        ])
+        .mockResolvedValueOnce([]);
+
+      await service.cleanupStalePendingOrders();
+
+      expect(prisma.orderSyncQueue.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'order-001' },
+          data: expect.objectContaining({ status: SyncStatus.FAILED }),
+        }),
+      );
+      // Audit row recorded
+      expect(prisma.failedTransaction.create).toHaveBeenCalledTimes(1);
+      // Summary alert raised for cancelled requests
+      expect(alerts.createAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('permanently fails orders that exceed the retry limit', async () => {
+      prisma.orderSyncQueue.findMany
+        .mockResolvedValueOnce([]) // none stale by age
+        .mockResolvedValueOnce([
+          makeStalledOrder({
+            id: 'order-retry',
+            status: SyncStatus.QUEUED_FOR_RETRY,
+            syncAttempts: 5,
+          }),
+        ]);
+
+      await service.cleanupStalePendingOrders();
+
+      expect(prisma.orderSyncQueue.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'order-retry' },
+          data: expect.objectContaining({ status: SyncStatus.FAILED }),
+        }),
+      );
+      expect(prisma.failedTransaction.create).toHaveBeenCalledTimes(1);
+      // A summary alert is raised for permanently-failed orders.
+      expect(alerts.createAlert).toHaveBeenCalledTimes(1);
+      const [alertArg] = alerts.createAlert.mock.calls[0];
+      expect(String(alertArg.title)).toContain('permanently failed');
+    });
+
+    it('does nothing when there are no eligible orders', async () => {
+      prisma.orderSyncQueue.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      await service.cleanupStalePendingOrders();
+      expect(prisma.orderSyncQueue.update).not.toHaveBeenCalled();
+      expect(prisma.failedTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it('queries eligible statuses older than the cancel cutoff', async () => {
+      prisma.orderSyncQueue.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      await service.cleanupStalePendingOrders();
+
+      const [cancelCall] = prisma.orderSyncQueue.findMany.mock.calls[0];
+      expect(cancelCall.where.status.in).toEqual([
+        SyncStatus.PENDING,
+        SyncStatus.QUEUED_FOR_RETRY,
+      ]);
+      expect(cancelCall.where.createdAt.lt).toBeInstanceOf(Date);
+
+      const [retryCall] = prisma.orderSyncQueue.findMany.mock.calls[1];
+      expect(retryCall.where.syncAttempts.gte).toBe(5);
+    });
+
+    it('does not re-throw when cleanup fails', async () => {
+      prisma.orderSyncQueue.findMany.mockRejectedValueOnce(
+        new Error('DB down'),
+      );
+      await expect(
+        service.cleanupStalePendingOrders(),
+      ).resolves.toBeUndefined();
     });
   });
 

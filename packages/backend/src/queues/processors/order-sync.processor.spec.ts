@@ -519,4 +519,63 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(successCall).toBeUndefined();
     });
   });
+
+  describe('transient circuit-breaker handling', () => {
+    // When the Oracle circuit breaker is OPEN, createSimpleInvoice rejects
+    // before reaching Oracle. This is a transient condition and must not be
+    // treated as a permanent failure.
+    const CIRCUIT_ERROR =
+      'Oracle invoice creation failed: Circuit oracle:createSimpleInvoice is open and recovering';
+
+    beforeEach(() => {
+      (mockSoapClient.createSimpleInvoice as jest.Mock).mockRejectedValue(
+        new Error(CIRCUIT_ERROR),
+      );
+    });
+
+    it('returns the order to PENDING instead of FAILED', async () => {
+      await processor.handleOrderSync(makeJob());
+
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.PENDING),
+      ).toBeDefined();
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+      ).toBeUndefined();
+    });
+
+    it('does NOT create a FailedTransaction for a transient circuit error', async () => {
+      await processor.handleOrderSync(makeJob());
+
+      expect(mockPrisma.failedTransaction!.create).not.toHaveBeenCalled();
+    });
+
+    it('does NOT send an error-alert notification for a transient circuit error', async () => {
+      await processor.handleOrderSync(makeJob());
+
+      expect(mockQueues.enqueueNotification).not.toHaveBeenCalled();
+    });
+
+    it('does not throw so the queue job completes cleanly', async () => {
+      await expect(
+        processor.handleOrderSync(makeJob()),
+      ).resolves.toBeUndefined();
+    });
+
+    it('still permanently fails on a genuine (non-transient) Oracle error', async () => {
+      (mockSoapClient.createSimpleInvoice as jest.Mock).mockRejectedValue(
+        new Error('Oracle invoice creation failed: Invalid customer account'),
+      );
+
+      await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
+
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+      ).toBeDefined();
+    });
+  });
 });
