@@ -1009,8 +1009,8 @@ export class OrderSyncProcessor {
    */
   private isTransientCircuitError(message: string): boolean {
     return (
-      /circuit .* is open and recovering/i.test(message) ||
-      /circuit .* is half-open and busy/i.test(message)
+      /circuit \S+ is open and recovering/i.test(message) ||
+      /circuit \S+ is half-open and busy/i.test(message)
     );
   }
 
