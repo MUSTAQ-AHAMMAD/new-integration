@@ -228,8 +228,10 @@ describe('StalledOrdersService', () => {
         }),
       );
       expect(prisma.failedTransaction.create).toHaveBeenCalledTimes(1);
-      // No stale-by-age orders → no summary alert
-      expect(alerts.createAlert).not.toHaveBeenCalled();
+      // A summary alert is raised for permanently-failed orders.
+      expect(alerts.createAlert).toHaveBeenCalledTimes(1);
+      const [alertArg] = alerts.createAlert.mock.calls[0];
+      expect(String(alertArg.title)).toContain('permanently failed');
     });
 
     it('does nothing when there are no eligible orders', async () => {

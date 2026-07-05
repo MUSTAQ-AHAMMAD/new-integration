@@ -305,6 +305,23 @@ export class StalledOrdersService {
       );
     }
 
+    await this.alertsService
+      .createAlert({
+        alertType: AlertType.SYNC_STALLED,
+        severity: AlertSeverity.ERROR,
+        title: 'Sync requests permanently failed',
+        message:
+          `${exhaustedOrders.length} sync request(s) were permanently failed ` +
+          `and removed from the retry queue after exceeding the maximum of ` +
+          `${this.maxSyncAttempts} attempts.`,
+        relatedEntityType: 'SYNC_QUEUE',
+      })
+      .catch((err) =>
+        this.logger.error(
+          `Failed to raise retry-limit cleanup alert: ${(err as Error).message}`,
+        ),
+      );
+
     return exhaustedOrders.length;
   }
 
