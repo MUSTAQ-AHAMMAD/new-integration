@@ -1,14 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { JobType, ScopeType, SyncStatus } from '@prisma/client';
+import { JobStatus, JobType, ScopeType, SyncStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PipelineSchedulerService } from './pipeline-scheduler.service';
 import { SyncService } from './sync.service';
 import { SyncControlService } from './sync-control.service';
+import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 
 describe('PipelineSchedulerService', () => {
   let service: PipelineSchedulerService;
   let prisma: PrismaService;
   let syncService: SyncService;
+  let circuitBreaker: CircuitBreakerService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -21,6 +23,9 @@ describe('PipelineSchedulerService', () => {
               count: jest.fn(),
               updateMany: jest.fn(),
               groupBy: jest.fn(),
+            },
+            syncJob: {
+              count: jest.fn().mockResolvedValue(0),
             },
           },
         },
@@ -38,12 +43,19 @@ describe('PipelineSchedulerService', () => {
             markStopped: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: CircuitBreakerService,
+          useValue: {
+            isAnyOpen: jest.fn().mockResolvedValue(false),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<PipelineSchedulerService>(PipelineSchedulerService);
     prisma = module.get<PrismaService>(PrismaService);
     syncService = module.get<SyncService>(SyncService);
+    circuitBreaker = module.get<CircuitBreakerService>(CircuitBreakerService);
   });
 
   it('should be defined', () => {
@@ -77,6 +89,31 @@ describe('PipelineSchedulerService', () => {
       jest.spyOn(prisma.orderSyncQueue, 'count').mockResolvedValue(100);
       (service as any).isRunning = true;
       await service.runAutomaticPipeline();
+      expect(syncService.createSyncJob).not.toHaveBeenCalled();
+    });
+
+    it('should skip creating a job when the Oracle circuit breaker is open', async () => {
+      jest.spyOn(circuitBreaker, 'isAnyOpen').mockResolvedValue(true);
+      jest.spyOn(prisma.orderSyncQueue, 'count').mockResolvedValue(100);
+
+      await service.runAutomaticPipeline();
+
+      expect(circuitBreaker.isAnyOpen).toHaveBeenCalledWith('oracle:');
+      expect(syncService.createSyncJob).not.toHaveBeenCalled();
+    });
+
+    it('should skip when an ORDER_SYNC job is already in flight', async () => {
+      jest.spyOn(prisma.syncJob, 'count').mockResolvedValue(1);
+      jest.spyOn(prisma.orderSyncQueue, 'count').mockResolvedValue(100);
+
+      await service.runAutomaticPipeline();
+
+      expect(prisma.syncJob.count).toHaveBeenCalledWith({
+        where: {
+          jobType: JobType.ORDER_SYNC,
+          status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] },
+        },
+      });
       expect(syncService.createSyncJob).not.toHaveBeenCalled();
     });
   });

@@ -172,6 +172,32 @@ export class CircuitBreakerService {
   }
 
   /**
+   * Check if ANY known circuit is currently OPEN, optionally restricted to
+   * circuits whose name starts with `prefix` (e.g. "oracle:").
+   *
+   * Circuits are created lazily per downstream operation (e.g.
+   * "oracle:createSimpleInvoice"), so a fixed circuit name cannot be relied
+   * upon. This inspects every live circuit so callers can fail fast when a
+   * downstream service (like Oracle) is unhealthy.
+   */
+  async isAnyOpen(prefix?: string): Promise<boolean> {
+    const keys = await this.keys(`${KEY_PREFIX}:${prefix ?? ''}*`);
+    for (const key of keys) {
+      const name = key.replace(`${KEY_PREFIX}:`, '');
+      // The local in-memory fallback ignores the SCAN pattern, so filter here
+      // to keep behaviour identical whether Redis is available or not.
+      if (prefix && !name.startsWith(prefix)) {
+        continue;
+      }
+      const snap = await this.readCircuit(name, DEFAULT_OPTIONS);
+      if (snap.state === CircuitState.OPEN) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Reset a circuit breaker to CLOSED state
    * This can be used to manually recover from a OPEN state
    */

@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { JobType, ScopeType, SyncStatus } from '@prisma/client';
+import { JobStatus, JobType, ScopeType, SyncStatus } from '@prisma/client';
 import { PIPELINE_CREATOR_ID } from '../common/constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
 import { SyncControlService } from './sync-control.service';
+import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 
 /**
  * PipelineSchedulerService - Automatic pipeline that mimics the Java Quartz scheduler
@@ -36,6 +37,7 @@ export class PipelineSchedulerService {
     private readonly prisma: PrismaService,
     private readonly syncService: SyncService,
     private readonly syncControl: SyncControlService,
+    private readonly circuitBreaker: CircuitBreakerService,
   ) {
     // Configuration from environment variables
     this.enabled = process.env.PIPELINE_ENABLED !== 'false';
@@ -81,6 +83,40 @@ export class PipelineSchedulerService {
     this.isRunning = true;
     await this.syncControl.markRunning('pipeline-scheduler');
     try {
+      // ── Circuit-breaker fail-fast ───────────────────────────────
+      // When the downstream Oracle service is unhealthy its circuit breaker is
+      // OPEN. Creating new sync jobs in that state would only push more work at
+      // an unavailable service and create a retry storm. Fail fast instead and
+      // wait for the circuit to recover.
+      if (await this.circuitBreaker.isAnyOpen('oracle:')) {
+        this.logger.warn(
+          '⛔ Oracle circuit breaker is OPEN — skipping automatic pipeline ' +
+            'run to avoid a retry storm. Pending orders will be processed once ' +
+            'the circuit recovers.',
+        );
+        await this.syncControl.markStopped('pipeline-scheduler', 'success');
+        return;
+      }
+
+      // ── Concurrency control ─────────────────────────────────────
+      // Ensure only one ORDER_SYNC job runs at a time. If a previously created
+      // job is still working through the queue, skip this cycle rather than
+      // stacking a second job on top of it.
+      const inFlightJobs = await this.prisma.syncJob.count({
+        where: {
+          jobType: JobType.ORDER_SYNC,
+          status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] },
+        },
+      });
+      if (inFlightJobs > 0) {
+        this.logger.debug(
+          `An ORDER_SYNC job is already in progress (${inFlightJobs} active), ` +
+            'skipping this cycle',
+        );
+        await this.syncControl.markStopped('pipeline-scheduler', 'success');
+        return;
+      }
+
       // Count how many orders are waiting to be processed
       const pendingCount = await this.prisma.orderSyncQueue.count({
         where: {
