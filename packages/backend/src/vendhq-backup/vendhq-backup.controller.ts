@@ -196,12 +196,14 @@ export class VendHqBackupController {
     @Param('invoiceNumber') invoiceNumber: string,
     @Query('dryRun') dryRun?: string,
   ) {
+    // Dry run is the safe default; only an explicit falsy value enables the push.
+    const isDryRun = !['false', '0', 'no'].includes(
+      (dryRun ?? '').trim().toLowerCase(),
+    );
     const report = await this.oracleSyncService.traceSale(
       invoiceNumber,
       region,
-      {
-        dryRun: dryRun !== 'false',
-      },
+      { dryRun: isDryRun },
     );
     return { ok: report.sale.found, report };
   }

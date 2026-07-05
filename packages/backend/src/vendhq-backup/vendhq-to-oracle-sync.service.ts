@@ -661,7 +661,10 @@ export class VendHqToOracleSyncService {
       sale.region,
     );
     report.itemValidation = validation;
-    const validationOk = validation.totalItems > 0 && validation.matched > 0;
+    const validationOk =
+      validation.totalItems > 0 &&
+      validation.missingFromItemMeta === 0 &&
+      validation.failedStatus === 0;
     addStep(
       'validate-items',
       validationOk,
