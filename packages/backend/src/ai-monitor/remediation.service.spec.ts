@@ -157,10 +157,11 @@ describe('RemediationService', () => {
     expect(sync.retrySkippedOrders).not.toHaveBeenCalled();
     expect(autoFix.autoFixSkippedOrders).not.toHaveBeenCalled();
     expect(result.dryRun).toBe(true);
-    // No step performed a mutating action.
-    expect(result.steps.some((s) => s.status === 'ok' && s.step !== 3)).toBe(
-      false,
-    );
+    // No step performed a mutating action (the payment-mapping read at step 3
+    // is non-mutating and may report ok).
+    expect(
+      result.steps.filter((s) => s.step !== 3).every((s) => s.status !== 'ok'),
+    ).toBe(true);
   });
 
   it('skips step 5 when includeSkipped is false', async () => {
