@@ -24,14 +24,18 @@ export class QueuesService {
   ) {}
 
   async enqueueOrderSync(data: OrderSyncJobData, delay = 0) {
-    return this.orderSyncQueue.add('sync', data, {
-      delay,
-      jobId: `order-${data.odooOrderId}-${data.branchCode}`,
-    });
+    const jobId = `order-${data.odooOrderId}-${data.branchCode}`;
+    await this.clearFinishedJob(jobId);
+    return this.orderSyncQueue.add('sync', data, { delay, jobId });
   }
 
   async enqueueOrderSyncBulk(items: OrderSyncJobData[]) {
     if (items.length === 0) return [];
+    await Promise.all(
+      items.map((d) =>
+        this.clearFinishedJob(`order-${d.odooOrderId}-${d.branchCode}`),
+      ),
+    );
     return this.orderSyncQueue.addBulk(
       items.map((data) => ({
         name: 'sync',
@@ -39,6 +43,30 @@ export class QueuesService {
         opts: { jobId: `order-${data.odooOrderId}-${data.branchCode}` },
       })),
     );
+  }
+
+  /**
+   * Bull de-duplicates by jobId: adding a job whose id still exists in the
+   * queue (including retained completed/failed jobs — we keep up to
+   * removeOnFail=2000) is silently dropped. That means a re-enqueue of a
+   * previously-failed order never runs. Remove the retained *finished* job
+   * first so retries actually re-process. A still-waiting/active job is left
+   * alone so we never duplicate genuinely in-flight work.
+   */
+  private async clearFinishedJob(jobId: string): Promise<void> {
+    try {
+      const existing = await this.orderSyncQueue.getJob(jobId);
+      if (!existing) return;
+      const [completed, failed] = await Promise.all([
+        existing.isCompleted(),
+        existing.isFailed(),
+      ]);
+      if (completed || failed) {
+        await existing.remove();
+      }
+    } catch {
+      // best-effort: a missing job or a benign race must not block enqueue
+    }
   }
 
   async enqueueRetry(data: OrderSyncJobData, delayMs: number) {
