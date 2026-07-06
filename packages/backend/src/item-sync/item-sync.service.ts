@@ -10,6 +10,7 @@
  *  4. Fires an alert on partial failures without blocking other items.
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { OracleInventoryItem } from '../clients/oracle/oracle.client';
 import { OracleClient } from '../clients/oracle/oracle.client';
@@ -37,7 +38,17 @@ export class ItemSyncService {
     private readonly oracleClient: OracleClient,
     private readonly vendHqClient: VendHqClient,
     private readonly syncControl: SyncControlService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Whether a VendHQ push target is configured. When it is not (e.g. an
+   * Odoo→Oracle deployment that never syncs to VendHQ), item-sync stores the
+   * fetched Oracle item master locally instead of failing on every push.
+   */
+  private get vendHqConfigured(): boolean {
+    return !!this.config.get<string>('VENDHQ_BASE_URL');
+  }
 
   /**
    * Runs every hour — mirrors Java Quartz schedule for item master sync.
@@ -173,6 +184,40 @@ export class ItemSyncService {
       // Java uses LongDescription for the product name, falls back to ItemDescription
       const productName =
         item.LongDescription ?? item.ItemDescription ?? item.ItemNumber;
+
+      // ── Local-only mode (no VendHQ target) ───────────────────────────────
+      // Store the Oracle item master directly so it "syncs" and can feed the
+      // transformation's UOM/tax/description lookups, keyed by the Oracle item
+      // number (there is no VendHQ product id).
+      if (!this.vendHqConfigured) {
+        const localMeta = {
+          itemId: item.ItemNumber,
+          sourceId: null, // Oracle ItemId exceeds Int range; omit
+          name: productName,
+          sku: item.ItemNumber,
+          handle: item.ItemNumber,
+          uomCode: item.PrimaryUOMCode ?? null,
+          uomName: item.PrimaryUOMValue ?? null,
+          itemType: item.UserItemTypeValue ?? null,
+          description: item.ItemDescription ?? null,
+          active: isActive,
+          retailPrice: isNaN(retailPrice) ? null : retailPrice,
+          taxId: item.OutputTaxClassificationCodeValue ?? null,
+          status: 'SUCCESS',
+          message: 'Stored from Oracle (VendHQ push skipped — not configured)',
+          lastUpdateDate: item.LastUpdateDate
+            ? new Date(item.LastUpdateDate)
+            : new Date(),
+          region,
+        };
+        await this.prisma.vendHqItemMeta.upsert({
+          where: { itemId_region: { itemId: item.ItemNumber, region } },
+          create: localMeta,
+          update: localMeta,
+        });
+        result.synced++;
+        continue;
+      }
 
       try {
         const vendProduct = await this.vendHqClient.upsertProduct({
