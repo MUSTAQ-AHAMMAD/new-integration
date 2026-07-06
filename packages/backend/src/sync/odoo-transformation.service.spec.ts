@@ -317,7 +317,7 @@ describe('OdooTransformationService', () => {
     expect(result.miscReceipts).toHaveLength(0);
   });
 
-  it('warns and skips standard receipt when cashAccountId is null', async () => {
+  it('throws when the register has no bank/cash account (Java parity)', async () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderPayments: [{ paymentName: 'Cash', amount: 80 }] }),
     );
@@ -332,12 +332,9 @@ describe('OdooTransformationService', () => {
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads(
-      'backup-001',
-      'CCNTRBHR',
-      'AE',
-    );
-    expect(result.standardReceipts).toHaveLength(0);
+    await expect(
+      service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
+    ).rejects.toThrow('is not entered in VendHqRegister');
   });
 
   it('builds standard and misc receipts for a card payment', async () => {

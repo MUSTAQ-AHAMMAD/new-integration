@@ -300,13 +300,18 @@ export class OdooTransformationService {
       const lowerMethod = pmtMethod.toLowerCase();
 
       if (lowerMethod !== 'cash rounding') {
+        // Java parity: a sale must not post an invoice without its receipt, so a
+        // missing register account is fatal (not a silent skip that would leave
+        // an unpaid invoice in Oracle) —
+        // "Bank Account Details for Register: <name> is not entered!!"
         if (numericAccountId == null) {
-          this.logger.warn(
-            `No ${isCash ? 'cash' : 'bank'} account for branch ${branchCode} ` +
-              `("${storeConfig.branchName}") in VendHqRegister or ` +
-              `StoreConfiguration — standard receipt for "${pmtMethod}" skipped.`,
+          throw new Error(
+            `Bank/cash account for register "${storeConfig.branchName}" ` +
+              `(branch ${branchCode}, region ${region}) is not entered in ` +
+              `VendHqRegister — cannot create receipt for "${pmtMethod}".`,
           );
-        } else {
+        }
+        {
           standardReceipts.push({
             currencyCode: invoiceHeader.invoiceCurrencyCode,
             saleDate,
