@@ -179,6 +179,23 @@ export class VendHqSalesBackupService {
    *
    * Exposed publicly so the controller can trigger a manual run.
    */
+  /**
+   * Resolves a credential's `domainName` to a VendHQ/Lightspeed base URL.
+   *
+   * Historically `domainName` was a bare store prefix ("mystore" →
+   * https://mystore.vendhq.com). Records imported from Oracle, however, may
+   * carry a full hostname ("www.ibqpos.com") or an explicit scheme. Appending
+   * ".vendhq.com" to a full hostname yields an unresolvable host whose TLS cert
+   * never matches ("www.ibqpos.com.vendhq.com"). Only append the suffix for bare
+   * prefixes; use anything already containing a dot (or scheme) verbatim.
+   */
+  resolveVendHqBaseUrl(domainName: string): string {
+    const raw = (domainName ?? '').trim().replace(/\/+$/, '');
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const host = raw.includes('.') ? raw : `${raw}.vendhq.com`;
+    return `https://${host}`;
+  }
+
   async backupRegion(cred: {
     id: string;
     domainName: string;
@@ -188,7 +205,7 @@ export class VendHqSalesBackupService {
     currency: string;
     lastSyncVersion?: number;
   }): Promise<{ saved: number; skipped: number }> {
-    const baseUrl = `https://${cred.domainName}.vendhq.com`;
+    const baseUrl = this.resolveVendHqBaseUrl(cred.domainName);
     let afterVersion = cred.lastSyncVersion ?? 0;
     let maxVersionSeen = afterVersion;
     let totalSaved = 0;
