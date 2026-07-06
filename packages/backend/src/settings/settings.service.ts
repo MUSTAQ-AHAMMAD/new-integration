@@ -151,6 +151,9 @@ export class SettingsService {
     for (let i = 0; i < count; i += 1) {
       const next = cronTime.getNextDateFrom(from);
       const iso = next.toISO();
+      // Luxon returns null from toISO() only for an invalid DateTime; the
+      // expression is already validated above, so this is defensive — bail
+      // out rather than push a null/empty value.
       if (!iso) {
         break;
       }
