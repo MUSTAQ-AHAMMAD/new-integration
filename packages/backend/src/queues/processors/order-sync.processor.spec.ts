@@ -82,18 +82,23 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       } as unknown as PrismaService['fusionInvoiceHeader'],
       fusionInvoiceLine: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        // Duplicate check A: default undefined = "no existing invoice line".
+        findFirst: jest.fn().mockResolvedValue(undefined),
       } as unknown as PrismaService['fusionInvoiceLine'],
       fusionStandardReceipt: {
         create: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(undefined),
       } as unknown as PrismaService['fusionStandardReceipt'],
       fusionMiscReceipt: {
         create: jest.fn().mockResolvedValue({}),
       } as unknown as PrismaService['fusionMiscReceipt'],
       fusionApplyReceipt: {
         create: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(undefined),
       } as unknown as PrismaService['fusionApplyReceipt'],
       fusionJournalHeader: {
         create: jest.fn().mockResolvedValue({ id: 'jh-1' }),
+        findFirst: jest.fn().mockResolvedValue(undefined),
       } as unknown as PrismaService['fusionJournalHeader'],
       fusionJournalLine: {
         create: jest.fn().mockResolvedValue({}),

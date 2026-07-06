@@ -497,11 +497,41 @@ export class OrderSyncProcessor {
           throw new Error(errorMsg);
         }
 
+        // ── Duplicate check A (Java: getFusionInvoiceLineFindSalesTxnLine) ──
+        // If SUCCESS invoice lines already exist for this sale's salesOrder
+        // reference, the invoice was created in a prior (possibly partial) run.
+        // Skip re-creating it, reuse the existing Oracle transaction number, and
+        // fall through to the receipt/journal steps (each has its own dup check).
+        const salesOrderRef = invoiceHeader.invoiceLines[0]?.salesOrder ?? null;
+        const existingInvoiceLine = salesOrderRef
+          ? await this.prisma.fusionInvoiceLine.findFirst({
+              where: {
+                salesOrder: salesOrderRef,
+                region: effectiveRegion,
+                status: 'SUCCESS',
+                invoiceNumber: { not: null },
+              },
+              orderBy: { createdAt: 'desc' },
+            })
+          : null;
+
         let invoiceResult: any;
-        try {
-          invoiceResult =
-            await this.soapClient.createSimpleInvoice(invoiceHeader);
-        } catch (invoiceError) {
+        if (existingInvoiceLine?.invoiceNumber) {
+          this.logger.log(
+            `[${odooOrderId}] ⏭️ Step 8a/14: Invoice already exists for ` +
+              `salesOrder=${salesOrderRef} (txn ${existingInvoiceLine.invoiceNumber}); ` +
+              `skipping invoice creation, reusing existing transaction`,
+          );
+          invoiceResult = {
+            transactionNumber: existingInvoiceLine.invoiceNumber,
+            customerTrxId: null,
+            serviceStatus: 'SUCCESS',
+          };
+        } else {
+          try {
+            invoiceResult =
+              await this.soapClient.createSimpleInvoice(invoiceHeader);
+          } catch (invoiceError) {
           const errorMessage =
             invoiceError instanceof Error
               ? invoiceError.message
@@ -550,6 +580,7 @@ export class OrderSyncProcessor {
             },
           });
           throw new Error(`Oracle invoice creation failed: ${errorMessage}`);
+          }
         }
 
         // Get the transaction number properly - prefer transactionNumber over customerTrxId
@@ -568,6 +599,9 @@ export class OrderSyncProcessor {
             `  - Status: ${invoiceResult.serviceStatus || 'SUCCESS'}`,
         );
 
+        // Persist the invoice audit rows + inventory txns only when we actually
+        // created the invoice this run. On reuse (dup check A) they already exist.
+        if (!existingInvoiceLine) {
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
           data: {
             status: invoiceResult.serviceStatus || 'SUCCESS',
@@ -655,12 +689,27 @@ export class OrderSyncProcessor {
             `[${odooOrderId}] ⏭️  Step 8b/14: No valid items for inventory transactions`,
           );
         }
+        } // end if (!existingInvoiceLine)
 
         // ── 9. Push Standard Receipts ─────────────────────────────
         this.logger.log(
           `[${odooOrderId}] Step 9/14: Creating ${standardReceipts.length} standard receipt(s)...`,
         );
         for (const sr of standardReceipts) {
+          // ── Duplicate check B (Java: getFindStandardReceipt) ──
+          const existingSr = await this.prisma.fusionStandardReceipt.findFirst({
+            where: {
+              receiptNumber: sr.receiptNumber,
+              region: effectiveRegion,
+              status: 'SUCCESS',
+            },
+          });
+          if (existingSr) {
+            this.logger.log(
+              `[${odooOrderId}]   ⏭️ Standard receipt ${sr.receiptNumber} already exists; skipping`,
+            );
+            continue;
+          }
           try {
             const srResult = await this.soapClient.createStandardReceipt(sr);
             await this.prisma.fusionStandardReceipt.create({
@@ -771,6 +820,20 @@ export class OrderSyncProcessor {
 
         // ── 11. Apply Receipts to Invoice ─────────────────────────
         for (const ar of applyReceipts) {
+          // ── Duplicate check C (Java: getFindApplyReceipt) ──
+          const existingAr = await this.prisma.fusionApplyReceipt.findFirst({
+            where: {
+              receiptNumber: ar.receiptNumber,
+              region: effectiveRegion,
+              status: 'SUCCESS',
+            },
+          });
+          if (existingAr) {
+            this.logger.log(
+              `[${odooOrderId}]   ⏭️ Apply receipt ${ar.receiptNumber} already applied; skipping`,
+            );
+            continue;
+          }
           const arResult = await this.soapClient.createApplyReceipt(ar);
           await this.prisma.fusionApplyReceipt.create({
             data: {
@@ -789,12 +852,38 @@ export class OrderSyncProcessor {
 
         // ── 12. Journal Entries ───────────────────────────────────
         for (const jh of journalHeaders) {
+          // ── Duplicate check D (Java: getFindJournalHeader) ──
+          // Keyed on the invoice txn number + region (the txnNumber column was
+          // previously left unset; it is now populated below so this check works).
+          const existingJh =
+            txnNumber != null
+              ? await this.prisma.fusionJournalHeader.findFirst({
+                  where: {
+                    txnNumber,
+                    region: effectiveRegion,
+                    status: 'SUCCESS',
+                  },
+                })
+              : await this.prisma.fusionJournalHeader.findFirst({
+                  where: {
+                    batchDescription: jh.batchDescription,
+                    region: effectiveRegion,
+                    status: 'SUCCESS',
+                  },
+                });
+          if (existingJh) {
+            this.logger.log(
+              `[${odooOrderId}]   ⏭️ Journal already posted for txn ${txnNumber} (${jh.batchDescription}); skipping`,
+            );
+            continue;
+          }
           const jeHeaderId = await this.soapClient.importJournalEntry(jh);
           const jhAudit = await this.prisma.fusionJournalHeader.create({
             data: {
               status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
               requestDate: new Date(),
               region: effectiveRegion,
+              txnNumber: txnNumber ?? null,
               jeHeaderId: jeHeaderId ?? null,
               ledgerId: numberToBigInt(jh.ledgerId),
               batchName: jh.batchName,
