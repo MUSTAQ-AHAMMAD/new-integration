@@ -53,6 +53,54 @@ export class OdooTransformationService {
     return toSafeNumber(value);
   }
 
+  /** Normalise a store/mall name for matching (strip spacing, punctuation, case). */
+  private normalizeName(s: string | null | undefined): string {
+    return (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  /**
+   * Resolves the FusionSalesMetadata bill-to record for an order.
+   * - Non-NORMAL customerType (delivery platforms) → match by (customerType, region).
+   * - NORMAL → match the store's mall by normalised branchName == billToName.
+   * Returns null when no record matches (caller flags the branch as unmapped).
+   */
+  private async resolveBillToMetadata(
+    customerType: string,
+    region: string,
+    branchName: string,
+  ) {
+    if (customerType && customerType.toUpperCase() !== 'NORMAL') {
+      const byType = await this.prisma.fusionSalesMetadata.findFirst({
+        where: { customerType, region },
+      });
+      if (byType) return byType;
+    }
+    const candidates = await this.prisma.fusionSalesMetadata.findMany({
+      where: { region, customerType: 'NORMAL' },
+    });
+    const target = this.normalizeName(branchName);
+    return (
+      candidates.find((c) => this.normalizeName(c.billToName) === target) ?? null
+    );
+  }
+
+  /**
+   * Resolves the VendHqRegister holding this store's Oracle bank/cash account
+   * IDs, matched by normalised registerName == branchName within the region.
+   * StoreConfiguration's own bank/cash IDs are unpopulated, so VendHqRegister is
+   * the source of truth for receipt remittance accounts.
+   */
+  private async resolveRegisterAccounts(branchName: string, region: string) {
+    const registers = await this.prisma.vendHqRegister.findMany({
+      where: { region },
+    });
+    const target = this.normalizeName(branchName);
+    return (
+      registers.find((r) => this.normalizeName(r.registerName) === target) ??
+      null
+    );
+  }
+
   /**
    * Builds all Oracle SOAP payloads for one Odoo order stored in the backup
    * tables, ready to be submitted to Oracle Fusion.
@@ -104,11 +152,32 @@ export class OdooTransformationService {
     const orderNumber = backup.orderName ?? String(backup.orderId);
     const txnNumber = transactionNumberOverride ?? orderNumber;
 
+    // ── 3b. Resolve the accurate bill-to from FusionSalesMetadata ────────────
+    // StoreConfiguration.billToSiteName/billToLocation hold placeholders and
+    // billToAccountNumber was (wrongly) derived from odooBranchId. The real
+    // customer name / site / account live in FusionSalesMetadata, keyed by the
+    // store name (billToName). Delivery-platform sales (non-NORMAL customerType,
+    // e.g. Tamara/Tabby/Mrsool) bill to the platform's own account; NORMAL sales
+    // bill to the store's mall, matched by branchName == billToName.
+    const orderCustomerType = backup.customerType ?? 'NORMAL';
+    const salesMeta = await this.resolveBillToMetadata(
+      orderCustomerType,
+      region,
+      storeConfig.branchName,
+    );
+    if (!salesMeta) {
+      throw new Error(
+        `No FusionSalesMetadata bill-to match for branch ${branchCode} ` +
+          `(name="${storeConfig.branchName}", type=${orderCustomerType}, ` +
+          `region=${region}) — add/align the FusionSalesMetadata record.`,
+      );
+    }
+
     const invoiceHeader: InvoiceHeader = {
-      billToCustomerName: storeConfig.billToSiteName,
-      billToLocation: storeConfig.billToLocation ?? '',
+      billToCustomerName: salesMeta.billToName,
+      billToLocation: salesMeta.siteNumber ?? '',
       billToAccountNumber: String(
-        bigIntToNumber(storeConfig.odooBranchId, 'odooBranchId'),
+        bigIntToNumber(salesMeta.billToAccount, 'billToAccount'),
       ), // Convert BigInt to string
       businessUnit: storeConfig.oracleBusinessUnit,
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
@@ -196,6 +265,13 @@ export class OdooTransformationService {
     const standardReceipts: StandardReceiptRequest[] = [];
     const miscReceipts: MiscReceiptRequest[] = [];
 
+    // Oracle bank/cash account IDs come from VendHqRegister (StoreConfiguration's
+    // are unpopulated); matched by store name within the region.
+    const register = await this.resolveRegisterAccounts(
+      storeConfig.branchName,
+      region,
+    );
+
     for (const payment of backup.orderPayments) {
       const pmtMethod = payment.paymentName ?? '';
       if (!pmtMethod || pmtMethod.toLowerCase() === 'credit on cust') continue;
@@ -212,12 +288,13 @@ export class OdooTransformationService {
       }
 
       const isCash = receiptMethod.receiptIsCash;
-      // Use the numeric Oracle bank/cash account ID from StoreConfiguration.
-      // These mirror VendHqRegister.bankAccountId / cashAccountId and must be
-      // populated by the operator for receipt creation to succeed.
-      const numericAccountId = isCash
-        ? (storeConfig.cashAccountId ?? null)
-        : (storeConfig.bankAccountId ?? null);
+      // Numeric Oracle bank/cash account ID — sourced from VendHqRegister
+      // (matched by store), falling back to StoreConfiguration if present.
+      // VendHqRegister IDs are BigInt; normalise to number for the SOAP payload.
+      const rawAccountId = isCash
+        ? (register?.cashAccountId ?? storeConfig.cashAccountId ?? null)
+        : (register?.bankAccountId ?? storeConfig.bankAccountId ?? null);
+      const numericAccountId = rawAccountId == null ? null : Number(rawAccountId);
 
       const pmtAmount = this.convertDecimal(payment.amount ?? 0);
       const lowerMethod = pmtMethod.toLowerCase();
@@ -225,10 +302,9 @@ export class OdooTransformationService {
       if (lowerMethod !== 'cash rounding') {
         if (numericAccountId == null) {
           this.logger.warn(
-            `StoreConfiguration branchCode=${branchCode} has no ` +
-              `${isCash ? 'cashAccountId' : 'bankAccountId'} — ` +
-              `standard receipt for "${pmtMethod}" skipped. ` +
-              `Set the field on the StoreConfiguration record to enable receipt creation.`,
+            `No ${isCash ? 'cash' : 'bank'} account for branch ${branchCode} ` +
+              `("${storeConfig.branchName}") in VendHqRegister or ` +
+              `StoreConfiguration — standard receipt for "${pmtMethod}" skipped.`,
           );
         } else {
           standardReceipts.push({
