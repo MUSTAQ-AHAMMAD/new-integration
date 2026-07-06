@@ -515,7 +515,16 @@ export class StoreConfigService {
     // Update each store configuration
     for (const store of stores) {
       try {
-        const region = store.region || 'AE'; // Default to AE if no region
+        // Fail clearly rather than silently defaulting to AE (which would pick
+        // the wrong region's bank/cash accounts).
+        const region = store.region;
+        if (!region) {
+          const error = `Store ${store.branchCode} has no region — cannot resolve bank/cash accounts. Set the store's region.`;
+          errors.push(error);
+          this.logger.warn(error);
+          skipped++;
+          continue;
+        }
         const accountIds = regionAccountMap.get(region);
 
         if (!accountIds) {
@@ -727,16 +736,15 @@ export class StoreConfigService {
           continue;
         }
 
-        // Find matching FusionSalesMetadata by region
-        const metadata =
-          fusionMetadata.find(
-            (m) => branch.region && m.region === branch.region,
-          ) ||
-          fusionMetadata.find((m) => m.region === 'AE') || // Default to AE
-          fusionMetadata[0]; // Last resort
+        // Find matching FusionSalesMetadata by region. Do NOT fall back to AE
+        // or an arbitrary first row — that silently applies the wrong region's
+        // Oracle config. Require an exact region match.
+        const metadata = branch.region
+          ? fusionMetadata.find((m) => m.region === branch.region)
+          : undefined;
 
         if (!metadata) {
-          const error = `No suitable FusionSalesMetadata found for branch ${branchCode}`;
+          const error = `No FusionSalesMetadata for branch ${branchCode} (region=${branch.region ?? 'none'})`;
           errors.push(error);
           this.logger.warn(error);
           skipped++;
