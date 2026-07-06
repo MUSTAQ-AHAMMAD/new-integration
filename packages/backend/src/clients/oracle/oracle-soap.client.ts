@@ -71,6 +71,9 @@ export interface StandardReceiptRequest {
   orgId: number;
   customerId?: number;
   receiptAmount: number;
+  /** Oracle exchange-rate type (e.g. "Corporate"/"User"). Required by AR —
+   *  the receipt otherwise fails with "The conversion rate type is null." */
+  exchangeRateType?: string;
 }
 
 export interface StandardReceiptResponse {
@@ -97,6 +100,8 @@ export interface MiscReceiptRequest {
   saleDate: Date;
   receiptMethodId: number;
   receiptMethodName: string;
+  /** Oracle exchange-rate type (e.g. "Corporate"/"User"). Required by AR. */
+  exchangeRateType?: string;
   receiptNumber: string;
   bankAccountName: string;
   receivableActivityName: string;
@@ -244,7 +249,8 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:RemittanceBankAccountId>${req.remittanceBankAccountId}</typ1:RemittanceBankAccountId>
         <typ1:CustomerAccountNumber>${escapeXml(req.accountValue)}</typ1:CustomerAccountNumber>
-        <typ1:BusinessUnitId>${req.orgId}</typ1:BusinessUnitId>
+        <typ1:OrgId>${req.orgId}</typ1:OrgId>
+        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
         ${req.customerId ? `<typ1:PayingCustomerPartyId>${req.customerId}</typ1:PayingCustomerPartyId>` : ''}
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:standardReceipt>
@@ -292,7 +298,8 @@ function buildMiscReceiptSoap(req: MiscReceiptRequest): string {
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:BankAccountName>${escapeXml(req.bankAccountName)}</typ1:BankAccountName>
         <typ1:ReceivableActivityName>${escapeXml(req.receivableActivityName)}</typ1:ReceivableActivityName>
-        <typ1:BusinessUnitId>${req.orgId}</typ1:BusinessUnitId>
+        <typ1:OrgId>${req.orgId}</typ1:OrgId>
+        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:miscellaneousReceipt>
     </typ:createMiscellaneousReceipt>
