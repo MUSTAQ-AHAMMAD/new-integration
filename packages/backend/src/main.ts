@@ -1,4 +1,7 @@
 import 'dotenv/config';
+// Install the BigInt->JSON serialiser before anything serialises a BigInt.
+// Shared with the worker entry point so the two processes can never diverge.
+import './common/utils/install-bigint-json';
 import { NestFactory } from '@nestjs/core';
 import {
   Logger as NestLogger,
@@ -12,28 +15,6 @@ import helmet from 'helmet';
 import { json } from 'express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-
-// Ensure BigInt values (e.g. from Prisma BigInt fields) can be serialised to
-// JSON without throwing "Do not know how to serialize a BigInt".
-// A runtime guard protects against silent precision loss: any BigInt that
-// exceeds Number.MAX_SAFE_INTEGER would lose digits when coerced to a JS
-// number, so we throw early rather than silently corrupt data.
-// All Oracle account IDs used in this application are well within
-// Number.MAX_SAFE_INTEGER (9,007,199,254,740,991).
-(BigInt.prototype as { toJSON?: () => number }).toJSON = function (
-  this: bigint,
-) {
-  const n = this.valueOf();
-  if (
-    n > BigInt(Number.MAX_SAFE_INTEGER) ||
-    n < BigInt(-Number.MAX_SAFE_INTEGER)
-  ) {
-    throw new RangeError(
-      `BigInt value ${n.toString()} cannot be safely serialised as a JSON number (exceeds MAX_SAFE_INTEGER)`,
-    );
-  }
-  return Number(n);
-};
 
 // Bootstrap-time logger (used before the Pino logger is attached to the app).
 const bootstrapLogger = new NestLogger('Bootstrap');
