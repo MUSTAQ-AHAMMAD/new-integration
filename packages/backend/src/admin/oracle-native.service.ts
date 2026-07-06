@@ -464,14 +464,32 @@ export class OracleNativeService {
     const privilege =
       role?.toUpperCase() === 'SYSDBA' ? oracledb.SYSDBA : undefined;
 
+    // Fail fast when the DB is unreachable instead of hanging the request —
+    // oracledb.getConnection has no built-in acquisition timeout in thick mode.
+    const CONNECT_TIMEOUT_MS = 20_000;
     let connection: import('oracledb').Connection | undefined;
     try {
-      connection = await oracledb.getConnection({
-        user: cfg.username,
-        password: cfg.password,
-        connectString,
-        ...(privilege !== undefined ? { privilege } : {}),
-      });
+      connection = await Promise.race([
+        oracledb.getConnection({
+          user: cfg.username,
+          password: cfg.password,
+          connectString,
+          ...(privilege !== undefined ? { privilege } : {}),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `connection timed out after ${CONNECT_TIMEOUT_MS / 1000}s`,
+                ),
+              ),
+            CONNECT_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+      // Bound individual queries so a huge table scan can't hang indefinitely.
+      connection.callTimeout = 120_000;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new BadRequestException(`Failed to connect to Oracle DB: ${msg}`);
@@ -531,28 +549,43 @@ export class OracleNativeService {
         const rows = queryResult.rows ?? [];
         const delegate = mapping.prismaDelegate(this.prisma);
 
-        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-          const row = rows[rowIndex];
-          try {
-            const data = mapping.mapRow(row);
-            const where = mapping.upsertWhere(row);
-            await delegate.upsert({ where, update: data, create: data });
-            result.imported++;
-          } catch (rowErr: unknown) {
+        // Upsert in concurrent chunks — row-by-row sequential upserts made a
+        // full multi-table import exceed the request timeout.
+        const CHUNK = 25;
+        for (let i = 0; i < rows.length; i += CHUNK) {
+          const chunk = rows.slice(i, i + CHUNK);
+          const outcomes = await Promise.allSettled(
+            chunk.map((row) =>
+              // Resolve inside so mapRow/upsertWhere errors are captured too.
+              Promise.resolve().then(() => {
+                const data = mapping.mapRow(row);
+                const where = mapping.upsertWhere(row);
+                return delegate.upsert({ where, update: data, create: data });
+              }),
+            ),
+          );
+          outcomes.forEach((outcome, j) => {
+            if (outcome.status === 'fulfilled') {
+              result.imported++;
+              return;
+            }
             result.skipped++;
+            const row = chunk[j];
             const errorMsg =
-              rowErr instanceof Error ? rowErr.message : String(rowErr);
-            // Enhanced error message with row context and identification
+              outcome.reason instanceof Error
+                ? outcome.reason.message
+                : String(outcome.reason);
             const rowIdentifier = this.getRowIdentifier(row, mapping);
-            result.errors.push(
-              `Row ${rowIndex + 1}${rowIdentifier ? ` (${rowIdentifier})` : ''}: ${errorMsg}`,
-            );
-            // Log detailed error for debugging
+            // Cap the errors array so a fully-mismatched table can't bloat the response.
+            if (result.errors.length < 50) {
+              result.errors.push(
+                `Row ${i + j + 1}${rowIdentifier ? ` (${rowIdentifier})` : ''}: ${errorMsg}`,
+              );
+            }
             this.logger.warn(
-              `Oracle import error in ${mapping.oracleTable} row ${rowIndex + 1}: ${errorMsg}`,
-              row,
+              `Oracle import error in ${mapping.oracleTable} row ${i + j + 1}: ${errorMsg}`,
             );
-          }
+          });
         }
       } catch (tableErr: unknown) {
         const msg =
