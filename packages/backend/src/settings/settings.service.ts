@@ -1,23 +1,44 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CronTime, validateCronExpression } from 'cron';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 
 export interface AlertThresholds {
   failureRateThreshold: number;
-  latencyThreshold: number;
+  latencyThresholdMs: number;
+  maxQueueDepth: number;
+  alertCooldownMinutes: number;
 }
 
-interface StoredAlertThresholds {
-  failureRateThreshold?: unknown;
-  latencyThreshold?: unknown;
+export interface RetryPolicy {
+  maxRetries: number;
+  initialDelayMs: number;
+  backoffMultiplier: number;
+  maxDelayMs: number;
+}
+
+export interface SyncScheduleItem {
+  expression: string;
+  description: string;
+}
+
+export interface SyncSchedule {
+  orderSync: SyncScheduleItem;
+  retryFailed: SyncScheduleItem;
+  healthCheck: SyncScheduleItem;
+}
+
+export interface CronValidationResult {
+  nextRuns: string[];
 }
 
 @Injectable()
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name);
   private readonly alertThresholdsKey = 'settings:alert-thresholds';
+  private readonly retryPolicyKey = 'settings:retry-policy';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -40,22 +61,31 @@ export class SettingsService {
   }
 
   async getAlertThresholds(): Promise<AlertThresholds> {
+    const defaults = this.getDefaultAlertThresholds();
     const stored = await this.redis.get(this.alertThresholdsKey);
     if (!stored) {
-      return this.getDefaultAlertThresholds();
+      return defaults;
     }
 
     try {
       const parsed: unknown = JSON.parse(stored);
-      if (this.isStoredThresholds(parsed)) {
+      if (this.isRecord(parsed)) {
         return {
           failureRateThreshold: this.toNumber(
             parsed.failureRateThreshold,
-            this.getDefaultAlertThresholds().failureRateThreshold,
+            defaults.failureRateThreshold,
           ),
-          latencyThreshold: this.toNumber(
-            parsed.latencyThreshold,
-            this.getDefaultAlertThresholds().latencyThreshold,
+          latencyThresholdMs: this.toNumber(
+            parsed.latencyThresholdMs,
+            defaults.latencyThresholdMs,
+          ),
+          maxQueueDepth: this.toNumber(
+            parsed.maxQueueDepth,
+            defaults.maxQueueDepth,
+          ),
+          alertCooldownMinutes: this.toNumber(
+            parsed.alertCooldownMinutes,
+            defaults.alertCooldownMinutes,
           ),
         };
       }
@@ -66,7 +96,7 @@ export class SettingsService {
       );
     }
 
-    return this.getDefaultAlertThresholds();
+    return defaults;
   }
 
   async updateAlertThresholds(data: AlertThresholds) {
@@ -75,34 +105,97 @@ export class SettingsService {
     return this.getAlertThresholds();
   }
 
-  getSyncSchedule() {
+  getSyncSchedule(): SyncSchedule {
     return {
-      orderSync: this.configService.get<string>(
-        'ORDER_SYNC_CRON',
-        '*/5 * * * *',
-      ),
-      inventorySync: this.configService.get<string>(
-        'INVENTORY_SYNC_CRON',
-        '*/10 * * * *',
-      ),
-      healthCheck: this.configService.get<string>(
-        'HEALTH_CHECK_CRON',
-        '*/5 * * * *',
-      ),
-      dailyReport: this.configService.get<string>(
-        'DAILY_REPORT_CRON',
-        '0 6 * * *',
-      ),
+      orderSync: {
+        expression: this.configService.get<string>(
+          'ORDER_SYNC_CRON',
+          '*/5 * * * *',
+        ),
+        description: 'Order synchronization',
+      },
+      retryFailed: {
+        expression: this.configService.get<string>(
+          'RETRY_FAILED_CRON',
+          '*/15 * * * *',
+        ),
+        description: 'Retry failed orders',
+      },
+      healthCheck: {
+        expression: this.configService.get<string>(
+          'HEALTH_CHECK_CRON',
+          '*/5 * * * *',
+        ),
+        description: 'Health check',
+      },
     };
   }
 
-  getRetryPolicy() {
-    return {
-      maxAttempts: this.getNumberConfig('MAX_RETRY_ATTEMPTS', 3),
-      initialBackoffMs: this.getNumberConfig('RETRY_BACKOFF_MS', 5000),
-      backoffMultiplier: this.getNumberConfig('RETRY_BACKOFF_MULTIPLIER', 2),
-      strategy: this.configService.get<string>('RETRY_STRATEGY', 'exponential'),
-    };
+  /**
+   * Validates a cron expression and returns the next execution times as ISO
+   * strings. Throws BadRequestException when the expression is invalid.
+   */
+  validateCron(expression: string, count = 3): CronValidationResult {
+    const validation = validateCronExpression(expression);
+    if (!validation.valid) {
+      const message =
+        validation.error instanceof Error
+          ? validation.error.message
+          : 'Invalid cron expression';
+      throw new BadRequestException(`Invalid cron expression: ${message}`);
+    }
+
+    const cronTime = new CronTime(expression);
+    const nextRuns: string[] = [];
+    let from = new Date();
+    for (let i = 0; i < count; i += 1) {
+      const next = cronTime.getNextDateFrom(from);
+      const iso = next.toISO();
+      if (!iso) {
+        break;
+      }
+      nextRuns.push(iso);
+      from = next.toJSDate();
+    }
+
+    return { nextRuns };
+  }
+
+  async getRetryPolicy(): Promise<RetryPolicy> {
+    const defaults = this.getDefaultRetryPolicy();
+    const stored = await this.redis.get(this.retryPolicyKey);
+    if (!stored) {
+      return defaults;
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(stored);
+      if (this.isRecord(parsed)) {
+        return {
+          maxRetries: this.toNumber(parsed.maxRetries, defaults.maxRetries),
+          initialDelayMs: this.toNumber(
+            parsed.initialDelayMs,
+            defaults.initialDelayMs,
+          ),
+          backoffMultiplier: this.toNumber(
+            parsed.backoffMultiplier,
+            defaults.backoffMultiplier,
+          ),
+          maxDelayMs: this.toNumber(parsed.maxDelayMs, defaults.maxDelayMs),
+        };
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to parse retry policy from Redis: ${message}`);
+    }
+
+    return defaults;
+  }
+
+  async updateRetryPolicy(data: RetryPolicy) {
+    await this.redis.set(this.retryPolicyKey, JSON.stringify(data));
+    this.logger.log('Retry policy updated');
+    return this.getRetryPolicy();
   }
 
   listApiKeys() {
@@ -134,7 +227,18 @@ export class SettingsService {
         'FAILURE_RATE_THRESHOLD',
         0.05,
       ),
-      latencyThreshold: this.getNumberConfig('LATENCY_THRESHOLD_MS', 3000),
+      latencyThresholdMs: this.getNumberConfig('LATENCY_THRESHOLD_MS', 3000),
+      maxQueueDepth: this.getNumberConfig('MAX_QUEUE_DEPTH', 100),
+      alertCooldownMinutes: this.getNumberConfig('ALERT_COOLDOWN_MINUTES', 15),
+    };
+  }
+
+  private getDefaultRetryPolicy(): RetryPolicy {
+    return {
+      maxRetries: this.getNumberConfig('MAX_RETRY_ATTEMPTS', 3),
+      initialDelayMs: this.getNumberConfig('RETRY_BACKOFF_MS', 5000),
+      backoffMultiplier: this.getNumberConfig('RETRY_BACKOFF_MULTIPLIER', 2),
+      maxDelayMs: this.getNumberConfig('RETRY_MAX_DELAY_MS', 30000),
     };
   }
 
@@ -164,7 +268,7 @@ export class SettingsService {
     return `${value.slice(0, 3)}${'*'.repeat(Math.max(4, value.length - 5))}${value.slice(-2)}`;
   }
 
-  private isStoredThresholds(value: unknown): value is StoredAlertThresholds {
+  private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
   }
 }
