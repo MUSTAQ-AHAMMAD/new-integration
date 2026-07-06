@@ -24,6 +24,9 @@ const TABLE_MAP: Record<string, keyof PrismaService> = {
   'fusion-credentials': 'fusionCredential',
   'vendhq-credentials': 'vendHqCredential',
   'odoo-credentials': 'odooCredential',
+  // CSV import/export for the custom /payments and /stores admin pages.
+  'payment-mappings': 'paymentMethodMapping',
+  'store-configs': 'storeConfiguration',
   'outlet-config': 'outletIntegrationConfig',
   'fusion-bu-map': 'fusionBusinessUnitMap',
   'fusion-receipt-methods': 'fusionReceiptMethod',
