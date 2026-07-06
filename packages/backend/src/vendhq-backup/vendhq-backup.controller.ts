@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
@@ -174,5 +175,36 @@ export class VendHqBackupController {
   async syncToOracleByRegion(@Param('region') region: string) {
     const result = await this.oracleSyncService.runSyncJob(region);
     return { ok: true, region, ...result };
+  }
+
+  // ── Diagnostics ────────────────────────────────────────────────────────────
+
+  /**
+   * Trace a single VendHQ sale end-to-end through the Fusion pipeline for
+   * debugging. Fetches the backup sale by invoice number, validates its items
+   * against VendHqItemMeta, transforms it to Fusion payloads and (optionally)
+   * pushes it to Oracle, logging every step. By default this is a dry run and
+   * does NOT push to Oracle; pass `?dryRun=false` to attempt the push.
+   */
+  @Get('diagnostics/trace/:region/:invoiceNumber')
+  @ApiOperation({
+    summary:
+      'Trace a single VendHQ sale through the Fusion pipeline (item fetch → validate → transform → push)',
+  })
+  async traceSale(
+    @Param('region') region: string,
+    @Param('invoiceNumber') invoiceNumber: string,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    // Dry run is the safe default; only an explicit falsy value enables the push.
+    const isDryRun = !['false', '0', 'no'].includes(
+      (dryRun ?? '').trim().toLowerCase(),
+    );
+    const report = await this.oracleSyncService.traceSale(
+      invoiceNumber,
+      region,
+      { dryRun: isDryRun },
+    );
+    return { ok: report.sale.found, report };
   }
 }

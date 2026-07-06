@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { SaleStatus } from '@prisma/client';
-import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
+import {
+  InvoiceLine,
+  OracleSoapClient,
+} from '../clients/oracle/oracle-soap.client';
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionTransformationService } from '../sync/fusion-transformation.service';
 import { SyncControlService } from '../sync/sync-control.service';
@@ -9,6 +12,63 @@ import { numberToBigInt } from '../common/utils/bigint-utils';
 
 /** How many pending sales to process per cron run */
 const BATCH_SIZE = 50;
+
+/**
+ * Validation outcome for a single VendHQ line item, checked against the
+ * VendHqItemMeta table before it is pushed to Oracle Fusion.
+ */
+export interface LineItemValidation {
+  lineNumber: number;
+  /** VendHQ product_id used as the Oracle item number */
+  itemNumber: string | null;
+  productName: string;
+  quantity: number;
+  /** true when a VendHqItemMeta row exists for (itemId, region) */
+  foundInItemMeta: boolean;
+  /** VendHqItemMeta.status when the row exists (e.g. SUCCESS / ERROR) */
+  itemMetaStatus: string | null;
+  /** Human-readable reason when the item cannot be safely processed */
+  issue: string | null;
+}
+
+/** Aggregate validation result for all line items on a sale. */
+export interface ItemValidationSummary {
+  totalItems: number;
+  matched: number;
+  missingFromItemMeta: number;
+  failedStatus: number;
+  items: LineItemValidation[];
+}
+
+/**
+ * Structured, step-by-step diagnostic report produced by {@link
+ * VendHqToOracleSyncService.traceSale}. Each step records whether it
+ * succeeded and captures the data flowing through the pipeline so an
+ * operator can pinpoint exactly where items stop moving.
+ */
+export interface SaleTraceReport {
+  invoiceNumber: string;
+  region: string | null;
+  dryRun: boolean;
+  steps: Array<{ step: string; ok: boolean; detail: string }>;
+  sale: {
+    found: boolean;
+    saleDbId: string | null;
+    fusionSynced: boolean | null;
+    lineItemCount: number;
+  };
+  itemValidation: ItemValidationSummary | null;
+  transform: {
+    ok: boolean;
+    invoiceLineCount: number;
+    error: string | null;
+  };
+  push: {
+    attempted: boolean;
+    ok: boolean;
+    error: string | null;
+  };
+}
 
 @Injectable()
 export class VendHqToOracleSyncService {
@@ -117,6 +177,32 @@ export class VendHqToOracleSyncService {
       applyReceipts,
       journalHeaders,
     } = await this.transformationService.buildSalePayloads(saleDbId, region);
+
+    // ── Pre-flight item validation ───────────────────────────────────────────
+    // Validate every invoice line against VendHqItemMeta *before* pushing to
+    // Oracle so missing / failed items are surfaced in the logs rather than
+    // silently producing an empty or rejected invoice.
+    const validation = await this.validateInvoiceLines(
+      invoiceHeader.invoiceLines,
+      region,
+    );
+    this.logger.log(
+      `[${saleDbId}] item validation: ${validation.matched}/${validation.totalItems} matched, ` +
+        `${validation.missingFromItemMeta} missing from VendHqItemMeta, ` +
+        `${validation.failedStatus} with failed status`,
+    );
+    for (const item of validation.items) {
+      if (item.issue) {
+        this.logger.warn(
+          `[${saleDbId}] line ${item.lineNumber} (item=${item.itemNumber ?? 'n/a'}, "${item.productName}"): ${item.issue}`,
+        );
+      }
+    }
+    if (invoiceHeader.invoiceLines.length === 0) {
+      this.logger.warn(
+        `[${saleDbId}] transformation produced 0 invoice lines — no items will reach Fusion for this sale`,
+      );
+    }
 
     // ── Invoice ──────────────────────────────────────────────────────────────
     let invoiceErrorMessage: string | null = null;
@@ -390,6 +476,233 @@ export class VendHqToOracleSyncService {
 
     // ── Update SaleSyncStatus if present ────────────────────────────────────
     await this.updateSaleSyncStatus(saleDbId, txnNumber);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Diagnostics
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Validate a set of transformed invoice lines against the VendHqItemMeta
+   * table. Each line's `itemNumber` (VendHQ product_id) is checked against
+   * VendHqItemMeta(itemId, region) so that items missing from the meta table,
+   * or with a failed status, can be surfaced before pushing to Oracle Fusion.
+   */
+  async validateInvoiceLines(
+    lines: InvoiceLine[],
+    region: string,
+  ): Promise<ItemValidationSummary> {
+    const itemNumbers = Array.from(
+      new Set(
+        lines
+          .map((l) => l.itemNumber)
+          .filter((n): n is string => n != null && n !== ''),
+      ),
+    );
+
+    const metaRows =
+      itemNumbers.length > 0
+        ? await this.prisma.vendHqItemMeta.findMany({
+            where: { itemId: { in: itemNumbers }, region },
+            select: { itemId: true, status: true },
+          })
+        : [];
+    const metaByItem = new Map(metaRows.map((m) => [m.itemId, m.status]));
+
+    const items: LineItemValidation[] = lines.map((line) => {
+      const itemNumber = line.itemNumber ?? null;
+      const isDiscount = line.memoLineName === 'Discount Item';
+      let foundInItemMeta = false;
+      let itemMetaStatus: string | null = null;
+      let issue: string | null = null;
+
+      if (itemNumber == null || itemNumber === '') {
+        // Discount / memo lines legitimately have no item number.
+        if (!isDiscount) {
+          issue = 'Line has no itemNumber (VendHQ product_id) to map to Fusion';
+        }
+      } else if (metaByItem.has(itemNumber)) {
+        foundInItemMeta = true;
+        itemMetaStatus = metaByItem.get(itemNumber) ?? null;
+        if (itemMetaStatus && itemMetaStatus.toUpperCase() !== 'SUCCESS') {
+          issue = `Item present in VendHqItemMeta but status is "${itemMetaStatus}"`;
+        }
+      } else {
+        issue = `Item not found in VendHqItemMeta for region ${region}`;
+      }
+
+      return {
+        lineNumber: line.lineNumber,
+        itemNumber,
+        productName: line.description ?? '',
+        quantity: line.quantity ?? 0,
+        foundInItemMeta,
+        itemMetaStatus,
+        issue,
+      };
+    });
+
+    return {
+      totalItems: items.length,
+      matched: items.filter((i) => i.foundInItemMeta && !i.issue).length,
+      missingFromItemMeta: items.filter(
+        (i) => i.itemNumber != null && !i.foundInItemMeta,
+      ).length,
+      failedStatus: items.filter((i) => i.foundInItemMeta && i.issue != null)
+        .length,
+      items,
+    };
+  }
+
+  /**
+   * Trace a single VendHQ sale end-to-end through the Fusion pipeline for
+   * debugging, logging every step. Locates the backup sale by invoice number
+   * (optionally scoped to a region), validates its items against
+   * VendHqItemMeta, runs the Fusion transformation, and — unless `dryRun` is
+   * true — pushes it to Oracle. Returns a structured report so an operator can
+   * see exactly where items stop moving.
+   *
+   * @param invoiceNumber VendHQ invoice/receipt number of the sale to trace.
+   * @param region        Optional region filter.
+   * @param opts.dryRun   When true (default) the sale is not pushed to Oracle.
+   */
+  async traceSale(
+    invoiceNumber: string,
+    region?: string,
+    opts: { dryRun?: boolean } = {},
+  ): Promise<SaleTraceReport> {
+    const dryRun = opts.dryRun ?? true;
+    const report: SaleTraceReport = {
+      invoiceNumber,
+      region: region ?? null,
+      dryRun,
+      steps: [],
+      sale: {
+        found: false,
+        saleDbId: null,
+        fusionSynced: null,
+        lineItemCount: 0,
+      },
+      itemValidation: null,
+      transform: { ok: false, invoiceLineCount: 0, error: null },
+      push: { attempted: false, ok: false, error: null },
+    };
+
+    const addStep = (step: string, ok: boolean, detail: string) => {
+      report.steps.push({ step, ok, detail });
+      const line = `traceSale[${invoiceNumber}] ${step}: ${detail}`;
+      if (ok) this.logger.log(line);
+      else this.logger.error(line);
+    };
+
+    // ── Step 1: Fetch the backup sale ────────────────────────────────────────
+    const sale = await this.prisma.backupVendHqSale.findFirst({
+      where: { invoiceNumber, ...(region ? { region } : {}) },
+      include: { backupLineItems: true },
+    });
+
+    if (!sale) {
+      addStep(
+        'fetch',
+        false,
+        `No BackupVendHqSale found for invoiceNumber=${invoiceNumber}${region ? ` region=${region}` : ''}. Confirm the VendHQ backup ran and stored this sale.`,
+      );
+      return report;
+    }
+
+    report.sale = {
+      found: true,
+      saleDbId: sale.id,
+      fusionSynced: sale.fusionSynced,
+      lineItemCount: sale.backupLineItems.length,
+    };
+    addStep(
+      'fetch',
+      true,
+      `Found sale ${sale.id} (region=${sale.region}, fusionSynced=${sale.fusionSynced}) with ${sale.backupLineItems.length} line item(s)`,
+    );
+    if (sale.backupLineItems.length > 0) {
+      const sample = sale.backupLineItems
+        .slice(0, 5)
+        .map(
+          (li) =>
+            `#${li.lineNumber ?? '?'} product=${li.productId ?? 'n/a'} "${li.productName ?? ''}" qty=${li.quantity ?? 0}`,
+        )
+        .join('; ');
+      this.logger.log(
+        `traceSale[${invoiceNumber}] sample line items: ${sample}`,
+      );
+    }
+
+    // ── Step 2: Transform to Fusion payloads ─────────────────────────────────
+    let payloads;
+    try {
+      payloads = await this.transformationService.buildSalePayloads(
+        sale.id,
+        sale.region,
+      );
+      report.transform.ok = true;
+      report.transform.invoiceLineCount =
+        payloads.invoiceHeader.invoiceLines.length;
+      addStep(
+        'transform',
+        true,
+        `Transformed to ${payloads.invoiceHeader.invoiceLines.length} invoice line(s), ${payloads.standardReceipts.length} standard receipt(s), ${payloads.miscReceipts.length} misc receipt(s)`,
+      );
+    } catch (err) {
+      report.transform.error = err instanceof Error ? err.message : String(err);
+      addStep('transform', false, report.transform.error);
+      return report;
+    }
+
+    // ── Step 3: Validate items against VendHqItemMeta ────────────────────────
+    const validation = await this.validateInvoiceLines(
+      payloads.invoiceHeader.invoiceLines,
+      sale.region,
+    );
+    report.itemValidation = validation;
+    const validationOk =
+      validation.totalItems > 0 &&
+      validation.missingFromItemMeta === 0 &&
+      validation.failedStatus === 0;
+    addStep(
+      'validate-items',
+      validationOk,
+      `${validation.matched}/${validation.totalItems} matched, ${validation.missingFromItemMeta} missing from VendHqItemMeta, ${validation.failedStatus} with failed status`,
+    );
+    for (const item of validation.items) {
+      if (item.issue) {
+        this.logger.warn(
+          `traceSale[${invoiceNumber}] line ${item.lineNumber} (item=${item.itemNumber ?? 'n/a'}): ${item.issue}`,
+        );
+      }
+    }
+
+    // ── Step 4: Push to Oracle (unless dry run) ──────────────────────────────
+    if (dryRun) {
+      addStep(
+        'push',
+        true,
+        'Dry run — skipping Oracle push. Re-run with dryRun=false to attempt the push.',
+      );
+      return report;
+    }
+
+    report.push.attempted = true;
+    try {
+      await this.processSale(sale.id, sale.region);
+      report.push.ok = true;
+      addStep(
+        'push',
+        true,
+        'Sale pushed to Oracle Fusion and marked as synced',
+      );
+    } catch (err) {
+      report.push.error = err instanceof Error ? err.message : String(err);
+      addStep('push', false, report.push.error);
+    }
+
+    return report;
   }
 
   private async updateSaleSyncStatus(

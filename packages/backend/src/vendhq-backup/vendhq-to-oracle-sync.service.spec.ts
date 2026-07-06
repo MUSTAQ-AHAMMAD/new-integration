@@ -68,7 +68,11 @@ function makePrisma() {
     backupVendHqSale: {
       findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn().mockResolvedValue(makeSale()),
+      findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({}),
+    },
+    vendHqItemMeta: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     fusionInvoiceHeader: {
       create: jest.fn().mockResolvedValue({ id: 'inv-header-001' }),
@@ -288,6 +292,118 @@ describe('VendHqToOracleSyncService', () => {
       prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
       await service.runSyncJob();
       expect(prisma.saleSyncStatus.updateMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── validateInvoiceLines ────────────────────────────────────────────────────
+
+  describe('validateInvoiceLines', () => {
+    const lines = [
+      {
+        lineNumber: 1,
+        itemNumber: 'prod-1',
+        description: 'Widget',
+        quantity: 2,
+        unitSellingPrice: 10,
+        currencyCode: 'AED',
+        salesOrder: 'INV-001',
+      },
+      {
+        lineNumber: 2,
+        itemNumber: 'prod-2',
+        description: 'Gadget',
+        quantity: 1,
+        unitSellingPrice: 5,
+        currencyCode: 'AED',
+        salesOrder: 'INV-001',
+      },
+    ];
+
+    it('flags items missing from VendHqItemMeta', async () => {
+      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([
+        { itemId: 'prod-1', status: 'SUCCESS' },
+      ]);
+      const summary = await service.validateInvoiceLines(lines, 'AE');
+      expect(summary.totalItems).toBe(2);
+      expect(summary.matched).toBe(1);
+      expect(summary.missingFromItemMeta).toBe(1);
+      expect(summary.items[1].issue).toMatch(/not found in VendHqItemMeta/);
+    });
+
+    it('flags items with a non-success status', async () => {
+      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([
+        { itemId: 'prod-1', status: 'SUCCESS' },
+        { itemId: 'prod-2', status: 'ERROR' },
+      ]);
+      const summary = await service.validateInvoiceLines(lines, 'AE');
+      expect(summary.matched).toBe(1);
+      expect(summary.failedStatus).toBe(1);
+      expect(summary.items[1].issue).toMatch(/status is "ERROR"/);
+    });
+
+    it('does not flag discount memo lines without an item number', async () => {
+      const summary = await service.validateInvoiceLines(
+        [
+          {
+            lineNumber: 1,
+            memoLineName: 'Discount Item',
+            description: 'Discount Item',
+            quantity: 1,
+            unitSellingPrice: -5,
+            currencyCode: 'AED',
+            salesOrder: 'INV-001',
+          },
+        ],
+        'AE',
+      );
+      expect(summary.items[0].issue).toBeNull();
+    });
+  });
+
+  // ── traceSale ────────────────────────────────────────────────────────────────
+
+  describe('traceSale', () => {
+    it('reports sale not found when the invoice is missing', async () => {
+      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce(null);
+      const report = await service.traceSale('MISSING', 'AE');
+      expect(report.sale.found).toBe(false);
+      expect(report.steps[0]).toEqual(
+        expect.objectContaining({ step: 'fetch', ok: false }),
+      );
+    });
+
+    it('traces a sale through transform and validation as a dry run', async () => {
+      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce({
+        ...makeSale(),
+        backupLineItems: [
+          { lineNumber: 1, productId: 'prod-1', productName: 'Widget', quantity: 1 },
+        ],
+      });
+      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([]);
+
+      const report = await service.traceSale('INV-001', 'AE');
+
+      expect(report.sale.found).toBe(true);
+      expect(report.transform.ok).toBe(true);
+      expect(report.itemValidation).not.toBeNull();
+      expect(report.push.attempted).toBe(false);
+      // Dry run must not push to Oracle
+      expect(soapClient.createSimpleInvoice).not.toHaveBeenCalled();
+    });
+
+    it('attempts the Oracle push when dryRun is false', async () => {
+      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce({
+        ...makeSale(),
+        backupLineItems: [],
+      });
+
+      const report = await service.traceSale('INV-001', 'AE', {
+        dryRun: false,
+      });
+
+      expect(report.push.attempted).toBe(true);
+      expect(report.push.ok).toBe(true);
+      expect(soapClient.createSimpleInvoice).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -151,8 +151,8 @@ export default function RefundsPage() {
   const reconcileMutation = useMutation({
     mutationFn: ({ refundId, note }: { refundId: string; note: string }) =>
       apiRequest<Refund>(`/refunds/${refundId}/reconcile`, {
-        method: 'POST',
-        body: JSON.stringify({ note, reconciledBy: 'DASHBOARD_USER' }),
+        method: 'PUT',
+        body: JSON.stringify({ reconcileNote: note }),
       }),
     onSuccess: () => {
       toast.success('Refund reconciled');
@@ -165,7 +165,7 @@ export default function RefundsPage() {
 
   const manualCreditMemoMutation = useMutation({
     mutationFn: (payload: ManualCreditMemoForm) =>
-      apiRequest<Refund>('/refunds/manual-credit-memo', {
+      apiRequest<Refund>('/refunds/credit-memo', {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
