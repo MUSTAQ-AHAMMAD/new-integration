@@ -1,5 +1,6 @@
 import { ItemSyncService } from './item-sync.service';
 import { OracleClient } from '../clients/oracle/oracle.client';
+import { ConfigService } from '@nestjs/config';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncControlService } from '../sync/sync-control.service';
@@ -88,6 +89,8 @@ describe('ItemSyncService', () => {
       oracle as unknown as OracleClient,
       vendHq as unknown as VendHqClient,
       syncControl as unknown as SyncControlService,
+      // VENDHQ_BASE_URL configured → existing tests exercise the VendHQ push path
+      { get: () => 'https://store.vendhq.com' } as unknown as ConfigService,
     );
     jest.clearAllMocks();
   });
@@ -155,6 +158,25 @@ describe('ItemSyncService', () => {
             status: 'SUCCESS',
             sku: 'ITEM-001',
           }),
+        }),
+      );
+    });
+
+    it('stores Oracle items locally when VendHQ is not configured (no push)', async () => {
+      const localService = new ItemSyncService(
+        prisma as unknown as PrismaService,
+        oracle as unknown as OracleClient,
+        vendHq as unknown as VendHqClient,
+        syncControl as unknown as SyncControlService,
+        { get: () => '' } as unknown as ConfigService, // VENDHQ_BASE_URL empty
+      );
+      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce(null); // watermark
+      const result = await localService.syncItemsForRegion('AE');
+      expect(result.synced).toBe(1);
+      expect(vendHq.upsertProduct).not.toHaveBeenCalled();
+      expect(prisma.vendHqItemMeta.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ status: 'SUCCESS', sku: 'ITEM-001' }),
         }),
       );
     });

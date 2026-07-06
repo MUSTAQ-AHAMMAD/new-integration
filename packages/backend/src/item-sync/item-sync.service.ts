@@ -10,6 +10,7 @@
  *  4. Fires an alert on partial failures without blocking other items.
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { OracleInventoryItem } from '../clients/oracle/oracle.client';
 import { OracleClient } from '../clients/oracle/oracle.client';
@@ -37,7 +38,22 @@ export class ItemSyncService {
     private readonly oracleClient: OracleClient,
     private readonly vendHqClient: VendHqClient,
     private readonly syncControl: SyncControlService,
+    private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Whether to skip the VendHQ push and store the fetched Oracle item master
+   * locally instead. True for Odoo→Oracle deployments that never sync to VendHQ.
+   *
+   * Controlled by ITEM_SYNC_SKIP_VENDHQ; when unset, falls back to detecting an
+   * absent or placeholder VENDHQ_BASE_URL (e.g. "your-outlet.vendhq.com").
+   */
+  private get skipVendHqPush(): boolean {
+    const flag = this.config.get<string>('ITEM_SYNC_SKIP_VENDHQ');
+    if (flag != null && flag !== '') return flag === 'true' || flag === '1';
+    const url = this.config.get<string>('VENDHQ_BASE_URL') ?? '';
+    return !url || /your-outlet|example\.com|localhost|changeme/i.test(url);
+  }
 
   /**
    * Runs every hour — mirrors Java Quartz schedule for item master sync.
@@ -173,6 +189,40 @@ export class ItemSyncService {
       // Java uses LongDescription for the product name, falls back to ItemDescription
       const productName =
         item.LongDescription ?? item.ItemDescription ?? item.ItemNumber;
+
+      // ── Local-only mode (no VendHQ target) ───────────────────────────────
+      // Store the Oracle item master directly so it "syncs" and can feed the
+      // transformation's UOM/tax/description lookups, keyed by the Oracle item
+      // number (there is no VendHQ product id).
+      if (this.skipVendHqPush) {
+        const localMeta = {
+          itemId: item.ItemNumber,
+          sourceId: null, // Oracle ItemId exceeds Int range; omit
+          name: productName,
+          sku: item.ItemNumber,
+          handle: item.ItemNumber,
+          uomCode: item.PrimaryUOMCode ?? null,
+          uomName: item.PrimaryUOMValue ?? null,
+          itemType: item.UserItemTypeValue ?? null,
+          description: item.ItemDescription ?? null,
+          active: isActive,
+          retailPrice: isNaN(retailPrice) ? null : retailPrice,
+          taxId: item.OutputTaxClassificationCodeValue ?? null,
+          status: 'SUCCESS',
+          message: 'Stored from Oracle (VendHQ push skipped — not configured)',
+          lastUpdateDate: item.LastUpdateDate
+            ? new Date(item.LastUpdateDate)
+            : new Date(),
+          region,
+        };
+        await this.prisma.vendHqItemMeta.upsert({
+          where: { itemId_region: { itemId: item.ItemNumber, region } },
+          create: localMeta,
+          update: localMeta,
+        });
+        result.synced++;
+        continue;
+      }
 
       try {
         const vendProduct = await this.vendHqClient.upsertProduct({

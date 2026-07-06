@@ -225,10 +225,10 @@ export class OracleClient implements OnModuleInit {
           ].join(','),
         };
 
-        const response = await this.http.get(
-          '/fscmRestApi/resources/11.13.17.11/items',
-          { params: query },
-        );
+        // Relative path — ORACLE_REST_BASE_URL already ends in
+        // /fscmRestApi/resources/<version>. An absolute path double-prefixes
+        // it and 404s (which broke item sync entirely).
+        const response = await this.http.get('items', { params: query });
         const data = this.isRecord(response.data) ? response.data : {};
         const items = Array.isArray(data['items'])
           ? (data['items'] as OracleInventoryItem[])
@@ -300,10 +300,10 @@ export class OracleClient implements OnModuleInit {
         };
         if (queryParts.length > 0) query['q'] = queryParts.join(';');
 
-        const response = await this.http.get(
-          '/fscmRestApi/resources/11.13.18.05/inventoryOnhandQuantities',
-          { params: query },
-        );
+        // Relative path — see getInventoryItems note (absolute paths 404).
+        const response = await this.http.get('inventoryOnhandQuantities', {
+          params: query,
+        });
         const data = this.isRecord(response.data) ? response.data : {};
         const items = Array.isArray(data['items'])
           ? (data['items'] as OracleOnHandQuantity[])
