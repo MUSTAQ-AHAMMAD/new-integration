@@ -42,12 +42,17 @@ export class ItemSyncService {
   ) {}
 
   /**
-   * Whether a VendHQ push target is configured. When it is not (e.g. an
-   * Odoo→Oracle deployment that never syncs to VendHQ), item-sync stores the
-   * fetched Oracle item master locally instead of failing on every push.
+   * Whether to skip the VendHQ push and store the fetched Oracle item master
+   * locally instead. True for Odoo→Oracle deployments that never sync to VendHQ.
+   *
+   * Controlled by ITEM_SYNC_SKIP_VENDHQ; when unset, falls back to detecting an
+   * absent or placeholder VENDHQ_BASE_URL (e.g. "your-outlet.vendhq.com").
    */
-  private get vendHqConfigured(): boolean {
-    return !!this.config.get<string>('VENDHQ_BASE_URL');
+  private get skipVendHqPush(): boolean {
+    const flag = this.config.get<string>('ITEM_SYNC_SKIP_VENDHQ');
+    if (flag != null && flag !== '') return flag === 'true' || flag === '1';
+    const url = this.config.get<string>('VENDHQ_BASE_URL') ?? '';
+    return !url || /your-outlet|example\.com|localhost|changeme/i.test(url);
   }
 
   /**
@@ -189,7 +194,7 @@ export class ItemSyncService {
       // Store the Oracle item master directly so it "syncs" and can feed the
       // transformation's UOM/tax/description lookups, keyed by the Oracle item
       // number (there is no VendHQ product id).
-      if (!this.vendHqConfigured) {
+      if (this.skipVendHqPush) {
         const localMeta = {
           itemId: item.ItemNumber,
           sourceId: null, // Oracle ItemId exceeds Int range; omit
