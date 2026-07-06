@@ -116,7 +116,9 @@ services:
       - sh
       - -c
       - |
-        printf "sentinel monitor mymaster redis-master 6379 2\n\
+        printf "sentinel resolve-hostnames yes\n\
+        sentinel announce-hostnames yes\n\
+        sentinel monitor mymaster redis-master 6379 2\n\
         sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis_pass}\n\
         sentinel down-after-milliseconds mymaster 5000\n\
         sentinel failover-timeout mymaster 60000\n\
@@ -138,7 +140,9 @@ services:
       - sh
       - -c
       - |
-        printf "sentinel monitor mymaster redis-master 6379 2\n\
+        printf "sentinel resolve-hostnames yes\n\
+        sentinel announce-hostnames yes\n\
+        sentinel monitor mymaster redis-master 6379 2\n\
         sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis_pass}\n\
         sentinel down-after-milliseconds mymaster 5000\n\
         sentinel failover-timeout mymaster 60000\n\
@@ -160,7 +164,9 @@ services:
       - sh
       - -c
       - |
-        printf "sentinel monitor mymaster redis-master 6379 2\n\
+        printf "sentinel resolve-hostnames yes\n\
+        sentinel announce-hostnames yes\n\
+        sentinel monitor mymaster redis-master 6379 2\n\
         sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis_pass}\n\
         sentinel down-after-milliseconds mymaster 5000\n\
         sentinel failover-timeout mymaster 60000\n\

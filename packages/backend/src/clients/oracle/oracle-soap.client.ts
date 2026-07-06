@@ -71,6 +71,9 @@ export interface StandardReceiptRequest {
   orgId: number;
   customerId?: number;
   receiptAmount: number;
+  /** Oracle exchange-rate type (e.g. "Corporate"/"User"). Required by AR —
+   *  the receipt otherwise fails with "The conversion rate type is null." */
+  exchangeRateType?: string;
 }
 
 export interface StandardReceiptResponse {
@@ -97,6 +100,8 @@ export interface MiscReceiptRequest {
   saleDate: Date;
   receiptMethodId: number;
   receiptMethodName: string;
+  /** Oracle exchange-rate type (e.g. "Corporate"/"User"). Required by AR. */
+  exchangeRateType?: string;
   receiptNumber: string;
   bankAccountName: string;
   receivableActivityName: string;
@@ -244,7 +249,8 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:RemittanceBankAccountId>${req.remittanceBankAccountId}</typ1:RemittanceBankAccountId>
         <typ1:CustomerAccountNumber>${escapeXml(req.accountValue)}</typ1:CustomerAccountNumber>
-        <typ1:BusinessUnitId>${req.orgId}</typ1:BusinessUnitId>
+        <typ1:OrgId>${req.orgId}</typ1:OrgId>
+        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
         ${req.customerId ? `<typ1:PayingCustomerPartyId>${req.customerId}</typ1:PayingCustomerPartyId>` : ''}
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:standardReceipt>
@@ -292,7 +298,8 @@ function buildMiscReceiptSoap(req: MiscReceiptRequest): string {
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:BankAccountName>${escapeXml(req.bankAccountName)}</typ1:BankAccountName>
         <typ1:ReceivableActivityName>${escapeXml(req.receivableActivityName)}</typ1:ReceivableActivityName>
-        <typ1:BusinessUnitId>${req.orgId}</typ1:BusinessUnitId>
+        <typ1:OrgId>${req.orgId}</typ1:OrgId>
+        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:miscellaneousReceipt>
     </typ:createMiscellaneousReceipt>
@@ -632,17 +639,12 @@ export class OracleSoapClient implements OnModuleInit {
           `📤 Oracle SOAP XML Payload (${body.length} chars):\n${truncatedBody}`,
         );
 
-        const resp = await this.http.post(
+        const xml = await this.soapPost(
           '/fscmService/RecInvoiceService',
           body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/financials/receivables/transactions/invoices/invoiceService/createSimpleInvoice',
-            },
-          },
+          'http://xmlns.oracle.com/apps/financials/receivables/transactions/invoices/invoiceService/createSimpleInvoice',
+          'createSimpleInvoice',
         );
-        const xml = resp.data as string;
         this.assertNoFault(xml, 'createSimpleInvoice');
 
         // Parse the response properly - handle both case variations
@@ -738,17 +740,12 @@ export class OracleSoapClient implements OnModuleInit {
     return this.circuitBreaker.execute('oracle:createStandardReceipt', () =>
       this.withRetries(async () => {
         const body = buildStandardReceiptSoap(req);
-        const resp = await this.http.post(
+        const xml = await this.soapPost(
           '/fscmService/StandardReceiptService',
           body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/standardReceiptService/commonService/createStandardReceipt',
-            },
-          },
+          'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/standardReceiptService/commonService/createStandardReceipt',
+          'createStandardReceipt',
         );
-        const xml = resp.data as string;
         this.assertNoFault(xml, 'createStandardReceipt');
 
         // Parse the response properly - handle both case variations
@@ -830,17 +827,12 @@ export class OracleSoapClient implements OnModuleInit {
     return this.circuitBreaker.execute('oracle:createApplyReceipt', () =>
       this.withRetries(async () => {
         const body = buildApplyReceiptSoap(req);
-        const resp = await this.http.post(
+        const xml = await this.soapPost(
           '/fscmService/StandardReceiptService',
           body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/standardReceiptService/commonService/createApplyReceipt',
-            },
-          },
+          'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/standardReceiptService/commonService/createApplyReceipt',
+          'createApplyReceipt',
         );
-        const xml = resp.data as string;
         this.assertNoFault(xml, 'createApplyReceipt');
 
         // Parse the response properly - handle both case variations
@@ -934,17 +926,12 @@ export class OracleSoapClient implements OnModuleInit {
       () =>
         this.withRetries(async () => {
           const body = buildMiscReceiptSoap(req);
-          const resp = await this.http.post(
+          const xml = await this.soapPost(
             '/fscmService/MiscellaneousReceiptService',
             body,
-            {
-              headers: {
-                SOAPAction:
-                  'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
-              },
-            },
+            'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
+            'createMiscellaneousReceipt',
           );
-          const xml = resp.data as string;
           this.assertNoFault(xml, 'createMiscellaneousReceipt');
 
           // Parse the response properly - handle both case variations
@@ -1032,17 +1019,12 @@ export class OracleSoapClient implements OnModuleInit {
     return this.circuitBreaker.execute('oracle:importJournalEntry', () =>
       this.withRetries(async () => {
         const body = buildJournalSoap(header);
-        const resp = await this.http.post(
+        const xml = await this.soapPost(
           '/fscmService/JournalImportService',
           body,
-          {
-            headers: {
-              SOAPAction:
-                'http://xmlns.oracle.com/apps/financials/generalLedger/journals/desktopEntry/journalImportService/importJournals',
-            },
-          },
+          'http://xmlns.oracle.com/apps/financials/generalLedger/journals/desktopEntry/journalImportService/importJournals',
+          'importJournals',
         );
-        const xml = resp.data as string;
         this.assertNoFault(xml, 'importJournals');
 
         // Parse the response properly - handle both case variations
@@ -1215,6 +1197,46 @@ export class OracleSoapClient implements OnModuleInit {
         err instanceof Error ? err.message : 'Unknown connectivity error';
       throw new Error(`Oracle SOAP connectivity check failed: ${message}`);
     }
+  }
+
+  /**
+   * POSTs a SOAP envelope and returns the response body as a string.
+   *
+   * Oracle Fusion returns SOAP faults as HTTP 500 with the fault XML in the
+   * body. The default axios behaviour throws on 500 with the useless message
+   * "Request failed with status code 500", discarding that body — which is
+   * exactly why invoice failures were previously undiagnosable. We accept all
+   * status codes so the caller (and assertNoFault) can inspect the fault, and
+   * on a 4xx/5xx we surface the extracted fault detail instead of the opaque
+   * status-code message.
+   */
+  private async soapPost(
+    path: string,
+    body: string,
+    soapAction: string,
+    operation: string,
+  ): Promise<string> {
+    const resp = await this.http.post(path, body, {
+      headers: { SOAPAction: soapAction },
+      validateStatus: () => true,
+    });
+    const xml =
+      typeof resp.data === 'string' ? resp.data : String(resp.data ?? '');
+    if (resp.status >= 400) {
+      const detail =
+        extractErrorMessage(xml) ||
+        extractTag(xml, 'faultstring') ||
+        extractTag(xml, 'text') ||
+        xml.slice(0, 1000) ||
+        '(empty response body)';
+      this.logger.error(
+        `Oracle SOAP ${operation} returned HTTP ${resp.status}. Fault detail: ${detail}`,
+      );
+      throw new Error(
+        `Oracle ${operation} failed (HTTP ${resp.status}): ${detail}`,
+      );
+    }
+    return xml;
   }
 
   private assertNoFault(xml: string, operation: string): void {

@@ -129,6 +129,9 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     fusionReceiptMethod: {
       findFirst: jest.fn(),
     },
+    vendHqCredential: {
+      findFirst: jest.fn(),
+    },
     ...overrides,
   };
 }
@@ -147,6 +150,8 @@ function setupDefaultMocks(
   mockPrisma.fusionSalesMetadata.findFirst.mockResolvedValue(makeSalesMeta());
   mockPrisma.fusionBusinessUnitMap.findFirst.mockResolvedValue(makeBuMap());
   mockPrisma.serviceProviderJournalMeta.findFirst.mockResolvedValue(null);
+  // Default credential with zero offset — keeps saleDate assertions unchanged.
+  mockPrisma.vendHqCredential.findFirst.mockResolvedValue({ timezoneOffset: 0 });
   mockPrisma.fusionReceiptMethod.findFirst.mockResolvedValue(
     makeReceiptMethod('Cash', true),
   );
@@ -231,6 +236,47 @@ describe('FusionTransformationService', () => {
       const result = await service.buildSalePayloads('sale-1', 'AE');
 
       expect(result.invoiceHeader.billToAccountNumber).toBe('99001');
+    });
+
+    it('applies the credential timezone offset to saleDate (Java parity)', async () => {
+      setupDefaultMocks(mockPrisma);
+      // Sale stored at 2024-01-15T10:00:00Z; +4.0 offset → 14:00:00Z.
+      mockPrisma.vendHqCredential.findFirst.mockResolvedValue({
+        timezoneOffset: 4.0,
+      });
+
+      const result = await service.buildSalePayloads('sale-1', 'AE');
+
+      expect(result.invoiceHeader.saleDate.toISOString()).toBe(
+        '2024-01-15T14:00:00.000Z',
+      );
+      // trxDate/conversionDate derive from the same adjusted saleDate.
+      expect(result.invoiceHeader.trxDate?.toISOString()).toBe(
+        '2024-01-15T14:00:00.000Z',
+      );
+    });
+
+    it('applies fractional timezone offsets as minutes (3.5 → +3h30m)', async () => {
+      setupDefaultMocks(mockPrisma);
+      mockPrisma.vendHqCredential.findFirst.mockResolvedValue({
+        timezoneOffset: 3.5,
+      });
+
+      const result = await service.buildSalePayloads('sale-1', 'AE');
+
+      expect(result.invoiceHeader.saleDate.toISOString()).toBe(
+        '2024-01-15T13:30:00.000Z',
+      );
+    });
+
+    it('leaves saleDate unchanged when offset is zero', async () => {
+      setupDefaultMocks(mockPrisma);
+
+      const result = await service.buildSalePayloads('sale-1', 'AE');
+
+      expect(result.invoiceHeader.saleDate.toISOString()).toBe(
+        '2024-01-15T10:00:00.000Z',
+      );
     });
 
     it('maps transactionType from salesMeta', async () => {

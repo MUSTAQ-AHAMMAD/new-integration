@@ -9,6 +9,11 @@
  *   Production: node dist/worker
  *   Development: pnpm run start:worker:dev
  */
+// Install the BigInt->JSON serialiser BEFORE anything else. The order-sync
+// processor runs in this worker process and serialises BigInt IDs; without this
+// every such JSON.stringify throws "Do not know how to serialize a BigInt",
+// which was the single largest source of order-sync failures.
+import './common/utils/install-bigint-json';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
 import { WorkerAppModule } from './worker-app.module';

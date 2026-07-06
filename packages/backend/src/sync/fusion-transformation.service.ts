@@ -88,20 +88,27 @@ export class FusionTransformationService {
 
     // ── 2. Load config tables ────────────────────────────────
     const outletId = sale.outletId ?? (rawJson.outlet_id as string | undefined);
-    const [outlet, salesMeta, buMap, journalMeta] = await Promise.all([
-      outletId
-        ? this.prisma.vendHqOutlet.findFirst({
-            where: { outletId, region },
-          })
-        : this.prisma.vendHqOutlet.findFirst({
-            where: { outletName: sale.outletName ?? undefined, region },
-          }),
-      this.prisma.fusionSalesMetadata.findFirst({
-        where: { customerType, region },
-      }),
-      this.prisma.fusionBusinessUnitMap.findFirst({ where: { region } }),
-      this.prisma.serviceProviderJournalMeta.findFirst({ where: { region } }),
-    ]);
+    const [outlet, salesMeta, buMap, journalMeta, credential] =
+      await Promise.all([
+        outletId
+          ? this.prisma.vendHqOutlet.findFirst({
+              where: { outletId, region },
+            })
+          : this.prisma.vendHqOutlet.findFirst({
+              where: { outletName: sale.outletName ?? undefined, region },
+            }),
+        this.prisma.fusionSalesMetadata.findFirst({
+          where: { customerType, region },
+        }),
+        this.prisma.fusionBusinessUnitMap.findFirst({ where: { region } }),
+        this.prisma.serviceProviderJournalMeta.findFirst({ where: { region } }),
+        // Per-region VendHQ credential carries the timezoneOffset used to
+        // align sale timestamps to the Fusion business-unit timezone.
+        this.prisma.vendHqCredential.findFirst({
+          where: { region, active: true },
+          orderBy: { createdAt: 'asc' },
+        }),
+      ]);
 
     if (!salesMeta)
       throw new Error(
@@ -122,10 +129,22 @@ export class FusionTransformationService {
       registers.find((r) => r.registerName === registerName) ?? registers[0];
 
     // ── 4. Build InvoiceHeader ───────────────────────────────
-    const saleDate =
+    // Java parity (VendHQSalesToFusionInvRecIntParallel.java:93-95): VendHQ stores
+    // sale times in store-local time; Fusion expects them shifted by the outlet's
+    // timezone offset. Apply the offset once here so every downstream payload
+    // (invoice, receipts, apply-receipts, journals, period name) inherits it.
+    const rawSaleDate =
       sale.saleDate instanceof Date
         ? sale.saleDate
         : new Date(String(sale.saleDate));
+    const tzOffset = credential?.timezoneOffset ?? 0;
+    const saleDate = this.applyTimezoneOffset(rawSaleDate, tzOffset);
+    if (tzOffset !== 0) {
+      this.logger.debug(
+        `Applied timezone offset ${tzOffset} to sale ${sale.invoiceNumber}: ` +
+          `${rawSaleDate.toISOString()} → ${saleDate.toISOString()}`,
+      );
+    }
 
     // Java equivalent: FusionInvoiceMapping.java line 41-54
     // Fetch customer profile to get payment terms (if available)
@@ -415,6 +434,22 @@ export class FusionTransformationService {
       applyReceipts,
       journalHeaders,
     };
+  }
+
+  /**
+   * Shifts a date by a decimal timezone offset, matching the Java
+   * MappingUtils.getTimeZoneOffsetDate decomposition
+   * (VendHQSalesToFusionInvRecIntParallel.java:93-95):
+   *   hours   = truncate-toward-zero of the offset   (e.g. 4.0 → 4, -5.5 → -5)
+   *   minutes = |fractional part| × 60                (e.g. 3.5 → 30, 4.25 → 15)
+   * The signed hours and positive minutes are then added to the timestamp,
+   * preserving the exact (if quirky) behaviour of the reference implementation.
+   */
+  private applyTimezoneOffset(date: Date, offset: number): Date {
+    if (!offset || Number.isNaN(offset)) return date;
+    const hours = Math.trunc(offset);
+    const minutes = Math.round((Math.abs(offset) % 1) * 60);
+    return new Date(date.getTime() + hours * 3_600_000 + minutes * 60_000);
   }
 
   private getPeriodName(d: Date): string {

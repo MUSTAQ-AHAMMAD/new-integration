@@ -97,6 +97,32 @@ function makeService(prisma = makePrisma()) {
 // ---------------------------------------------------------------------------
 
 describe('VendHqSalesBackupService', () => {
+  describe('resolveVendHqBaseUrl', () => {
+    it('appends .vendhq.com to a bare store prefix', () => {
+      const { service } = makeService();
+      expect(service.resolveVendHqBaseUrl('mystore')).toBe(
+        'https://mystore.vendhq.com',
+      );
+    });
+
+    it('uses a full hostname verbatim (no .vendhq.com suffix)', () => {
+      const { service } = makeService();
+      expect(service.resolveVendHqBaseUrl('www.ibqpos.com')).toBe(
+        'https://www.ibqpos.com',
+      );
+      expect(service.resolveVendHqBaseUrl('ibraqperfumes.odoo.com')).toBe(
+        'https://ibraqperfumes.odoo.com',
+      );
+    });
+
+    it('preserves an explicit scheme and trims trailing slashes', () => {
+      const { service } = makeService();
+      expect(service.resolveVendHqBaseUrl('https://store.retail.lightspeed.app/')).toBe(
+        'https://store.retail.lightspeed.app',
+      );
+    });
+  });
+
   describe('isRegionEnabled', () => {
     it('returns true when no SalesIntegrationStatus record exists', async () => {
       const { service, prisma } = makeService();

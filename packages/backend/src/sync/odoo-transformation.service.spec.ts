@@ -24,6 +24,7 @@ function makeBackup(overrides: Record<string, unknown> = {}) {
 function makeStoreConfig(overrides: Record<string, unknown> = {}) {
   return {
     branchCode: 'CCNTRBHR',
+    branchName: 'Central',
     billToSiteName: 'Acme Corp',
     billToLocation: 'Dubai',
     oracleOperatingUnitId: 101,
@@ -39,6 +40,28 @@ function makeStoreConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeSalesMeta(overrides: Record<string, unknown> = {}) {
+  return {
+    billToName: 'Central',
+    siteNumber: '2003',
+    billToAccount: 3003n,
+    businessUnit: 'BU-AE',
+    customerType: 'NORMAL',
+    region: 'AE',
+    ...overrides,
+  };
+}
+
+function makeRegister(overrides: Record<string, unknown> = {}) {
+  return {
+    registerName: 'Central',
+    bankAccountId: 555n,
+    cashAccountId: 666n,
+    region: 'AE',
+    ...overrides,
+  };
+}
+
 function makePrisma(overrides: Record<string, unknown> = {}) {
   return {
     backupOdooOrder: {
@@ -46,6 +69,13 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     },
     storeConfiguration: {
       findUnique: jest.fn().mockResolvedValue(makeStoreConfig()),
+    },
+    fusionSalesMetadata: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([makeSalesMeta()]),
+    },
+    vendHqRegister: {
+      findMany: jest.fn().mockResolvedValue([makeRegister()]),
     },
     fusionBusinessUnitMap: {
       findFirst: jest.fn().mockResolvedValue({ businessUnitId: 300 }),
@@ -100,7 +130,11 @@ describe('OdooTransformationService', () => {
       'AE',
     );
 
-    expect(result.invoiceHeader.billToCustomerName).toBe('Acme Corp');
+    // Bill-to now comes from FusionSalesMetadata (matched by branchName), not
+    // the StoreConfiguration placeholder.
+    expect(result.invoiceHeader.billToCustomerName).toBe('Central');
+    expect(result.invoiceHeader.billToAccountNumber).toBe('3003');
+    expect(result.invoiceHeader.billToLocation).toBe('2003');
     expect(result.invoiceHeader.businessUnit).toBe('BU-AE');
     expect(result.invoiceHeader.transactionSource).toBe('POS');
     expect(result.invoiceHeader.invoiceCurrencyCode).toBe('AED');
@@ -283,25 +317,24 @@ describe('OdooTransformationService', () => {
     expect(result.miscReceipts).toHaveLength(0);
   });
 
-  it('warns and skips standard receipt when cashAccountId is null', async () => {
+  it('throws when the register has no bank/cash account (Java parity)', async () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({ orderPayments: [{ paymentName: 'Cash', amount: 80 }] }),
     );
     prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
       makeStoreConfig({ cashAccountId: null }),
     );
+    // No matching VendHqRegister either → no account available at all.
+    prisma.vendHqRegister.findMany.mockResolvedValueOnce([]);
     prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
       receiptMethodId: 1n,
       receiptIsCash: true,
       receiptBankCharge: 0,
       receiptMethodTax: 0,
     });
-    const result = await service.buildOrderPayloads(
-      'backup-001',
-      'CCNTRBHR',
-      'AE',
-    );
-    expect(result.standardReceipts).toHaveLength(0);
+    await expect(
+      service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
+    ).rejects.toThrow('is not entered in VendHqRegister');
   });
 
   it('builds standard and misc receipts for a card payment', async () => {
