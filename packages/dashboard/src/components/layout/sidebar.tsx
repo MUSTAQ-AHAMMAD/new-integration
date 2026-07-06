@@ -111,6 +111,7 @@ const adminGroups: NavGroup[] = [
     items: [
       { href: '/admin/vendhq-outlets', label: 'Outlets', icon: Building2 },
       { href: '/admin/vendhq-registers', label: 'Registers', icon: Server },
+      { href: '/admin/register-accounts', label: 'Register Accounts', icon: Wallet },
       { href: '/admin/vendhq-service-providers', label: 'Service Providers', icon: Server },
       { href: '/admin/vendhq-tax-meta', label: 'Tax Meta', icon: Wallet },
       { href: '/admin/vendhq-discount-items', label: 'Discount Items', icon: Package },

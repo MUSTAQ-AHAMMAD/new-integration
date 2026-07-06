@@ -39,6 +39,41 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// ── Register-account refresh utility types ─────────────────────────
+export interface AccountOption {
+  bankAccountId: number;
+  name: string;
+  currency?: string;
+  isCash: boolean;
+}
+export interface RegisterProposal {
+  registerId: string;
+  registerName: string;
+  region: string;
+  currentBankAccountId: number | null;
+  currentCashAccountId: number | null;
+  proposedBankAccountId: number | null;
+  proposedBankName: string | null;
+  proposedCashAccountId: number | null;
+  proposedCashName: string | null;
+  score: number;
+}
+export interface RegisterAccountsPreview {
+  accounts: AccountOption[];
+  proposals: RegisterProposal[];
+  summary: {
+    registers: number;
+    oracleAccounts: number;
+    autoMatched: number;
+    unmatched: number;
+  };
+}
+export interface RegisterAccountAssignment {
+  registerId: string;
+  bankAccountId?: number | null;
+  cashAccountId?: number | null;
+}
+
 export const api = {
   // ── Auth ───────────────────────────────────────────────────────
   login: (email: string, password: string) =>
@@ -206,6 +241,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ tables }),
     }),
+
+  /** Preview proposed VendHqRegister → Oracle bank/cash account matches */
+  registerAccountsPreview: (region?: string) =>
+    apiRequest<RegisterAccountsPreview>('/admin/register-accounts/preview', {
+      method: 'POST',
+      body: JSON.stringify({ region }),
+    }),
+
+  /** Write confirmed bank/cash account IDs onto VendHqRegister rows */
+  registerAccountsApply: (assignments: RegisterAccountAssignment[]) =>
+    apiRequest<{ updated: number; skipped: number }>(
+      '/admin/register-accounts/apply',
+      { method: 'POST', body: JSON.stringify({ assignments }) },
+    ),
 
   /** Manually pull orders from Odoo and ingest them into the sync queue */
   fetchOdooOrders: (params?: { credentialId?: string; branchId?: number; startDate?: string; endDate?: string; limit?: number }) =>

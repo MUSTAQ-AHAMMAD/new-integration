@@ -79,6 +79,15 @@ export interface OracleOnHandQuantity {
   [key: string]: unknown;
 }
 
+export interface OracleCashBankAccount {
+  BankAccountId: number;
+  BankAccountName?: string;
+  BankName?: string;
+  CurrencyCode?: string;
+  ArUseAllowedFlag?: boolean;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
@@ -225,6 +234,40 @@ export class OracleClient implements OnModuleInit {
           ? (data['items'] as OracleInventoryItem[])
           : [];
         return items;
+      }),
+    );
+  }
+
+  /**
+   * Fetches AR-usable cash/bank accounts from Oracle Fusion Cash Management.
+   * Used by the admin "refresh register accounts" utility to repopulate
+   * VendHqRegister.bankAccountId / cashAccountId with the current Oracle IDs
+   * (the remittance account passed on every receipt).
+   *
+   * NOTE: relative resource path — ORACLE_REST_BASE_URL already ends in
+   * /fscmRestApi/resources/<version>. (Some older methods pass an absolute
+   * /fscmRestApi/... path which double-prefixes; keep this relative.)
+   */
+  async getCashBankAccounts(
+    params: { limit?: number; offset?: number } = {},
+  ): Promise<OracleCashBankAccount[]> {
+    return this.circuitBreaker.execute('oracle:getCashBankAccounts', () =>
+      this.withRetries(async () => {
+        const query: Record<string, string | number | boolean> = {
+          limit: params.limit ?? 500,
+          offset: params.offset ?? 0,
+          onlyData: true,
+          q: 'ArUseAllowedFlag=true',
+          fields:
+            'BankAccountId,BankAccountName,BankName,CurrencyCode,ArUseAllowedFlag',
+        };
+        const response = await this.http.get('cashBankAccounts', {
+          params: query,
+        });
+        const data = this.isRecord(response.data) ? response.data : {};
+        return Array.isArray(data['items'])
+          ? (data['items'] as OracleCashBankAccount[])
+          : [];
       }),
     );
   }
