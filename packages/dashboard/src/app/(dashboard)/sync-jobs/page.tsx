@@ -65,9 +65,8 @@ export default function SyncJobsPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Sync Jobs</h1>
             <p className="mt-0.5 text-sm text-slate-500">
-              {selectedRegion 
-                ? `Manage and monitor synchronization jobs for region: ${selectedRegion}` 
-                : 'Manage and monitor synchronization jobs across all regions'}
+              Manage and monitor synchronization jobs (global — not
+              region-scoped)
             </p>
           </div>
         </div>
@@ -84,12 +83,12 @@ export default function SyncJobsPage() {
       </div>
 
       {selectedRegion && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4" />
-            <span>Viewing jobs for region: <strong>{selectedRegion}</strong></span>
-            <span className="text-xs text-indigo-600">
-              (Use the region selector in the header to view all regions)
+            <span>
+              Sync jobs and queue stats are <strong>global</strong> — they are
+              not filtered by the selected region ({selectedRegion}).
             </span>
           </div>
         </div>
