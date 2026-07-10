@@ -245,18 +245,34 @@ export class AdminService {
     return record;
   }
 
+  /**
+   * Canonicalise a `region` value (trim + uppercase) so cross-table joins stay
+   * consistent. Region is a free-form string on every model and is matched by
+   * exact equality everywhere, so an un-normalised 'sa' would silently fail to
+   * join against 'SA'. Applied on every write path (create/update/CSV import).
+   */
+  static normalizeRegion<T extends Record<string, unknown>>(data: T): T {
+    if (typeof data.region === 'string' && data.region.trim() !== '') {
+      return { ...data, region: data.region.trim().toUpperCase() };
+    }
+    return data;
+  }
+
   create(table: string, body: Record<string, unknown>) {
     const delegate = this.getDelegate(table);
     // Strip id if provided so default cuid() is used
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    return delegate.create({ data });
+    return delegate.create({ data: AdminService.normalizeRegion(data) });
   }
 
   async update(table: string, id: string, body: Record<string, unknown>) {
     await this.getOne(table, id);
     const delegate = this.getDelegate(table);
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    return delegate.update({ where: { id }, data });
+    return delegate.update({
+      where: { id },
+      data: AdminService.normalizeRegion(data),
+    });
   }
 
   async remove(table: string, id: string) {
@@ -398,12 +414,14 @@ export class AdminService {
         // strings; without coercion Prisma rejects Int, Float and Boolean fields).
         // Fields not found in the DMMF are passed through as-is; Prisma will
         // then validate them (unknown columns are rejected at the DB layer).
-        const cleaned = Object.fromEntries(
-          Object.entries(data).map(([k, v]) => {
-            if (v === '' || v === null || v === undefined) return [k, null];
-            const prismaType = fieldTypes.get(k);
-            return [k, prismaType ? coerceCsvValue(v, prismaType) : v];
-          }),
+        const cleaned = AdminService.normalizeRegion(
+          Object.fromEntries(
+            Object.entries(data).map(([k, v]) => {
+              if (v === '' || v === null || v === undefined) return [k, null];
+              const prismaType = fieldTypes.get(k);
+              return [k, prismaType ? coerceCsvValue(v, prismaType) : v];
+            }),
+          ),
         );
         await delegate.create({ data: cleaned });
         imported++;
