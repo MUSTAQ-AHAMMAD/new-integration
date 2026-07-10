@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import * as https from 'https';
 import { CircuitBreakerService } from '../circuit-breaker.service';
 import { findArrayInPayload, toApiDatetime } from '../../common/odoo-utils';
 
@@ -101,9 +102,15 @@ export class OdooClient {
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
     this.apiKey = this.configService.get<string>('ODOO_API_KEY');
+    // Allow disabling TLS verification for Odoo.sh dev instances whose
+    // multi-label *.dev.odoo.com host isn't covered by the *.odoo.com wildcard
+    // cert. Off by default; set ODOO_REJECT_UNAUTHORIZED_SSL=false to disable.
+    const rejectUnauthorized =
+      this.configService.get<string>('ODOO_REJECT_UNAUTHORIZED_SSL') !== 'false';
     this.http = axios.create({
       baseURL: this.configService.get<string>('ODOO_BASE_URL'),
       timeout: 120_000,
+      httpsAgent: new https.Agent({ rejectUnauthorized }),
     });
   }
 
