@@ -21,6 +21,7 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import axios from 'axios';
+import * as https from 'https';
 import {
   DEFAULT_ODOO_TIMEZONE,
   normalizeOrderForIngestion,
@@ -263,6 +264,7 @@ export class IbqBackupService {
       companyId: number | null;
       region: string;
       lastSyncAt: Date | null;
+      rejectUnauthorizedSsl?: boolean | null;
     },
     overrides?: {
       startDate?: string;
@@ -287,6 +289,17 @@ export class IbqBackupService {
     let offset = 0;
 
     const baseUrl = cred.baseUrl.replace(/\/$/, '');
+
+    // Allow disabling TLS verification per-credential for Odoo.sh dev instances
+    // whose *.dev.odoo.com host isn't covered by the *.odoo.com wildcard cert.
+    const sslVerify = cred.rejectUnauthorizedSsl !== false;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
+    if (!sslVerify) {
+      this.logger.warn(
+        `⚠️ IBQ region=${cred.region}: TLS certificate verification is DISABLED ` +
+          `(rejectUnauthorizedSsl=false). Use only for dev/staging.`,
+      );
+    }
 
     while (true) {
       const params: Record<string, string | number> = { limit: pageSize };
@@ -315,6 +328,7 @@ export class IbqBackupService {
         },
         params,
         timeout: 30_000,
+        httpsAgent,
       });
 
       const orders = extractOrders(resp.data ?? {});

@@ -1390,6 +1390,10 @@ model IbqCredential {
   companyId  Int?
   active     Boolean   @default(true)
   region     String
+  /// When false, TLS certificate verification is disabled for this credential.
+  /// Needed for Odoo.sh dev instances whose multi-label *.dev.odoo.com host is
+  /// not covered by Odoo's wildcard *.odoo.com certificate. Mirrors OdooCredential.
+  rejectUnauthorizedSsl Boolean @default(true)
   /// Timestamp watermark: next run will fetch orders with date_order >= lastSyncAt
   lastSyncAt DateTime?
   createdAt  DateTime  @default(now())

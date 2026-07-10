@@ -192,9 +192,15 @@ export class StoreConfigService {
       );
     }
 
-    // Create the configuration
-    const config = await this.prisma.storeConfiguration.create({
-      data: {
+    // Create the configuration. Use upsert (not create) so that concurrent
+    // order-sync workers processing several orders for the same new branch do
+    // not collide on the branchCode unique constraint — the losers of the race
+    // would otherwise throw and fall back to an INVALID config, skipping the
+    // order. On a race, keep the row the winner created (update: {}).
+    const config = await this.prisma.storeConfiguration.upsert({
+      where: { branchCode },
+      update: {},
+      create: {
         branchCode,
         branchName,
         odooBranchId: numberToBigInt(branchId),

@@ -313,6 +313,16 @@ describe('StoreConfigService', () => {
             region: 'KW',
             siteNumber: 'SITE-KW',
           },
+          {
+            id: '3',
+            billToName: 'OM Store',
+            billToAccount: BigInt(103),
+            businessUnit: 'BU-OM',
+            txnSource: 'Manual',
+            txnType: 'SALE',
+            region: 'OM',
+            siteNumber: 'SITE-OM',
+          },
         ]),
       };
 
@@ -370,8 +380,8 @@ describe('StoreConfigService', () => {
       // Branch 5 (KW) should use KW metadata
       expect(createCalls[1][0].data.billToSiteName).toBe('KW Store');
 
-      // Branch 7 (OM) should fall back to AE (no OM metadata)
-      expect(createCalls[2][0].data.billToSiteName).toBe('AE Store');
+      // Branch 7 (OM) uses its own OM metadata — no silent fallback to AE.
+      expect(createCalls[2][0].data.billToSiteName).toBe('OM Store');
     });
 
     it('deduplicates branches across Odoo and IBQ sources', async () => {
