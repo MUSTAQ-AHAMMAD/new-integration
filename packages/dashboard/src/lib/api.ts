@@ -74,6 +74,22 @@ export interface RegisterAccountAssignment {
   cashAccountId?: number | null;
 }
 
+export interface SyncControlRow {
+  id: string;
+  serviceName: string;
+  displayName: string;
+  description: string | null;
+  region: string | null;
+  enabled: boolean;
+  isRunning: boolean;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  runCount: number;
+  errorCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const api = {
   // ── Auth ───────────────────────────────────────────────────────
   login: (email: string, password: string) =>
@@ -256,6 +272,19 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ assignments }) },
     ),
 
+  /** List sync-control services (optionally per region) */
+  syncControlList: (region?: string | null) =>
+    apiRequest<SyncControlRow[]>(
+      `/admin/sync-control${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+    ),
+
+  /** Toggle a sync-control service on/off */
+  syncControlToggle: (serviceName: string, region?: string | null) =>
+    apiRequest<{ serviceName: string; enabled: boolean }>(
+      `/admin/sync-control/${encodeURIComponent(serviceName)}/toggle${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+      { method: 'POST' },
+    ),
+
   /** Manually pull orders from Odoo and ingest them into the sync queue */
   fetchOdooOrders: (params?: { credentialId?: string; branchId?: number; startDate?: string; endDate?: string; limit?: number }) =>
     apiRequest<{ ok: boolean; fetched: number; backedUp: number; backupSkipped: number; ingested: number; skipped: number; errors: string[] }>('/sync/fetch-odoo', {
@@ -294,7 +323,119 @@ export const api = {
   // ─── AI Monitor ───────────────────────────────────────────────────
   /** Run the AI-powered diagnostic analysis of the whole integration */
   aiMonitorAnalyze: () => apiRequest<AiAnalysisResult>('/ai-monitor/analyze'),
+
+  // ─── Reports & Analytics ──────────────────────────────────────────
+  /** List reportable datasets + their fields for the report builder */
+  reportDatasets: () => apiRequest<ReportDataset[]>('/reports/datasets'),
+  /** Run a flexible report query (aggregate or records mode) */
+  runReport: (dto: ReportQueryDto) =>
+    apiRequest<ReportResult>('/reports/query', {
+      method: 'POST',
+      body: JSON.stringify(dto),
+    }),
+  /** POST the query to the export endpoint and trigger a CSV file download */
+  exportReport: async (dto: ReportQueryDto): Promise<void> => {
+    const token = authStorage.getToken();
+    const res = await fetch(`${API_BASE}/reports/export`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(dto),
+    });
+    if (res.status === 401) {
+      authStorage.clearToken();
+      if (typeof window !== 'undefined') window.location.href = '/login';
+      throw new Error('Session expired. Please log in again.');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(
+        (err as { message?: string }).message || `Export failed: ${res.status}`,
+      );
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `report-${dto.dataset}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  },
 };
+
+// ─── Reports & Analytics types ─────────────────────────────────────
+export type ReportFieldRole = 'dimension' | 'measure' | 'date' | 'boolean';
+
+export interface ReportFieldMeta {
+  name: string;
+  label: string;
+  role: ReportFieldRole;
+  type: string;
+  enumValues?: string[];
+}
+
+export interface ReportDataset {
+  slug: string;
+  label: string;
+  description: string;
+  defaultDateField?: string;
+  fields: ReportFieldMeta[];
+}
+
+export type ReportFilterOp =
+  | 'eq'
+  | 'ne'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'contains'
+  | 'startsWith'
+  | 'in'
+  | 'between'
+  | 'isNull';
+
+export interface ReportFilter {
+  field: string;
+  op: ReportFilterOp;
+  value?: unknown;
+  value2?: unknown;
+}
+
+export type ReportMeasureFn = 'count' | 'sum' | 'avg' | 'min' | 'max';
+
+export interface ReportMeasure {
+  fn: ReportMeasureFn;
+  field?: string;
+}
+
+export interface ReportQueryDto {
+  dataset: string;
+  filters?: ReportFilter[];
+  dateField?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  groupBy?: string[];
+  measures?: ReportMeasure[];
+  sort?: { field: string; dir?: 'asc' | 'desc' };
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ReportResult {
+  mode: 'aggregate' | 'records';
+  dataset: string;
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  total: number;
+  page: number;
+  pageSize: number;
+  summary?: Record<string, number>;
+  measures?: ReportMeasure[];
+  groupBy?: string[];
+}
 
 export interface DashboardOverview {
   totalOrders: number;

@@ -33,6 +33,7 @@ import { ItemSyncModule } from './item-sync/item-sync.module';
 import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
 import { OdooBackupModule } from './odoo-backup/odoo-backup.module';
 import { AiMonitorModule } from './ai-monitor/ai-monitor.module';
+import { ReportsModule } from './reports/reports.module';
 import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
 
 @Module({
@@ -111,6 +112,7 @@ import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
     IbqBackupModule,
     OdooBackupModule,
     AiMonitorModule,
+    ReportsModule,
   ],
   providers: [
     // Global BigInt serialization interceptor (applied before all other processing)

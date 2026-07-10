@@ -8,6 +8,7 @@ import {
   Activity,
   AlertTriangle,
   Archive,
+  BarChart3,
   Bell,
   Bot,
   Building2,
@@ -59,6 +60,7 @@ const topItems: NavItem[] = [
 ];
 
 const operationalItems: NavItem[] = [
+  { href: '/reports', label: 'Reports & Analytics', icon: BarChart3 },
   { href: '/admin/ai-monitor', label: 'AI Monitor', icon: Bot },
   { href: '/stores', label: 'Store Config Admin', icon: Building2 },
   { href: '/admin/sync-control', label: 'Sync Control', icon: RefreshCw },
