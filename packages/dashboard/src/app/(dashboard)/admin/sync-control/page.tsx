@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
+import { api } from '@/lib/api';
 import { useRegion } from '@/providers/region-provider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,20 +28,15 @@ interface SyncControl {
   updatedAt: string;
 }
 
-async function fetchSyncControls(region?: string | null): Promise<SyncControl[]> {
-  const query = region ? `?region=${encodeURIComponent(region)}` : '';
-  const response = await fetch(`/api/v1/admin/sync-control${query}`);
-  if (!response.ok) throw new Error('Failed to fetch sync controls');
-  return response.json();
+async function fetchSyncControls(
+  region?: string | null,
+): Promise<SyncControl[]> {
+  // Use the api client so the JWT is attached (the route is ADMIN-guarded).
+  return api.syncControlList(region) as unknown as Promise<SyncControl[]>;
 }
 
 async function toggleService(serviceName: string, region?: string | null) {
-  const query = region ? `?region=${encodeURIComponent(region)}` : '';
-  const response = await fetch(`/api/v1/admin/sync-control/${serviceName}/toggle${query}`, {
-    method: 'POST',
-  });
-  if (!response.ok) throw new Error('Failed to toggle sync service');
-  return response.json();
+  return api.syncControlToggle(serviceName, region);
 }
 
 function formatDateTime(date: string | null): string {
