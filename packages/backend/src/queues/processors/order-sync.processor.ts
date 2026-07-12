@@ -5,11 +5,13 @@ import {
   AuditStatus,
   ErrorType,
   JobStatus,
+  OrderSyncQueue,
   Prisma,
   SyncStatus,
 } from '@prisma/client';
 import { Job } from 'bull';
 import { AlertsService } from '../../alerts/alerts.service';
+import { OracleClient } from '../../clients/oracle/oracle.client';
 import { OracleSoapClient } from '../../clients/oracle/oracle-soap.client';
 import { GatewayService } from '../../gateway/gateway.service';
 import { PaymentMappingService } from '../../payment-mapping/payment-mapping.service';
@@ -22,7 +24,10 @@ import { OrderEnrichmentService } from '../../sync/order-enrichment.service';
 import { ValidationService } from '../../sync/validation.service';
 import { QUEUE_NAMES } from '../queues.constants';
 import { OrderSyncJobData, QueuesService } from '../queues.service';
-import { numberToBigInt } from '../../common/utils/bigint-utils';
+import {
+  numberToBigInt,
+  toBigIntOrNull,
+} from '../../common/utils/bigint-utils';
 
 @Processor(QUEUE_NAMES.ORDER_SYNC)
 export class OrderSyncProcessor {
@@ -38,6 +43,7 @@ export class OrderSyncProcessor {
     private readonly alertsService: AlertsService,
     private readonly queuesService: QueuesService,
     private readonly soapClient: OracleSoapClient,
+    private readonly oracleClient: OracleClient,
     private readonly transformationService: FusionTransformationService,
     private readonly odooTransformationService: OdooTransformationService,
     private readonly enrichmentService: OrderEnrichmentService,
@@ -81,6 +87,16 @@ export class OrderSyncProcessor {
     );
 
     try {
+      // ── 0. Separate refunds — the Oracle cycle is invoice-only ────────
+      // Refund / credit-memo orders (negative-amount, isRefund=true) are NOT
+      // pushed to Oracle as invoices. They are diverted to RefundTracking so
+      // they surface on the Refunds admin page for manual credit-memo handling.
+      // Only non-refund orders continue to invoice creation below.
+      if (order.isRefund) {
+        await this.separateRefund(order, odooOrderId, syncJobId);
+        return;
+      }
+
       // ── 1. Skip unpaid / cancelled orders ────────────────────
       this.logger.log(
         `[${odooOrderId}] Step 1/14: Checking payment/cancellation status...`,
@@ -184,10 +200,20 @@ export class OrderSyncProcessor {
       this.logger.log(
         `[${odooOrderId}] Step 3/14: Checking store configuration...`,
       );
+      // The store's real Oracle region (e.g. "SA") drives every region-keyed
+      // config lookup (metadata, receipt method, journal). It is NOT the same
+      // as branchCode — using branchCode made those lookups fall back to
+      // arbitrary defaults, producing wrong-BU invoices and placeholder
+      // receipts that Oracle rejects.
+      let storeRegion = branchCode;
       try {
-        await this.storeConfigService.getValidatedConfig(branchCode);
+        const storeConfig =
+          await this.storeConfigService.getValidatedConfig(branchCode);
+        if (storeConfig.region && storeConfig.region.trim() !== '') {
+          storeRegion = storeConfig.region.trim();
+        }
         this.logger.log(
-          `[${odooOrderId}] ✅ Step 3/14: Store configuration valid`,
+          `[${odooOrderId}] ✅ Step 3/14: Store configuration valid (region=${storeRegion})`,
         );
       } catch (configErr) {
         const configMsg =
@@ -352,7 +378,12 @@ export class OrderSyncProcessor {
       //      → fallback ensures ALL orders can sync
       //
       // The enrichment service NEVER fails - it always returns valid Oracle payloads.
-      const effectiveRegion = branchCode;
+      //
+      // effectiveRegion is the store's real Oracle region (resolved from
+      // StoreConfiguration above), NOT the branchCode — regional config tables
+      // (FusionSalesMetadata, FusionReceiptMethod, journal meta, VendHqRegister)
+      // are all keyed on the region code.
+      const effectiveRegion = storeRegion;
       this.logger.log(
         `[${odooOrderId}] Step 7/14: Enriching order data...\n` +
           `  - Effective Region: ${effectiveRegion}\n` +
@@ -508,7 +539,10 @@ export class OrderSyncProcessor {
               where: {
                 salesOrder: salesOrderRef,
                 region: effectiveRegion,
-                status: 'SUCCESS',
+                // Accept both the normalised 'SUCCESS' and Oracle's raw 'S'
+                // (older rows) so an already-created invoice is reused instead
+                // of re-created (which would duplicate it in Oracle).
+                status: { in: ['SUCCESS', 'S'] },
                 invoiceNumber: { not: null },
               },
               orderBy: { createdAt: 'desc' },
@@ -583,14 +617,13 @@ export class OrderSyncProcessor {
           }
         }
 
-        // Get the transaction number properly - prefer transactionNumber over customerTrxId
-        // Convert to number since Prisma schema expects Int
+        // Get the transaction number properly - prefer transactionNumber over customerTrxId.
+        // Stored as BigInt: Oracle AR ids exceed Int32 (e.g. 300000236179413).
         const txnNumberOrOrderId =
           invoiceResult.transactionNumber ??
           invoiceResult.customerTrxId ??
           odooOrderId;
-        const parsedTxnNumber = parseInt(txnNumberOrOrderId, 10);
-        const txnNumber = isNaN(parsedTxnNumber) ? null : parsedTxnNumber;
+        const txnNumber = toBigIntOrNull(txnNumberOrOrderId);
 
         this.logger.log(
           `[${odooOrderId}] ✅ Step 8a/14: Oracle invoice created\n` +
@@ -599,12 +632,45 @@ export class OrderSyncProcessor {
             `  - Status: ${invoiceResult.serviceStatus || 'SUCCESS'}`,
         );
 
+        // ── Restate receipt numbers against the Oracle transaction number ────
+        // The transformation seeds receipt numbers from the Odoo order number
+        // (e.g. "Mada-RYDAVNUMAL/0231") because the Oracle txn isn't known until
+        // the invoice is created. Now that it is, restate them as
+        // "<method>-<oracleTxn>" (misc receipts: "<method>-<oracleTxn>-MISC")
+        // and point apply receipts at the Oracle transaction, so receipts
+        // reference the real invoice — e.g. "Mada-1242176" / "Mada-1242176-MISC".
+        if (txnNumber != null) {
+          const oracleTxn = txnNumber.toString();
+          const methodPrefix = (receiptNumber: string): string =>
+            receiptNumber.split(`-${order.odooOrderNumber}`)[0];
+          for (const sr of standardReceipts) {
+            sr.receiptNumber = `${methodPrefix(sr.receiptNumber)}-${oracleTxn}`;
+          }
+          for (const mr of miscReceipts) {
+            mr.receiptNumber = `${methodPrefix(mr.receiptNumber)}-${oracleTxn}-MISC`;
+          }
+          for (const ar of applyReceipts) {
+            ar.receiptNumber = `${methodPrefix(ar.receiptNumber)}-${oracleTxn}`;
+            ar.transactionNumber = oracleTxn;
+          }
+        }
+
+        // Normalise Oracle's service status ('S'/'E') to the 'SUCCESS'/'ERROR'
+        // values the dedupe checks query on — storing the raw 'S' meant dup
+        // check A never matched, so every retry re-created the invoice in Oracle
+        // (duplicate transactions).
+        const normalizedInvoiceStatus =
+          invoiceResult.serviceStatus === 'E' ||
+          invoiceResult.serviceStatus === 'ERROR'
+            ? 'ERROR'
+            : 'SUCCESS';
+
         // Persist the invoice audit rows + inventory txns only when we actually
         // created the invoice this run. On reuse (dup check A) they already exist.
         if (!existingInvoiceLine) {
         const auditHeader = await this.prisma.fusionInvoiceHeader.create({
           data: {
-            status: invoiceResult.serviceStatus || 'SUCCESS',
+            status: normalizedInvoiceStatus,
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
             billToLocation: invoiceHeader.billToLocation,
@@ -619,8 +685,8 @@ export class OrderSyncProcessor {
             txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
             glDate: invoiceHeader.saleDate,
             currencyCode: invoiceHeader.invoiceCurrencyCode,
-            txnNumber: txnNumber, // ✅ Store the actual transaction number
-            customerTxnId: Number(invoiceResult.customerTrxId) || null,
+            txnNumber: txnNumber, // ✅ Store the actual transaction number (BigInt)
+            customerTxnId: toBigIntOrNull(invoiceResult.customerTrxId),
             totalAmount: order.totalAmount, // Store total amount for reference
             region: effectiveRegion,
           },
@@ -628,7 +694,7 @@ export class OrderSyncProcessor {
 
         await this.prisma.fusionInvoiceLine.createMany({
           data: invoiceHeader.invoiceLines.map((il) => ({
-            status: invoiceResult.serviceStatus ?? 'SUCCESS',
+            status: normalizedInvoiceStatus,
             requestDate: new Date(),
             invoiceNumber: txnNumber ? String(txnNumber) : null,
             lineNumber: il.lineNumber,
@@ -722,10 +788,10 @@ export class OrderSyncProcessor {
                 receiptMethodId: numberToBigInt(sr.receiptMethodId),
                 receiptNumber: srResult.receiptNumber ?? sr.receiptNumber,
                 remittanceBankAccId: String(sr.remittanceBankAccountId),
-                customerId: sr.customerId,
+                customerId: toBigIntOrNull(sr.customerId),
                 accountValue: sr.accountValue,
                 receiptAmount: sr.receiptAmount,
-                orgId: sr.orgId,
+                orgId: toBigIntOrNull(sr.orgId),
                 region: effectiveRegion,
               },
             });
@@ -750,10 +816,10 @@ export class OrderSyncProcessor {
                 receiptMethodId: numberToBigInt(sr.receiptMethodId),
                 receiptNumber: sr.receiptNumber,
                 remittanceBankAccId: String(sr.remittanceBankAccountId),
-                customerId: sr.customerId,
+                customerId: toBigIntOrNull(sr.customerId),
                 accountValue: sr.accountValue,
                 receiptAmount: sr.receiptAmount,
-                orgId: sr.orgId,
+                orgId: toBigIntOrNull(sr.orgId),
                 region: effectiveRegion,
               },
             });
@@ -782,7 +848,7 @@ export class OrderSyncProcessor {
                 bankAccNumber: mr.bankAccountName,
                 recActivityName: mr.receivableActivityName,
                 receiptAmount: mr.receiptAmount,
-                orgId: mr.orgId,
+                orgId: toBigIntOrNull(mr.orgId),
                 region: effectiveRegion,
               },
             });
@@ -810,7 +876,7 @@ export class OrderSyncProcessor {
                 bankAccNumber: mr.bankAccountName,
                 recActivityName: mr.receivableActivityName,
                 receiptAmount: mr.receiptAmount,
-                orgId: mr.orgId,
+                orgId: toBigIntOrNull(mr.orgId),
                 region: effectiveRegion,
               },
             });
@@ -917,24 +983,56 @@ export class OrderSyncProcessor {
         return String(txnNumber || '');
       };
 
-      // ── NEW APPROACH: Use Enrichment Service ──────────────────────────────────
-      // The enrichment service will:
-      // 1. Try to use direct order data from OrderSyncQueue (orderLines, orderPayments)
-      // 2. Fall back to backup tables if needed (BackupOdooOrder, BackupVendHqSale)
-      // 3. Create minimal viable payloads if neither are available
-      //
-      // This removes the hard dependency on backup tables and allows orders to
-      // sync directly when they have complete data.
+      // ── Build Oracle payloads ─────────────────────────────────────────────
+      // Prefer OdooTransformationService when backup data exists: it resolves
+      // the REAL Oracle receipt-method id (FusionReceiptMethod by payment name +
+      // region), remittance bank/cash account (VendHqRegister/StoreConfiguration)
+      // and org id — unlike the enrichment service, which hardcodes placeholder
+      // receipt ids (1/1000/1) that Oracle rejects (JBO-27024). The enrichment
+      // service remains the fallback for orders with no backup order row.
+      const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+        where: { orderName: order.odooOrderNumber },
+        select: { id: true },
+      });
 
-      this.logger.log(
-        `[${odooOrderId}] Using enrichment service for flexible order processing...`,
-      );
+      let payloads;
+      if (backupOrder) {
+        this.logger.log(
+          `[${odooOrderId}] Transforming from Odoo backup (region=${effectiveRegion})...`,
+        );
+        payloads = await this.odooTransformationService.buildOrderPayloads(
+          backupOrder.id,
+          branchCode,
+          effectiveRegion,
+        );
+      } else {
+        this.logger.warn(
+          `[${odooOrderId}] No Odoo backup order found — using minimal enrichment fallback.`,
+        );
+        payloads = await this.enrichmentService.enrichOrder(
+          order.id,
+          branchCode,
+          effectiveRegion,
+        );
+      }
 
-      const payloads = await this.enrichmentService.enrichOrder(
-        order.id,
-        branchCode,
-        effectiveRegion,
+      // ── 7b. Validate line items exist in Oracle's catalog ─────────────────
+      // Oracle rejects the whole AR invoice (AR_INVALID_INVENTORY_ITEM) if any
+      // line references an item it doesn't know. Rather than create a partial
+      // or memo-line invoice, hold the order for review when any item is
+      // missing — only fully-valid orders are invoiced.
+      const missingItems = await this.findMissingOracleItems(
+        payloads.invoiceHeader.invoiceLines,
       );
+      if (missingItems.length > 0) {
+        await this.holdOrderForInvalidItems(
+          order,
+          odooOrderId,
+          missingItems,
+          syncJobId,
+        );
+        return;
+      }
 
       const txnNumber = await pushToOracle(payloads);
       const txnNumberStr = txnNumber ? String(txnNumber) : null;
@@ -1101,6 +1199,158 @@ export class OrderSyncProcessor {
       /circuit \S+ is open and recovering/i.test(message) ||
       /circuit \S+ is half-open and busy/i.test(message)
     );
+  }
+
+  /**
+   * Diverts a refund / credit-memo order out of the invoice-creation pipeline.
+   *
+   * The Oracle cycle is invoice-only: refunds must NOT create Oracle invoices
+   * (or auto credit memos). Instead the refund is recorded in RefundTracking
+   * — the backing table for the Refunds admin page — where finance can raise
+   * the credit memo manually and reconcile it. The source order is marked
+   * SKIPPED (not FAILED) so it does not count against the failure rate.
+   */
+  private async separateRefund(
+    order: OrderSyncQueue,
+    odooOrderId: string,
+    syncJobId?: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `[${odooOrderId}] ↩️  REFUND SEPARATED: skipping Oracle invoice creation. ` +
+        `Recorded in RefundTracking for manual credit-memo handling.`,
+    );
+
+    // totalAmount is negative for refunds; store the magnitude to match the
+    // manual-credit-memo convention in RefundsService.
+    const refundAmount = new Prisma.Decimal(order.totalAmount).abs();
+
+    try {
+      await this.prisma.refundTracking.upsert({
+        where: { refundOrderId: order.odooOrderId },
+        create: {
+          originalOrderId: order.refundReferenceId ?? order.odooOrderId,
+          originalOrderNumber: order.odooOrderNumber,
+          originalInvoiceNumber: order.oracleInvoiceNumber ?? null,
+          refundOrderId: order.odooOrderId,
+          refundOrderNumber: order.odooOrderNumber,
+          refundAmount,
+          refundReason:
+            'Auto-separated refund (negative-amount order); credit memo not auto-created',
+          refundDate: order.orderDate,
+          oracleCreditMemoNumber: '',
+          creditMemoStatus: SyncStatus.PENDING,
+        },
+        update: {
+          refundOrderNumber: order.odooOrderNumber,
+          refundAmount,
+          refundDate: order.orderDate,
+        },
+      });
+    } catch (err) {
+      // Tracking is best-effort — never fail the order over it.
+      this.logger.error(
+        `[${odooOrderId}] Failed to record refund in RefundTracking: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    await this.prisma.orderSyncQueue.update({
+      where: { id: order.id },
+      data: {
+        status: SyncStatus.SKIPPED,
+        validationErrors: {
+          reasons: [
+            'Refund separated — credit memos are not auto-created. Handle via the Refunds page.',
+          ],
+        },
+      },
+    });
+
+    this.gateway.emitOrderStatus({
+      orderId: odooOrderId,
+      status: SyncStatus.SKIPPED,
+    });
+
+    if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'skipped');
+  }
+
+  /**
+   * Returns the distinct set of line ItemNumbers that do NOT exist in Oracle's
+   * item catalog. Oracle rejects the whole AR invoice (AR_INVALID_INVENTORY_ITEM)
+   * if any line references an unknown item, so callers hold such orders.
+   */
+  private async findMissingOracleItems(
+    invoiceLines: Array<{ itemNumber?: string | null }>,
+  ): Promise<string[]> {
+    const itemNumbers = [
+      ...new Set(
+        invoiceLines
+          .map((l) => l.itemNumber?.trim())
+          .filter((n): n is string => !!n),
+      ),
+    ];
+
+    const missing: string[] = [];
+    for (const itemNumber of itemNumbers) {
+      const exists = await this.oracleClient.itemExists(itemNumber);
+      if (!exists) missing.push(itemNumber);
+    }
+    return missing;
+  }
+
+  /**
+   * Holds an order that references items unknown to Oracle. Marks it SKIPPED
+   * (not FAILED — it is a data-completeness issue, not a system fault), records
+   * the missing SKUs for review, and raises an alert. The invoice is never
+   * attempted, so Oracle never sees the invalid items.
+   */
+  private async holdOrderForInvalidItems(
+    order: OrderSyncQueue,
+    odooOrderId: string,
+    missingItems: string[],
+    syncJobId?: string,
+  ): Promise<void> {
+    const preview = missingItems.slice(0, 20).join(', ');
+    this.logger.warn(
+      `[${odooOrderId}] ⏸️  HELD: ${missingItems.length} item(s) not in Oracle catalog — ` +
+        `invoice skipped. Missing: ${preview}`,
+    );
+
+    await this.prisma.orderSyncQueue.update({
+      where: { id: order.id },
+      data: {
+        status: SyncStatus.SKIPPED,
+        validationErrors: {
+          reasons: [
+            "Order held for review — one or more items do not exist in Oracle's item " +
+              'catalog (AR_INVALID_INVENTORY_ITEM). No invoice was created.',
+          ],
+          missingOracleItems: missingItems,
+        },
+      },
+    });
+
+    await this.alertsService
+      .createAlert({
+        alertType: 'INVALID_ORACLE_ITEM',
+        severity: 'WARNING',
+        title: `Order ${order.odooOrderNumber} held — invalid Oracle item(s)`,
+        message:
+          `Order ${odooOrderId} (branch ${order.branchCode}) was not invoiced because ` +
+          `${missingItems.length} item(s) are not in Oracle's catalog: ${preview}. ` +
+          `Create the item(s) in Oracle, then retry the order.`,
+        relatedEntityId: odooOrderId,
+        relatedEntityType: 'ORDER',
+      })
+      .catch(() => undefined);
+
+    this.gateway.emitOrderStatus({
+      orderId: odooOrderId,
+      status: SyncStatus.SKIPPED,
+    });
+
+    if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'skipped');
   }
 
   /**

@@ -220,9 +220,19 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
         <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
         ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
         <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
-        <typ1:ConversionRateType>${header.conversionRateType}</typ1:ConversionRateType>
+        ${
+          // Conversion info is only valid for a genuine cross-currency invoice
+          // billed with a 'User' (user-supplied) rate. These are domestic sales
+          // where the invoice currency equals the ledger currency, so NO
+          // conversion applies — sending a rate type/rate/date makes Oracle
+          // reject the invoice (AR_RAPI_X_RATE_TYPE_INVALID / *_NOT_UPDATABLE).
+          // For 'Corporate' et al. omit the whole block and let Oracle infer.
+          header.conversionRateType === 'User'
+            ? `<typ1:ConversionRateType>User</typ1:ConversionRateType>
         ${header.conversionRate !== undefined ? `<typ1:ConversionRate>${header.conversionRate}</typ1:ConversionRate>` : ''}
-        ${header.conversionDate ? `<typ1:ConversionDate>${xmlDate(header.conversionDate)}</typ1:ConversionDate>` : ''}
+        ${header.conversionDate ? `<typ1:ConversionDate>${xmlDate(header.conversionDate)}</typ1:ConversionDate>` : ''}`
+            : ''
+        }
         ${header.billToContact ? `<typ1:BillToContact>${escapeXml(header.billToContact)}</typ1:BillToContact>` : ''}
         ${header.soldToCustomerName ? `<typ1:SoldToCustomerName>${escapeXml(header.soldToCustomerName)}</typ1:SoldToCustomerName>` : ''}
         ${header.purchaseOrder ? `<typ1:PurchaseOrder>${escapeXml(header.purchaseOrder)}</typ1:PurchaseOrder>` : ''}
@@ -250,7 +260,13 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
         <typ1:RemittanceBankAccountId>${req.remittanceBankAccountId}</typ1:RemittanceBankAccountId>
         <typ1:CustomerAccountNumber>${escapeXml(req.accountValue)}</typ1:CustomerAccountNumber>
         <typ1:OrgId>${req.orgId}</typ1:OrgId>
-        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
+        ${
+          // Same-currency receipts must not carry an exchange rate type
+          // (AR_RAPI_X_RATE_TYPE_INVALID) — only send it for a 'User' rate.
+          req.exchangeRateType === 'User'
+            ? `<typ1:ExchangeRateType>User</typ1:ExchangeRateType>`
+            : ''
+        }
         ${req.customerId ? `<typ1:PayingCustomerPartyId>${req.customerId}</typ1:PayingCustomerPartyId>` : ''}
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:standardReceipt>
@@ -299,7 +315,13 @@ function buildMiscReceiptSoap(req: MiscReceiptRequest): string {
         <typ1:BankAccountName>${escapeXml(req.bankAccountName)}</typ1:BankAccountName>
         <typ1:ReceivableActivityName>${escapeXml(req.receivableActivityName)}</typ1:ReceivableActivityName>
         <typ1:OrgId>${req.orgId}</typ1:OrgId>
-        <typ1:ExchangeRateType>${escapeXml(req.exchangeRateType ?? 'Corporate')}</typ1:ExchangeRateType>
+        ${
+          // Same-currency receipts must not carry an exchange rate type
+          // (AR_RAPI_X_RATE_TYPE_INVALID) — only send it for a 'User' rate.
+          req.exchangeRateType === 'User'
+            ? `<typ1:ExchangeRateType>User</typ1:ExchangeRateType>`
+            : ''
+        }
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:miscellaneousReceipt>
     </typ:createMiscellaneousReceipt>
@@ -1231,6 +1253,13 @@ export class OracleSoapClient implements OnModuleInit {
         '(empty response body)';
       this.logger.error(
         `Oracle SOAP ${operation} returned HTTP ${resp.status}. Fault detail: ${detail}`,
+      );
+      // Oracle's top-level fault (e.g. JBO-27023 "failed to validate all rows")
+      // is generic; the specific field/row reason lives in nested <serviceErrors>
+      // / <detail> elements. Log the full raw fault body so failures are
+      // diagnosable without Oracle-side access.
+      this.logger.error(
+        `[${operation}] Raw Oracle fault body:\n${xml.slice(0, 5000)}`,
       );
       throw new Error(
         `Oracle ${operation} failed (HTTP ${resp.status}): ${detail}`,

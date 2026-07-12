@@ -470,6 +470,7 @@ enum AlertType {
   ORACLE_CONNECTION_FAILED
   ORACLE_PERFORMANCE_DEGRADED
   ORACLE_CONNECTION_RECOVERED
+  INVALID_ORACLE_ITEM
 }
 
 enum AlertSeverity {
@@ -575,7 +576,11 @@ model FusionReceiptMethod {
 
 model FusionSalesMetadata {
   id                  String   @id @default(cuid())
-  billToName          String   @unique
+  // Grain is (billToName, region, customerType): the same store name recurs
+  // across regions/customer types with different bill-to accounts. A global
+  // @unique on billToName collapsed the import (2119 source rows → 256),
+  // dropping most bill-to records; use a compound unique instead.
+  billToName          String
   billToAccount       BigInt
   siteNumber          String?
   businessUnit        String
@@ -593,6 +598,7 @@ model FusionSalesMetadata {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  @@unique([billToName, region, customerType])
   @@index([region])
   @@index([customerType])
 }
@@ -770,8 +776,9 @@ model FusionInvoiceHeader {
   txnDate          DateTime?
   glDate           DateTime?
   currencyCode     String    @default("AED")
-  txnNumber        Int?
-  customerTxnId    Int?
+  // Oracle AR transaction ids exceed Int32 (e.g. 300000236179413); use BigInt.
+  txnNumber        BigInt?
+  customerTxnId    BigInt?
   totalAmount      Decimal?  @db.Decimal(15, 2)
   region           String
   createdAt        DateTime  @default(now())
@@ -828,10 +835,11 @@ model FusionStandardReceipt {
   receiptNumber       String?
   remittanceBankAccId String?
   depositDate         DateTime?
-  customerId          Int?
+  // Oracle party/org ids exceed Int32 (e.g. 300000154832043); use BigInt.
+  customerId          BigInt?
   accountValue        String?
   receiptAmount       Decimal?
-  orgId               Int?
+  orgId               BigInt?
   region              String
   integMode           String?
   createdAt           DateTime  @default(now())
@@ -859,7 +867,8 @@ model FusionMiscReceipt {
   recActivityName   String?
   receiptDate       DateTime?
   receiptAmount     Decimal?
-  orgId             Int?
+  // Oracle org id exceeds Int32; use BigInt (matches standard receipt).
+  orgId             BigInt?
   region            String
   integMode         String?
   createdAt         DateTime  @default(now())
@@ -911,7 +920,8 @@ model FusionJournalHeader {
   summaryFlag                Boolean   @default(false)
   accountingDate             DateTime?
   importDescriptiveFlexField String?
-  txnNumber                  Int?
+  // Oracle AR transaction id exceeds Int32; use BigInt (matches invoice header).
+  txnNumber                  BigInt?
   integMode                  String?
   customerType               String?
   cashCredit                 String?
@@ -962,7 +972,8 @@ model FusionJournalLine {
   accountingDate         DateTime?
   transactionDate        DateTime?
   salesOrder             String?
-  txnNumber              Int?
+  // Oracle AR transaction id exceeds Int32; use BigInt (matches journal header).
+  txnNumber              BigInt?
   customerType           String?
   cashCredit             String?
   headerId               String?

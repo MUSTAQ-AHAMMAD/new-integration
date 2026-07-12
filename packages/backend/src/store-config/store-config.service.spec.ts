@@ -296,6 +296,7 @@ describe('StoreConfigService', () => {
           {
             id: '1',
             billToName: 'AE Store',
+            customerType: 'NORMAL',
             billToAccount: BigInt(101),
             businessUnit: 'BU-AE',
             txnSource: 'Manual',
@@ -306,6 +307,7 @@ describe('StoreConfigService', () => {
           {
             id: '2',
             billToName: 'KW Store',
+            customerType: 'NORMAL',
             billToAccount: BigInt(102),
             businessUnit: 'BU-KW',
             txnSource: 'Manual',
@@ -316,6 +318,7 @@ describe('StoreConfigService', () => {
           {
             id: '3',
             billToName: 'OM Store',
+            customerType: 'NORMAL',
             billToAccount: BigInt(103),
             businessUnit: 'BU-OM',
             txnSource: 'Manual',

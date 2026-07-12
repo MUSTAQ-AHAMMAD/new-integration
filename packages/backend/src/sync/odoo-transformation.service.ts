@@ -349,8 +349,13 @@ export class OdooTransformationService {
           ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
-          bankAccountName: storeConfig.bankAccountName,
-          receivableActivityName: 'Bank Charges',
+          // Real Oracle bank account name from the register (StoreConfiguration's
+          // bankAccountName is an auto-created placeholder like "BANK_SA" that
+          // Oracle rejects).
+          bankAccountName: register?.bankAccount ?? storeConfig.bankAccountName,
+          // Real Oracle receivable-activity name from metadata (the hardcoded
+          // 'Bank Charges' is not a valid activity in every BU).
+          receivableActivityName: salesMeta.recActivityNameBank ?? 'Bank Charges',
           orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
           receiptAmount: -miscAmount,
         });
@@ -364,8 +369,9 @@ export class OdooTransformationService {
           ),
           receiptMethodName: pmtMethod,
           receiptNumber: `${pmtMethod}-${txnNumber}-MISC`,
-          bankAccountName: storeConfig.cashAccountName,
-          receivableActivityName: 'Cash Rounding',
+          bankAccountName: register?.cashAccount ?? storeConfig.cashAccountName,
+          receivableActivityName:
+            salesMeta.recActivityNameCash ?? 'Cash Rounding',
           orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
           receiptAmount: -pmtAmount,
         });

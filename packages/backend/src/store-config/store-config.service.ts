@@ -74,6 +74,83 @@ export class StoreConfigService {
     }
   }
 
+  /** Invoice currency per Oracle region. Falls back to AED for unknown regions. */
+  private readonly CURRENCY_BY_REGION: Record<string, string> = {
+    AE: 'AED',
+    BH: 'BHD',
+    KW: 'KWD',
+    OM: 'OMR',
+    SA: 'SAR',
+    SN: 'SAR',
+  };
+
+  private currencyForRegion(region: string | null | undefined): string {
+    return this.CURRENCY_BY_REGION[(region ?? '').toUpperCase()] ?? 'AED';
+  }
+
+  /** Normalise a store/mall name for matching (strip spacing/punctuation, upper-case). */
+  private normalizeName(s: string | null | undefined): string {
+    return (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  /**
+   * Resolves the authoritative FusionSalesMetadata (NORMAL) record for a store,
+   * matched by normalised branchName == billToName. The matched row's region is
+   * authoritative — the order's own region field is unreliable (stores are
+   * frequently mislabelled, e.g. a Kuwait mall tagged region SA). Matching by
+   * name also picks THIS store's bill-to / business unit / txn source+type
+   * instead of an arbitrary same-region row.
+   *
+   * Falls back to a region-only match (flagged) when the name isn't found, so
+   * behaviour degrades gracefully rather than throwing.
+   */
+  private async resolveStoreMetadata(
+    branchName: string | null | undefined,
+    hintedRegion: string | null | undefined,
+  ): Promise<{
+    metadata: Awaited<
+      ReturnType<PrismaService['fusionSalesMetadata']['findFirst']>
+    > | null;
+    region: string | null;
+    nameMatched: boolean;
+  }> {
+    const target = this.normalizeName(branchName);
+    const normals = await this.prisma.fusionSalesMetadata.findMany({
+      where: { customerType: 'NORMAL' },
+    });
+
+    if (target) {
+      const byName = normals.filter(
+        (m) => this.normalizeName(m.billToName) === target,
+      );
+      if (byName.length === 1) {
+        return {
+          metadata: byName[0],
+          region: byName[0].region,
+          nameMatched: true,
+        };
+      }
+      if (byName.length > 1) {
+        // Same store name in multiple regions — prefer the hinted region.
+        const preferred = hintedRegion
+          ? byName.find((m) => m.region === hintedRegion)
+          : undefined;
+        const chosen = preferred ?? byName[0];
+        return { metadata: chosen, region: chosen.region, nameMatched: true };
+      }
+    }
+
+    // No name match — fall back to a region-only match (may be another store's row).
+    const byRegion = hintedRegion
+      ? (normals.find((m) => m.region === hintedRegion) ?? null)
+      : null;
+    return {
+      metadata: byRegion,
+      region: hintedRegion ?? byRegion?.region ?? null,
+      nameMatched: false,
+    };
+  }
+
   /**
    * Get or create store configuration with caching and auto-creation
    * This method NEVER throws - it always returns a config (created or fallback)
@@ -144,16 +221,26 @@ export class StoreConfigService {
 
     const branchName =
       odooOrder?.branchName || ibqOrder?.branchName || `Branch-${branchCode}`;
-    const region = odooOrder?.region || ibqOrder?.region || 'AE';
+    const hintedRegion = odooOrder?.region || ibqOrder?.region || null;
 
-    // Try to get Oracle config from FusionSalesMetadata
-    const fusionMetadata = await this.prisma.fusionSalesMetadata.findFirst({
-      where: { region },
-    });
+    // Resolve the store's Oracle metadata by NAME (authoritative region), not by
+    // the order's unreliable region field. This fixes both the region mislabel
+    // and the "arbitrary same-region metadata" problem in one step.
+    const {
+      metadata: fusionMetadata,
+      region: resolvedRegion,
+      nameMatched,
+    } = await this.resolveStoreMetadata(branchName, hintedRegion);
+    const region = resolvedRegion ?? hintedRegion ?? 'AE';
 
     if (!fusionMetadata) {
       this.logger.warn(
-        `No FusionSalesMetadata found for region ${region}, using defaults`,
+        `No FusionSalesMetadata found for branch ${branchCode} (name="${branchName}", region=${region}), using defaults`,
+      );
+    } else if (!nameMatched) {
+      this.logger.warn(
+        `FusionSalesMetadata for branch ${branchCode} (name="${branchName}") matched by region only, ` +
+          `not by store name — bill-to/BU may be for a different store. Review this config.`,
       );
     }
 
@@ -188,7 +275,11 @@ export class StoreConfigService {
     }
     if (!fusionMetadata) {
       validationErrors.push(
-        'No FusionSalesMetadata found for region - using defaults',
+        'No FusionSalesMetadata found for store - using defaults',
+      );
+    } else if (!nameMatched) {
+      validationErrors.push(
+        'FusionSalesMetadata matched by region only (not store name) - bill-to/business unit may be wrong; review',
       );
     }
 
@@ -220,7 +311,7 @@ export class StoreConfigService {
         taxClassificationCode: undefined,
         transactionSource: fusionMetadata?.txnSource || 'Manual',
         transactionType: fusionMetadata?.txnType || 'PASA CONSULTING SALE',
-        invoiceCurrencyCode: 'AED',
+        invoiceCurrencyCode: this.currencyForRegion(region),
         region,
         isActive: true,
         validationStatus:
@@ -742,22 +833,38 @@ export class StoreConfigService {
           continue;
         }
 
-        // Find matching FusionSalesMetadata by region. Do NOT fall back to AE
-        // or an arbitrary first row — that silently applies the wrong region's
-        // Oracle config. Require an exact region match.
-        const metadata = branch.region
-          ? fusionMetadata.find((m) => m.region === branch.region)
-          : undefined;
+        // Match by normalised store name first (authoritative region), then fall
+        // back to a region-only match. Name matching picks THIS store's bill-to /
+        // business unit and its TRUE region, instead of an arbitrary same-region
+        // row applied under a possibly-mislabelled order region.
+        const target = this.normalizeName(branch.branchName);
+        const normals = fusionMetadata.filter(
+          (m) => m.customerType === 'NORMAL',
+        );
+        const byName = target
+          ? normals.filter((m) => this.normalizeName(m.billToName) === target)
+          : [];
+        let metadata =
+          byName.length === 1
+            ? byName[0]
+            : byName.length > 1
+              ? (byName.find((m) => m.region === branch.region) ?? byName[0])
+              : undefined;
+        const nameMatched = !!metadata;
+        if (!metadata && branch.region) {
+          metadata = normals.find((m) => m.region === branch.region);
+        }
 
         if (!metadata) {
-          const error = `No FusionSalesMetadata for branch ${branchCode} (region=${branch.region ?? 'none'})`;
+          const error = `No FusionSalesMetadata for branch ${branchCode} (name="${branch.branchName ?? ''}", region=${branch.region ?? 'none'})`;
           errors.push(error);
           this.logger.warn(error);
           skipped++;
           continue;
         }
 
-        const region = branch.region || metadata.region;
+        // The matched record's region is authoritative.
+        const region = metadata.region;
         const accountIds = regionAccountMap.get(region);
 
         // Create StoreConfiguration
@@ -778,12 +885,13 @@ export class StoreConfigService {
             taxClassificationCode: undefined,
             transactionSource: metadata.txnSource,
             transactionType: metadata.txnType,
-            invoiceCurrencyCode: 'AED',
+            invoiceCurrencyCode: this.currencyForRegion(region),
             region,
             isActive: true,
-            validationStatus: accountIds
-              ? ValidationStatus.PENDING
-              : ValidationStatus.PARTIAL,
+            validationStatus:
+              accountIds && nameMatched
+                ? ValidationStatus.PENDING
+                : ValidationStatus.PARTIAL,
             createdBy: 'SYSTEM_POPULATE_API',
           },
         });

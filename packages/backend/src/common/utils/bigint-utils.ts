@@ -168,6 +168,27 @@ export function numberToBigInt(value: number | null | undefined): bigint {
 }
 
 /**
+ * Parses an arbitrary value (string, number, bigint) into a BigInt, or null.
+ *
+ * Unlike {@link numberToBigInt}, this never routes through a JS number, so it
+ * preserves full precision for large Oracle ids (e.g. AR transaction ids like
+ * 300000236179413 that exceed Int32 and would lose digits beyond
+ * Number.MAX_SAFE_INTEGER). Returns null for empty or non-integer input (e.g.
+ * an alphanumeric transaction number). Any decimal part is truncated.
+ */
+export function toBigIntOrNull(value: unknown): bigint | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'bigint') return value;
+  const intPart = String(value).trim().split('.')[0];
+  if (!/^-?\d+$/.test(intPart)) return null;
+  try {
+    return BigInt(intPart);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Safe JSON stringify that handles BigInt values
  * Uses the global BigInt.prototype.toJSON if available
  * @param obj - Object to stringify

@@ -24,11 +24,21 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    authStorage.clearToken();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+    // Only treat a 401 as an expired session when we actually sent a token.
+    // A 401 with no token is a failed login (bad credentials) — surface the
+    // server's real message instead of a misleading "Session expired" that
+    // bounces the user straight back to the login page.
+    if (token) {
+      authStorage.clearToken();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      throw new Error('Session expired. Please log in again.');
     }
-    throw new Error('Session expired. Please log in again.');
+    const error = await res
+      .json()
+      .catch(() => ({ message: 'Invalid email or password' }));
+    throw new Error(error.message || 'Invalid email or password');
   }
 
   if (!res.ok) {
