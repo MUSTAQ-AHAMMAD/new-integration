@@ -29,7 +29,8 @@ function makePrisma(
 ) {
   return {
     fusionCredential: {
-      findFirst: jest.fn().mockResolvedValue(credential),
+      // Resolver now uses findMany + orderBy for deterministic selection.
+      findMany: jest.fn().mockResolvedValue(credential ? [credential] : []),
     },
   } as unknown as PrismaService;
 }
@@ -150,7 +151,7 @@ describe('FusionCredentialResolver', () => {
     it('falls back to environment variables when DB throws', async () => {
       const brokenPrisma = {
         fusionCredential: {
-          findFirst: jest
+          findMany: jest
             .fn()
             .mockRejectedValue(new Error('DB connection lost')),
         },

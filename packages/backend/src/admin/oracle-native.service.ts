@@ -54,6 +54,41 @@ function optNum(row: Record<string, unknown>, name: string): number | null {
   return s.trim() !== '' ? Number(v) : null;
 }
 
+/**
+ * Like {@link optNum} but only returns the value when it fits a signed 32-bit
+ * integer (the range Prisma's `Int` / Postgres `integer` accept). Oracle IDs
+ * such as VENDHQ_ITEM_META.SOURCE_ID are Fusion item ids well beyond Int32
+ * (e.g. 100000000343698); passing those makes Prisma reject the whole row.
+ * Out-of-range or non-numeric values become null so the row still imports.
+ */
+function optInt32(row: Record<string, unknown>, name: string): number | null {
+  const v = col(row, name);
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.trunc(n);
+  if (i < -2147483648 || i > 2147483647) return null;
+  return i;
+}
+
+/**
+ * Parses an Oracle date column into a JS Date for Prisma's DateTime fields.
+ * node-oracledb returns DATE/TIMESTAMP columns as JS Date objects, but some
+ * rows arrive as strings (e.g. "Sun Aug 07 2022 14:51:57 GMT+0000 (...)").
+ * Prisma rejects raw date strings that aren't ISO-8601, so normalise to Date.
+ * Returns null for empty/unparseable values so the row still imports.
+ */
+function optDate(row: Record<string, unknown>, name: string): Date | null {
+  const v = col(row, name);
+  if (v == null) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
+  const s = String(v).trim();
+  if (s === '') return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function optBigInt(row: Record<string, unknown>, name: string): bigint | null {
   const v = col(row, name);
   if (v == null) return null;
@@ -155,7 +190,13 @@ const MAPPINGS: OracleTableMapping[] = [
       region: str(r, 'REGION'),
       customerType: str(r, 'CUSTOMER_TYPE'),
     }),
-    upsertWhere: (r) => ({ billToName: str(r, 'BILL_TO_NAME') }),
+    upsertWhere: (r) => ({
+      billToName_region_customerType: {
+        billToName: str(r, 'BILL_TO_NAME'),
+        region: str(r, 'REGION'),
+        customerType: str(r, 'CUSTOMER_TYPE'),
+      },
+    }),
   },
   // SERVICE_PROVIDER_JOURNAL_META → ServiceProviderJournalMeta
   {
@@ -325,11 +366,13 @@ const MAPPINGS: OracleTableMapping[] = [
     oracleTable: 'VENDHQ_ITEM_META',
     prismaDelegate: (p) => p.vendHqItemMeta,
     mapRow: (r) => ({
-      requestId: optNum(r, 'REQUEST_ID'),
+      requestId: optInt32(r, 'REQUEST_ID'),
       status: optStr(r, 'STATUS'),
       message: optStr(r, 'MESSAGE'),
       itemId: str(r, 'ITEM_ID'),
-      sourceId: optNum(r, 'SOURCE_ID'),
+      // Fusion SOURCE_ID exceeds Int32; null out-of-range values (field is
+      // informational and unread — mirrors ItemSyncService's own handling).
+      sourceId: optInt32(r, 'SOURCE_ID'),
       uomCode: optStr(r, 'UOM_CODE'),
       handle: optStr(r, 'HANDLE'),
       itemType: optStr(r, 'ITEM_TYPE'),
@@ -342,8 +385,8 @@ const MAPPINGS: OracleTableMapping[] = [
       trackInventory: bool(r, 'TRACK_INVENTORY'),
       retailPrice: optNum(r, 'RETAIL_PRICE'),
       taxId: optStr(r, 'TAX_ID'),
-      requestDate: optStr(r, 'REQUEST_DATE'),
-      lastUpdateDate: optStr(r, 'LAST_UPDATE_DATE'),
+      requestDate: optDate(r, 'REQUEST_DATE'),
+      lastUpdateDate: optDate(r, 'LAST_UPDATE_DATE'),
       region: str(r, 'REGION'),
     }),
     upsertWhere: (r) => ({

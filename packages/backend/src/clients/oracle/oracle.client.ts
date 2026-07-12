@@ -239,6 +239,51 @@ export class OracleClient implements OnModuleInit {
   }
 
   /**
+   * In-memory cache for {@link itemExists} lookups. Keyed by ItemNumber.
+   * Cleared on process restart (which also happens on credential changes),
+   * so a newly-created Oracle item is picked up after the next restart.
+   */
+  private readonly itemExistsCache = new Map<string, boolean>();
+
+  /**
+   * Returns true when an item with the given ItemNumber exists in Oracle's
+   * item catalog. Used to pre-validate invoice lines: Oracle rejects the whole
+   * AR invoice with AR_INVALID_INVENTORY_ITEM if any line references an item it
+   * doesn't know, so callers skip/hold orders that contain unknown items.
+   *
+   * A single-item lookup (`q=ItemNumber=<n>`) is used deliberately — Oracle's
+   * `items` resource rejects an unfiltered list with EGP-2776154, but accepts a
+   * query filtered on ItemNumber. Results are cached to avoid repeat lookups of
+   * the same SKU across an order batch.
+   */
+  async itemExists(itemNumber: string): Promise<boolean> {
+    const key = (itemNumber ?? '').trim();
+    if (!key) return false;
+
+    const cached = this.itemExistsCache.get(key);
+    if (cached !== undefined) return cached;
+
+    const exists = await this.circuitBreaker.execute('oracle:itemExists', () =>
+      this.withRetries(async () => {
+        const response = await this.http.get('items', {
+          params: {
+            q: `ItemNumber=${key}`,
+            limit: 1,
+            onlyData: true,
+            fields: 'ItemNumber',
+          },
+        });
+        const data = this.isRecord(response.data) ? response.data : {};
+        const items = Array.isArray(data['items']) ? data['items'] : [];
+        return items.length > 0;
+      }),
+    );
+
+    this.itemExistsCache.set(key, exists);
+    return exists;
+  }
+
+  /**
    * Fetches AR-usable cash/bank accounts from Oracle Fusion Cash Management.
    * Used by the admin "refresh register accounts" utility to repopulate
    * VendHqRegister.bankAccountId / cashAccountId with the current Oracle IDs

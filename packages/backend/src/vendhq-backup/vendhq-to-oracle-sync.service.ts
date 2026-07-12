@@ -8,7 +8,10 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { FusionTransformationService } from '../sync/fusion-transformation.service';
 import { SyncControlService } from '../sync/sync-control.service';
-import { numberToBigInt } from '../common/utils/bigint-utils';
+import {
+  numberToBigInt,
+  toBigIntOrNull,
+} from '../common/utils/bigint-utils';
 
 /** How many pending sales to process per cron run */
 const BATCH_SIZE = 50;
@@ -251,8 +254,8 @@ export class VendHqToOracleSyncService {
         txnDate: invoiceHeader.saleDate,
         glDate: invoiceHeader.saleDate,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
-        txnNumber: Number(invoiceResult?.customerTrxId) || null,
-        customerTxnId: Number(invoiceResult?.customerTrxId) || null,
+        txnNumber: toBigIntOrNull(invoiceResult?.customerTrxId),
+        customerTxnId: toBigIntOrNull(invoiceResult?.customerTrxId),
         totalAmount,
         region,
       },

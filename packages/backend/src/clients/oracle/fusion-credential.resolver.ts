@@ -116,8 +116,14 @@ export class FusionCredentialResolver {
     password: string;
   } | null> {
     try {
-      return await this.prisma.fusionCredential.findFirst({
+      // Deterministic selection: most-recently-updated active credential wins.
+      // Without an explicit orderBy, findFirst returns an arbitrary row when
+      // more than one credential is active, which silently pins Oracle auth to
+      // the wrong host/user. Order by updatedAt (then id) so the newest
+      // credential is always chosen, and warn when the choice is ambiguous.
+      const active = await this.prisma.fusionCredential.findMany({
         where: { active: true },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         select: {
           hostName: true,
           server: true,
@@ -125,6 +131,19 @@ export class FusionCredentialResolver {
           password: true,
         },
       });
+
+      if (active.length === 0) return null;
+
+      if (active.length > 1) {
+        this.logger.warn(
+          `Multiple active FusionCredential rows found (${active.length}): ` +
+            `${active.map((c) => `${c.hostName}/${c.username}`).join(', ')}. ` +
+            `Using the most recently updated one (${active[0].hostName}/${active[0].username}). ` +
+            `Deactivate the stale credential(s) to remove this ambiguity.`,
+        );
+      }
+
+      return active[0];
     } catch (err) {
       // DB might not be available during startup — degrade gracefully.
       this.logger.warn(

@@ -65,6 +65,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
   let mockAlerts: jest.Mocked<Partial<AlertsService>>;
   let mockQueues: jest.Mocked<Partial<QueuesService>>;
   let mockSoapClient: jest.Mocked<Partial<OracleSoapClient>>;
+  let mockOracleClient: { itemExists: jest.Mock };
   let mockTransformation: jest.Mocked<Partial<FusionTransformationService>>;
   let mockEnrichment: { enrichOrder: jest.Mock };
 
@@ -118,6 +119,14 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
           .fn()
           .mockResolvedValue({ id: 'sale-001', region: 'AE' }),
       } as unknown as PrismaService['backupVendHqSale'],
+      refundTracking: {
+        upsert: jest.fn().mockResolvedValue({ id: 'rt-1' }),
+      } as unknown as PrismaService['refundTracking'],
+      // Default: no Odoo backup row → processor uses the enrichment fallback,
+      // preserving the existing mockEnrichment-driven test behavior.
+      backupOdooOrder: {
+        findFirst: jest.fn().mockResolvedValue(null),
+      } as unknown as PrismaService['backupOdooOrder'],
     };
 
     mockGateway = {
@@ -173,6 +182,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         .mockResolvedValue({ receiptNumber: 'MR-001' }),
       createApplyReceipt: jest.fn().mockResolvedValue({}),
       importJournalEntry: jest.fn().mockResolvedValue('JE-001'),
+    };
+
+    // Default: every item exists in Oracle, so orders proceed to invoicing.
+    mockOracleClient = {
+      itemExists: jest.fn().mockResolvedValue(true),
     };
 
     mockTransformation = {
@@ -236,6 +250,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       mockAlerts as unknown as AlertsService,
       mockQueues as unknown as QueuesService,
       mockSoapClient as unknown as OracleSoapClient,
+      mockOracleClient as unknown as import('../../clients/oracle/oracle.client').OracleClient,
       mockTransformation as unknown as FusionTransformationService,
       {} as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
       mockEnrichment as unknown as import('../../sync/order-enrichment.service').OrderEnrichmentService,
@@ -286,6 +301,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     (mockQueues.enqueueNotification as jest.Mock).mockResolvedValue({});
     (mockGateway.emitOrderStatus as jest.Mock).mockReturnValue(undefined);
     (mockGateway.emitSyncJobUpdate as jest.Mock).mockReturnValue(undefined);
+    mockOracleClient.itemExists.mockResolvedValue(true);
   });
 
   describe('payment method null handling', () => {
@@ -581,6 +597,99 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(
         updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
       ).toBeDefined();
+    });
+  });
+
+  describe('refund separation (invoice-only Oracle cycle)', () => {
+    const REFUND_ORDER = {
+      ...BASE_ORDER,
+      id: 'q-refund-1',
+      odooOrderId: 'ORD-REFUND-1',
+      odooOrderNumber: 'S00099',
+      isRefund: true,
+      refundReferenceId: 'ORD-ORIGINAL-1',
+      oracleInvoiceNumber: 'INV-777',
+      totalAmount: new Prisma.Decimal(-150),
+      orderDate: new Date('2024-06-16T10:00:00Z'),
+    };
+
+    beforeEach(() => {
+      (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue(
+        REFUND_ORDER,
+      );
+    });
+
+    it('never creates an Oracle invoice for a refund order', async () => {
+      await processor.handleOrderSync(makeJob({ odooOrderId: 'ORD-REFUND-1' }));
+
+      expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
+      expect(mockEnrichment.enrichOrder).not.toHaveBeenCalled();
+    });
+
+    it('records the refund in RefundTracking for manual handling', async () => {
+      await processor.handleOrderSync(makeJob({ odooOrderId: 'ORD-REFUND-1' }));
+
+      const upsert = mockPrisma.refundTracking!.upsert as jest.Mock;
+      expect(upsert).toHaveBeenCalledTimes(1);
+      const arg = upsert.mock.calls[0][0] as {
+        where: { refundOrderId: string };
+        create: { refundAmount: Prisma.Decimal; originalOrderId: string };
+      };
+      expect(arg.where.refundOrderId).toBe('ORD-REFUND-1');
+      // stored as positive magnitude
+      expect(arg.create.refundAmount.toString()).toBe('150');
+      expect(arg.create.originalOrderId).toBe('ORD-ORIGINAL-1');
+    });
+
+    it('marks the refund order SKIPPED, not FAILED', async () => {
+      await processor.handleOrderSync(makeJob({ odooOrderId: 'ORD-REFUND-1' }));
+
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.SKIPPED),
+      ).toBeDefined();
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+      ).toBeUndefined();
+    });
+  });
+
+  describe('invalid Oracle item handling (hold, do not invoice)', () => {
+    it('holds the order and never calls Oracle when an item is missing', async () => {
+      // ITEM-001 (the only enriched line) is not in Oracle's catalog.
+      mockOracleClient.itemExists.mockResolvedValue(false);
+
+      await processor.handleOrderSync(makeJob());
+
+      // No invoice attempted
+      expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
+
+      // Order held as SKIPPED with the missing item recorded
+      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
+        .calls as Array<
+        [{ data: { status?: SyncStatus; validationErrors?: unknown } }]
+      >;
+      const held = updateCalls.find(
+        (c) => c[0].data?.status === SyncStatus.SKIPPED,
+      );
+      expect(held).toBeDefined();
+      expect(
+        (held![0].data.validationErrors as { missingOracleItems?: string[] })
+          .missingOracleItems,
+      ).toContain('ITEM-001');
+      expect(
+        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+      ).toBeUndefined();
+    });
+
+    it('proceeds to invoicing when all items exist', async () => {
+      mockOracleClient.itemExists.mockResolvedValue(true);
+
+      await processor.handleOrderSync(makeJob());
+
+      expect(mockOracleClient.itemExists).toHaveBeenCalledWith('ITEM-001');
+      expect(mockSoapClient.createSimpleInvoice).toHaveBeenCalled();
     });
   });
 });
