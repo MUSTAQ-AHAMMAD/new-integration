@@ -258,7 +258,17 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
         <typ1:ReceiptMethodId>${req.receiptMethodId}</typ1:ReceiptMethodId>
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:RemittanceBankAccountId>${req.remittanceBankAccountId}</typ1:RemittanceBankAccountId>
-        <typ1:CustomerAccountNumber>${escapeXml(req.accountValue)}</typ1:CustomerAccountNumber>
+        ${
+          // CustomerId is the Oracle customer ACCOUNT id (hz_cust_accounts.cust_account_id),
+          // NOT the account number and NOT the party id. It is the ONLY customer element
+          // in the StandardReceipt schema — the previously-sent <CustomerAccountNumber> and
+          // <PayingCustomerPartyId> are not in the schema, so Oracle silently ignored them
+          // and created the receipt "Unidentified" (no customer), which made createApplyReceipt
+          // fail with AR_NO_RECEIPTS. An identified receipt is required to apply it to the invoice.
+          req.customerId
+            ? `<typ1:CustomerId>${req.customerId}</typ1:CustomerId>`
+            : ''
+        }
         <typ1:OrgId>${req.orgId}</typ1:OrgId>
         ${
           // Same-currency receipts must not carry an exchange rate type
@@ -267,7 +277,6 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
             ? `<typ1:ExchangeRateType>User</typ1:ExchangeRateType>`
             : ''
         }
-        ${req.customerId ? `<typ1:PayingCustomerPartyId>${req.customerId}</typ1:PayingCustomerPartyId>` : ''}
         <typ1:Amount>${req.receiptAmount}</typ1:Amount>
       </typ:standardReceipt>
     </typ:createStandardReceipt>
@@ -329,17 +338,26 @@ function buildMiscReceiptSoap(req: MiscReceiptRequest): string {
 </soapenv:Envelope>`;
 }
 
+// Journal payload structure per JournalImportService.xsd / GlInterface.xsd:
+//   importJournals > interfaceRows (GlInterfaceTransHeader) > GlInterface (lines).
+// The header carries batch info; each GlInterface line carries the ledger, a
+// shared GroupId (REQUIRED — batches the lines so Oracle validates their
+// Dr/Cr balance together; without it single-sided rows fail JBO-27023/27024),
+// all COA segments, and the entered/accounted amounts. Element names differ from
+// the desktop-entry naming (EnteredDrAmount not EnteredDr, AccountedDr not AcctDr,
+// UserJeCategoryName not JeCategoryName) — using the wrong names makes Oracle
+// parse zero rows and NPE ("interfaceRows is null").
 function buildJournalSoap(header: JournalHeader): string {
   const linesXml = header.journalLines
     .map(
       (l) => `
-        <typ1:JournalLine>
+        <typ1:GlInterface>
           <typ1:LedgerId>${l.ledgerId}</typ1:LedgerId>
+          ${l.groupId !== undefined ? `<typ1:GroupId>${l.groupId}</typ1:GroupId>` : ''}
           ${l.periodName ? `<typ1:PeriodName>${l.periodName}</typ1:PeriodName>` : ''}
           <typ1:AccountingDate>${xmlDate(l.accountingDate)}</typ1:AccountingDate>
           <typ1:UserJeSourceName>${escapeXml(l.userJeSourceName)}</typ1:UserJeSourceName>
-          <typ1:JeCategoryName>${escapeXml(l.jeCategoryName)}</typ1:JeCategoryName>
-          ${l.groupId !== undefined ? `<typ1:GroupId>${l.groupId}</typ1:GroupId>` : ''}
+          <typ1:UserJeCategoryName>${escapeXml(l.jeCategoryName)}</typ1:UserJeCategoryName>
           ${l.chartOfAccountsId !== undefined ? `<typ1:ChartOfAccountsId>${l.chartOfAccountsId}</typ1:ChartOfAccountsId>` : ''}
           ${opt('Segment1', l.segment1)}
           ${opt('Segment2', l.segment2)}
@@ -352,17 +370,15 @@ function buildJournalSoap(header: JournalHeader): string {
           ${opt('Segment9', l.segment9)}
           ${opt('Segment10', l.segment10)}
           <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
-          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDr>${l.enteredDrAmount}</typ1:EnteredDr>` : ''}
-          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCr>${l.enteredCrAmount}</typ1:EnteredCr>` : ''}
-          ${l.accountedDr !== undefined ? `<typ1:AcctDr>${l.accountedDr}</typ1:AcctDr>` : ''}
-          ${l.accountedCr !== undefined ? `<typ1:AcctCr>${l.accountedCr}</typ1:AcctCr>` : ''}
+          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${l.enteredDrAmount}</typ1:EnteredDrAmount>` : ''}
+          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${l.enteredCrAmount}</typ1:EnteredCrAmount>` : ''}
+          ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${l.accountedDr}</typ1:AccountedDr>` : ''}
+          ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${l.accountedCr}</typ1:AccountedCr>` : ''}
           ${l.currencyConversionRate !== undefined ? `<typ1:CurrencyConversionRate>${l.currencyConversionRate}</typ1:CurrencyConversionRate>` : ''}
           ${l.currencyConversionType ? `<typ1:CurrencyConversionType>${l.currencyConversionType}</typ1:CurrencyConversionType>` : ''}
           ${l.currencyConversionDate ? `<typ1:CurrencyConversionDate>${xmlDate(l.currencyConversionDate)}</typ1:CurrencyConversionDate>` : ''}
           ${l.transactionDate ? `<typ1:TransactionDate>${xmlDate(l.transactionDate)}</typ1:TransactionDate>` : ''}
-          ${l.status ? `<typ1:Status>${l.status}</typ1:Status>` : ''}
-          ${l.taxCode ? `<typ1:TaxCode>${l.taxCode}</typ1:TaxCode>` : ''}
-        </typ1:JournalLine>`,
+        </typ1:GlInterface>`,
     )
     .join('');
 
@@ -374,18 +390,18 @@ function buildJournalSoap(header: JournalHeader): string {
   <soapenv:Header/>
   <soapenv:Body>
     <typ:importJournals>
-      <typ:journal>
+      <typ:interfaceRows>
+        <typ1:BatchName>${escapeXml(header.batchName)}</typ1:BatchName>
+        ${header.batchDescription ? `<typ1:BatchDescription>${escapeXml(header.batchDescription)}</typ1:BatchDescription>` : ''}
         <typ1:LedgerId>${header.ledgerId}</typ1:LedgerId>
         <typ1:AccountingPeriodName>${escapeXml(header.accountingPeriodName)}</typ1:AccountingPeriodName>
-        <typ1:JeBatchName>${escapeXml(header.batchName)}</typ1:JeBatchName>
-        ${header.batchDescription ? `<typ1:JeBatchDescription>${escapeXml(header.batchDescription)}</typ1:JeBatchDescription>` : ''}
         <typ1:AccountingDate>${xmlDate(header.accountingDate)}</typ1:AccountingDate>
-        <typ1:UserJeSourceName>${escapeXml(header.userSourceName)}</typ1:UserJeSourceName>
-        <typ1:JeCategoryName>${escapeXml(header.userCategoryName)}</typ1:JeCategoryName>
+        <typ1:UserSourceName>${escapeXml(header.userSourceName)}</typ1:UserSourceName>
+        <typ1:UserCategoryName>${escapeXml(header.userCategoryName)}</typ1:UserCategoryName>
         <typ1:ErrorToSuspenseFlag>${header.errorToSuspenseFlag ?? false}</typ1:ErrorToSuspenseFlag>
-        <typ1:SummaryJournalFlag>${header.summaryFlag ?? false}</typ1:SummaryJournalFlag>
+        <typ1:SummaryFlag>${header.summaryFlag ?? false}</typ1:SummaryFlag>
         ${linesXml}
-      </typ:journal>
+      </typ:interfaceRows>
     </typ:importJournals>
   </soapenv:Body>
 </soapenv:Envelope>`;

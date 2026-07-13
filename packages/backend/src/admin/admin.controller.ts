@@ -53,6 +53,15 @@ export class AdminController {
     return this.oracleNative.importFromOracle(body?.tables);
   }
 
+  @Post('oracle-import/customer-accounts')
+  @ApiOperation({
+    summary:
+      'Seed FusionCustomerAccount (account number → cust_account_id) from historical Oracle receipt/invoice tables',
+  })
+  importCustomerAccounts() {
+    return this.oracleNative.importCustomerAccounts();
+  }
+
   // ── CSV export/import ──────────────────────────────────────────
 
   @Get(':table/export')

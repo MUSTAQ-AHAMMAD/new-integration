@@ -27,5 +27,6 @@ import { OracleModule } from '../clients/oracle/oracle.module';
     RegisterAccountsController,
   ],
   providers: [AdminService, OracleNativeService, RegisterAccountsService],
+  exports: [OracleNativeService],
 })
 export class AdminModule {}

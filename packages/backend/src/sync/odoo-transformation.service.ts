@@ -102,6 +102,28 @@ export class OdooTransformationService {
   }
 
   /**
+   * Resolves the Oracle customer ACCOUNT ID (hz_cust_accounts.cust_account_id)
+   * for a customer account number. This is the value a standard receipt must
+   * carry as <CustomerId>; without it Oracle creates an "Unidentified" receipt
+   * and createApplyReceipt fails with AR_NO_RECEIPTS. Looked up from the seeded
+   * FusionCustomerAccount map (Oracle's CustomerProfileService is unavailable on
+   * the current pod). Returns null when the account isn't mapped.
+   */
+  private async resolveCustomerAccountId(
+    accountNumber: string,
+    region: string,
+  ): Promise<number | null> {
+    const parsed = /^\d+$/.test((accountNumber ?? '').trim())
+      ? BigInt(accountNumber.trim())
+      : null;
+    if (parsed == null) return null;
+    const row = await this.prisma.fusionCustomerAccount.findUnique({
+      where: { accountNumber_region: { accountNumber: parsed, region } },
+    });
+    return row ? bigIntToNumber(row.customerAccountId, 'customerAccountId') : null;
+  }
+
+  /**
    * Builds all Oracle SOAP payloads for one Odoo order stored in the backup
    * tables, ready to be submitted to Oracle Fusion.
    *
@@ -138,10 +160,9 @@ export class OdooTransformationService {
     }
 
     // ── 3. Load Oracle regional config tables ────────────────────────────────
-    const [buMap, journalMeta] = await Promise.all([
-      this.prisma.fusionBusinessUnitMap.findFirst({ where: { region } }),
-      this.prisma.serviceProviderJournalMeta.findFirst({ where: { region } }),
-    ]);
+    const buMap = await this.prisma.fusionBusinessUnitMap.findFirst({
+      where: { region },
+    });
 
     // ── 4. Build InvoiceHeader ───────────────────────────────────────────────
     const saleDate =
@@ -272,6 +293,14 @@ export class OdooTransformationService {
       region,
     );
 
+    // Oracle customer account id for the bill-to customer — required on every
+    // standard receipt as <CustomerId> so the receipt is customer-identified and
+    // can be applied to the invoice (otherwise createApplyReceipt → AR_NO_RECEIPTS).
+    const customerAccountId = await this.resolveCustomerAccountId(
+      invoiceHeader.billToAccountNumber,
+      region,
+    );
+
     for (const payment of backup.orderPayments) {
       const pmtMethod = payment.paymentName ?? '';
       if (!pmtMethod || pmtMethod.toLowerCase() === 'credit on cust') continue;
@@ -311,6 +340,17 @@ export class OdooTransformationService {
               `VendHqRegister — cannot create receipt for "${pmtMethod}".`,
           );
         }
+        // A receipt without a customer id posts to Oracle as "Unidentified" and
+        // then cannot be applied to the invoice (AR_NO_RECEIPTS). Hold the order
+        // with an actionable message rather than create an unapplicable receipt.
+        if (customerAccountId == null) {
+          throw new Error(
+            `No Oracle customer account id mapped for account ` +
+              `"${invoiceHeader.billToAccountNumber}" (${invoiceHeader.billToCustomerName}, ` +
+              `region ${region}) — add it to FusionCustomerAccount (seed via ` +
+              `admin oracle-import). Cannot create an applicable receipt for "${pmtMethod}".`,
+          );
+        }
         {
           standardReceipts.push({
             currencyCode: invoiceHeader.invoiceCurrencyCode,
@@ -322,6 +362,7 @@ export class OdooTransformationService {
             receiptNumber: `${pmtMethod}-${txnNumber}`,
             remittanceBankAccountId: numericAccountId,
             accountValue: invoiceHeader.billToAccountNumber,
+            customerId: customerAccountId,
             orgId: bigIntToNumber(
               buMap?.businessUnitId ?? 0n,
               'businessUnitId',
@@ -388,47 +429,23 @@ export class OdooTransformationService {
       transactionSource: invoiceHeader.transactionSource,
     }));
 
-    // ── 8. Journal entries ───────────────────────────────────────────────────
-    const journalHeaders: JournalHeader[] = [];
-    if (journalMeta && invoiceHeader.invoiceLines.length > 0) {
-      const journalLines: JournalLine[] = invoiceHeader.invoiceLines.map(
-        (il) => ({
-          ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
-          accountingDate: saleDate,
-          userJeSourceName: journalMeta.jeSource ?? 'Odoo',
-          jeCategoryName: journalMeta.jeCategory ?? 'Odoo',
-          chartOfAccountsId: bigIntToNumber(
-            journalMeta.chartOfAccountsId,
-            'chartOfAccountsId',
-          ),
-          segment1: journalMeta.company ?? undefined,
-          segment2: journalMeta.account ?? undefined,
-          segment3: journalMeta.department ?? undefined,
-          currencyCode: invoiceHeader.invoiceCurrencyCode,
-          enteredCrAmount: il.unitSellingPrice * il.quantity,
-          accountedCr: il.unitSellingPrice * il.quantity,
-          currencyConversionRate: 1,
-          currencyConversionType: invoiceHeader.conversionRateType,
-          currencyConversionDate: saleDate,
-          transactionDate: saleDate,
-          status: 'P',
-          taxCode: 'N',
-        }),
-      );
-
-      journalHeaders.push({
-        batchName: `${saleDate.toISOString().split('T')[0]}: ${branchCode}`,
-        batchDescription: `Odoo Journal Import: ${txnNumber}`,
-        ledgerId: bigIntToNumber(journalMeta.ledgerId, 'ledgerId'),
-        accountingPeriodName: this.getPeriodName(saleDate),
-        accountingDate: saleDate,
-        userSourceName: journalMeta.jeSource ?? 'Odoo',
-        userCategoryName: journalMeta.jeCategory ?? 'Odoo',
-        errorToSuspenseFlag: false,
-        summaryFlag: false,
-        journalLines,
-      });
-    }
+    // ── 8. Journal entries (service-provider / delivery-platform sales only) ──
+    // NORMAL retail sales post no GL journal (mirrors the Java system). For a
+    // service provider (Tabby/HungerStation/Mrsool/…) we post a balanced pair:
+    // DEBIT the provider's "CREDIT"-row account (the receivable from the
+    // platform) and CREDIT its "DEBIT"-row account (revenue), for the invoice
+    // total. Both lines carry the full 10-segment code combination and share a
+    // GroupId (set on the real Oracle txn in the processor) so Oracle validates
+    // their balance together. Amounts must net to zero or Oracle rejects them.
+    const journalHeaders: JournalHeader[] = await this.buildJournalHeaders(
+      orderCustomerType,
+      region,
+      storeConfig.branchName,
+      branchCode,
+      invoiceHeader,
+      saleDate,
+      String(txnNumber),
+    );
 
     return {
       invoiceHeader,
@@ -455,5 +472,148 @@ export class OdooTransformationService {
       'Dec',
     ];
     return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+  }
+
+  /** The store's own cost-center code (journal SEGMENT4), from its NORMAL
+   *  FusionSalesMetadata row — NOT the platform bill-to's. Null if unmapped. */
+  private async resolveStoreCostCenter(
+    branchName: string,
+    region: string,
+  ): Promise<string | null> {
+    const target = this.normalizeName(branchName);
+    const rows = await this.prisma.fusionSalesMetadata.findMany({
+      where: { region, customerType: 'NORMAL' },
+      select: { billToName: true, costCenterCode: true },
+    });
+    const match = rows.find((r) => this.normalizeName(r.billToName) === target);
+    return match?.costCenterCode ?? null;
+  }
+
+  /**
+   * Builds the GL journal for a service-provider (delivery-platform) order.
+   * Returns [] for NORMAL retail sales or providers without journal metadata.
+   *
+   * The two offsetting accounts come from the provider's paired
+   * ServiceProviderJournalMeta rows: creditDebit='CREDIT' → the DEBITED account,
+   * creditDebit='DEBIT' → the CREDITED account. The line carries the full COA
+   * code combination (10 segments): company / account / department /
+   * store-cost-center / productCategory / interCompany / futUsed / extra1-3.
+   */
+  private async buildJournalHeaders(
+    serviceProvider: string,
+    region: string,
+    branchName: string,
+    branchCode: string,
+    invoiceHeader: InvoiceHeader,
+    saleDate: Date,
+    txnNumber: string,
+  ): Promise<JournalHeader[]> {
+    // NORMAL retail sales don't post a service-provider journal.
+    if (!serviceProvider || serviceProvider.toUpperCase() === 'NORMAL') return [];
+
+    const metaRows = await this.prisma.serviceProviderJournalMeta.findMany({
+      where: { serviceProvider, region },
+    });
+    if (metaRows.length === 0) return [];
+
+    const debitMeta = metaRows.find((m) => m.creditDebit === 'CREDIT');
+    const creditMeta = metaRows.find((m) => m.creditDebit === 'DEBIT');
+    if (!debitMeta || !creditMeta) {
+      throw new Error(
+        `ServiceProviderJournalMeta for "${serviceProvider}" (region ${region}) ` +
+          `is missing a CREDIT/DEBIT account pair — cannot build a balanced journal.`,
+      );
+    }
+
+    const total = invoiceHeader.invoiceLines.reduce(
+      (s, il) => s + il.unitSellingPrice * il.quantity,
+      0,
+    );
+    if (!(total > 0)) return [];
+
+    const costCenter = await this.resolveStoreCostCenter(branchName, region);
+    if (!costCenter) {
+      throw new Error(
+        `No cost-center code (journal SEGMENT4) for store "${branchName}" ` +
+          `(region ${region}) — add costCenterCode to its NORMAL FusionSalesMetadata row.`,
+      );
+    }
+
+    const ledgerId = bigIntToNumber(debitMeta.ledgerId, 'ledgerId');
+    const chartOfAccountsId = bigIntToNumber(
+      debitMeta.chartOfAccountsId,
+      'chartOfAccountsId',
+    );
+    const jeSource = debitMeta.jeSource ?? 'Vend';
+    const jeCategory = debitMeta.jeCategory ?? 'Vend';
+
+    // 10-segment code combination; the natural account (SEGMENT2) is the only
+    // segment that differs between the debit and credit sides.
+    const segmentsFor = (account: string | null) => ({
+      segment1: debitMeta.company ?? undefined,
+      segment2: account ?? undefined,
+      segment3: debitMeta.department ?? undefined,
+      segment4: costCenter,
+      segment5: debitMeta.productCategory ?? '00',
+      segment6: debitMeta.interCompany ?? '00',
+      segment7: debitMeta.futUsed ?? '00',
+      segment8: debitMeta.extraSegment1 ?? '00',
+      segment9: debitMeta.extraSegment2 ?? '00',
+      segment10: debitMeta.extraSegment3 ?? '00',
+    });
+
+    const common = {
+      ledgerId,
+      accountingDate: saleDate,
+      userJeSourceName: jeSource,
+      jeCategoryName: jeCategory,
+      chartOfAccountsId,
+      currencyCode: invoiceHeader.invoiceCurrencyCode,
+      currencyConversionRate: 1,
+      transactionDate: saleDate,
+      // groupId is assigned in the processor once the Oracle txn is known, so
+      // all lines of this journal batch together for balance validation.
+    };
+
+    const journalLines: JournalLine[] = [
+      {
+        ...common,
+        ...segmentsFor(debitMeta.account),
+        enteredDrAmount: total,
+        accountedDr: total,
+      },
+      {
+        ...common,
+        ...segmentsFor(creditMeta.account),
+        enteredCrAmount: total,
+        accountedCr: total,
+      },
+    ];
+
+    // Balance guard: never post an unbalanced batch (Oracle would reject it, and
+    // an unbalanced GL entry is a data-integrity hazard).
+    const drSum = journalLines.reduce((s, l) => s + (l.enteredDrAmount ?? 0), 0);
+    const crSum = journalLines.reduce((s, l) => s + (l.enteredCrAmount ?? 0), 0);
+    if (Math.abs(drSum - crSum) > 0.001) {
+      throw new Error(
+        `Journal for "${serviceProvider}" txn ${txnNumber} does not balance ` +
+          `(Dr ${drSum} vs Cr ${crSum}) — refusing to post.`,
+      );
+    }
+
+    return [
+      {
+        batchName: `${saleDate.toISOString().split('T')[0]}: ${branchCode}`,
+        batchDescription: `Odoo Journal Import: ${txnNumber}`,
+        ledgerId,
+        accountingPeriodName: this.getPeriodName(saleDate),
+        accountingDate: saleDate,
+        userSourceName: jeSource,
+        userCategoryName: jeCategory,
+        errorToSuspenseFlag: false,
+        summaryFlag: false,
+        journalLines,
+      },
+    ];
   }
 }

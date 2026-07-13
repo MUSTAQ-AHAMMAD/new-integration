@@ -653,6 +653,17 @@ export class OrderSyncProcessor {
             ar.receiptNumber = `${methodPrefix(ar.receiptNumber)}-${oracleTxn}`;
             ar.transactionNumber = oracleTxn;
           }
+          // Assign the journal batch GroupId from the Oracle txn (unique per
+          // invoice) so all of a journal's lines batch together — Oracle
+          // validates their Dr/Cr balance per GroupId and rejects lines that
+          // lack one. Also restate the batch description with the real txn.
+          for (const jh of journalHeaders) {
+            const groupId = Number(oracleTxn);
+            jh.batchDescription = `Odoo Journal Import: ${oracleTxn}`;
+            for (const jl of jh.journalLines) {
+              jl.groupId = Number.isSafeInteger(groupId) ? groupId : undefined;
+            }
+          }
         }
 
         // Normalise Oracle's service status ('S'/'E') to the 'SUCCESS'/'ERROR'

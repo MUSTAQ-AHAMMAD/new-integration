@@ -603,13 +603,37 @@ model FusionSalesMetadata {
   @@index([customerType])
 }
 
+/// Maps an Oracle AR customer ACCOUNT NUMBER (e.g. 87023, the same value stored
+/// as FusionSalesMetadata.billToAccount / the invoice BillToCustomerNumber) to
+/// its internal customer ACCOUNT ID (hz_cust_accounts.cust_account_id, e.g.
+/// 300000051631461). Standard receipts must carry this id as <CustomerId> to be
+/// customer-identified; without it Oracle creates an "Unidentified" receipt and
+/// createApplyReceipt fails with AR_NO_RECEIPTS.
+///
+/// Oracle's CustomerProfileService (getActiveCustomerProfile) — the Java system's
+/// resolver — is unavailable (404) on the ehxk-test pod, so this map is seeded
+/// from the historical Oracle tables by correlating FUSION_STANDARD_RECEIPT.CUSTOMER_ID
+/// with FUSION_INVOICE_HEADER.BILL_TO_ACC_NUMBER via the shared transaction number.
+model FusionCustomerAccount {
+  id                String   @id @default(cuid())
+  accountNumber     BigInt
+  customerAccountId BigInt
+  region            String
+  customerName      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([accountNumber, region])
+  @@index([accountNumber])
+}
+
 model ServiceProviderJournalMeta {
   id                 String   @id @default(cuid())
   region             String
   ledgerId           BigInt
   taxGroupId         BigInt?
   chartOfAccountsId  BigInt
-  serviceProvider    String   @unique
+  serviceProvider    String
   creditDebit        String?
   costIssue          String?
   costRma            String?
@@ -631,6 +655,11 @@ model ServiceProviderJournalMeta {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  // Grain is (serviceProvider, region, creditDebit, isCash): each provider has
+  // paired rows — the CREDIT_DEBIT='CREDIT' row's account is DEBITED and the
+  // 'DEBIT' row's account is CREDITED in the journal. A global @unique on
+  // serviceProvider collapsed these to one row, losing the offsetting account.
+  @@unique([serviceProvider, region, creditDebit, isCash])
   @@index([region])
   @@index([serviceProvider])
 }
