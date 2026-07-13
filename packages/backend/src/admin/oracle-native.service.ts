@@ -223,11 +223,20 @@ const MAPPINGS: OracleTableMapping[] = [
       fixedFreightCharge: num(r, 'FIXED_FREIGHT_CHARGE'),
       bankChargeRate: num(r, 'BANK_CHARGE_RATE'),
       futUsed: optStr(r, 'FUT_USED'),
-      extraSegment1: optStr(r, 'EXTRA_SEGMENT1'),
-      extraSegment2: optStr(r, 'EXTRA_SEGMENT2'),
-      extraSegment3: optStr(r, 'EXTRA_SEGMENT3'),
+      extraSegment1: optStr(r, 'EXTRA_SEGMENT_1'),
+      extraSegment2: optStr(r, 'EXTRA_SEGMENT_2'),
+      extraSegment3: optStr(r, 'EXTRA_SEGMENT_3'),
     }),
-    upsertWhere: (r) => ({ serviceProvider: str(r, 'SERVICE_PROVIDER') }),
+    // Compound key: each provider has paired CREDIT/DEBIT (× cash) rows — keying
+    // on serviceProvider alone collapses them and loses the offsetting account.
+    upsertWhere: (r) => ({
+      serviceProvider_region_creditDebit_isCash: {
+        serviceProvider: str(r, 'SERVICE_PROVIDER'),
+        region: str(r, 'REGION'),
+        creditDebit: optStr(r, 'CREDIT_DEBIT') ?? '',
+        isCash: bool(r, 'IS_CASH'),
+      },
+    }),
   },
   // FUSION_CREDENTIALS → FusionCredential
   {
@@ -653,6 +662,165 @@ export class OracleNativeService {
       results,
       totalImported,
       totalErrors,
+    };
+  }
+
+  /**
+   * Seeds the FusionCustomerAccount map (account number → cust_account_id) used
+   * by standard receipts as <CustomerId>. Oracle's CustomerProfileService (the
+   * Java resolver) is unavailable on the current pod, so the map is derived from
+   * the historical Oracle tables: FUSION_STANDARD_RECEIPT.CUSTOMER_ID correlated
+   * with FUSION_INVOICE_HEADER.BILL_TO_ACC_NUMBER via the shared transaction
+   * number embedded in the receipt number. When an account maps to more than one
+   * customer id, the most frequently used id wins.
+   */
+  async importCustomerAccounts(): Promise<{
+    connectedAs: string;
+    imported: number;
+    distinctAccounts: number;
+    errors: string[];
+  }> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const oracledb = require('oracledb') as typeof import('oracledb');
+    const useThickMode = ['true', '1', 'yes'].includes(
+      (this.config.get<string>('ORACLE_DB_THICK_MODE') ?? '').toLowerCase(),
+    );
+    if (useThickMode && oracledb.thin) {
+      const libDir = this.config.get<string>('ORACLE_DB_INSTANT_CLIENT_DIR');
+      try {
+        oracledb.initOracleClient(libDir ? { libDir } : {});
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new BadRequestException(
+          `Failed to initialise Oracle thick mode: ${msg}.`,
+        );
+      }
+    }
+
+    const cfg = this.getConnectionConfig();
+    const connectString = `${cfg.host}:${cfg.port}/${cfg.serviceName}`;
+    const role = this.config.get<string>('ORACLE_DB_ROLE');
+    const privilege =
+      role?.toUpperCase() === 'SYSDBA' ? oracledb.SYSDBA : undefined;
+
+    let connection: import('oracledb').Connection | undefined;
+    try {
+      connection = await oracledb.getConnection({
+        user: cfg.username,
+        password: cfg.password,
+        connectString,
+        ...(privilege !== undefined ? { privilege } : {}),
+      });
+      connection.callTimeout = 120_000;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(`Failed to connect to Oracle DB: ${msg}`);
+    }
+
+    const rawSchema =
+      this.config.get<string>('ORACLE_DB_SCHEMA') ?? 'ODOO_INTEGRATION';
+    if (!/^[A-Za-z0-9_]+$/.test(rawSchema)) {
+      throw new BadRequestException(
+        `Invalid ORACLE_DB_SCHEMA name: "${rawSchema}"`,
+      );
+    }
+    const schema = rawSchema.toUpperCase();
+    const errors: string[] = [];
+
+    // account+region → { customerId → occurrence count, name }
+    const map = new Map<
+      string,
+      {
+        accountNumber: bigint;
+        region: string;
+        name: string | null;
+        counts: Map<string, number>;
+      }
+    >();
+
+    try {
+      const q = `SELECT h.BILL_TO_ACC_NUMBER AS ACCT, h.BILL_TO_CUST_NAME AS NAME,
+                        r.CUSTOMER_ID AS CID, r.REGION AS REGION, COUNT(*) AS CNT
+                   FROM "${schema}"."FUSION_STANDARD_RECEIPT" r
+                   JOIN "${schema}"."FUSION_INVOICE_HEADER" h
+                     ON TO_CHAR(h.TXN_NUMBER) = REGEXP_SUBSTR(r.RECEIPT_NUMBER, '[0-9]+$')
+                  WHERE r.CUSTOMER_ID IS NOT NULL
+                    AND h.BILL_TO_ACC_NUMBER IS NOT NULL
+                  GROUP BY h.BILL_TO_ACC_NUMBER, h.BILL_TO_CUST_NAME, r.CUSTOMER_ID, r.REGION`;
+      const res = await connection.execute<Record<string, unknown>>(q, [], {
+        outFormat: oracledb.OUT_FORMAT_OBJECT,
+      });
+      for (const row of res.rows ?? []) {
+        const acct = row['ACCT'];
+        const cid = row['CID'];
+        const region = row['REGION'];
+        if (acct == null || cid == null || region == null) continue;
+        const key = `${String(acct)}|${String(region)}`;
+        const entry =
+          map.get(key) ??
+          {
+            accountNumber: BigInt(String(acct)),
+            region: String(region),
+            name: row['NAME'] != null ? String(row['NAME']) : null,
+            counts: new Map<string, number>(),
+          };
+        const cidStr = String(cid);
+        const cnt = Number(row['CNT'] ?? 1);
+        entry.counts.set(cidStr, (entry.counts.get(cidStr) ?? 0) + cnt);
+        map.set(key, entry);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await connection.close();
+      throw new BadRequestException(
+        `Customer-account correlation query failed: ${msg}`,
+      );
+    }
+
+    await connection.close();
+
+    let imported = 0;
+    for (const entry of map.values()) {
+      // Pick the most frequently used customer id for this account+region.
+      let bestCid = '';
+      let bestCount = -1;
+      for (const [cid, count] of entry.counts) {
+        if (count > bestCount) {
+          bestCount = count;
+          bestCid = cid;
+        }
+      }
+      const data = {
+        accountNumber: entry.accountNumber,
+        customerAccountId: BigInt(bestCid),
+        region: entry.region,
+        customerName: entry.name,
+      };
+      try {
+        await this.prisma.fusionCustomerAccount.upsert({
+          where: {
+            accountNumber_region: {
+              accountNumber: entry.accountNumber,
+              region: entry.region,
+            },
+          },
+          update: data,
+          create: data,
+        });
+        imported++;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (errors.length < 50) {
+          errors.push(`${entry.accountNumber}/${entry.region}: ${msg}`);
+        }
+      }
+    }
+
+    return {
+      connectedAs: `${cfg.username}@${cfg.host}:${cfg.port}/${cfg.serviceName}`,
+      imported,
+      distinctAccounts: map.size,
+      errors,
     };
   }
 }

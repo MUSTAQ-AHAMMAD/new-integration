@@ -82,9 +82,15 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
     },
     serviceProviderJournalMeta: {
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     fusionReceiptMethod: {
       findFirst: jest.fn().mockResolvedValue(null),
+    },
+    fusionCustomerAccount: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ customerAccountId: 300000051631461n }),
     },
     ...overrides,
   };
@@ -313,8 +319,31 @@ describe('OdooTransformationService', () => {
     expect(result.standardReceipts).toHaveLength(1);
     expect(result.standardReceipts[0].receiptAmount).toBe(100);
     expect(result.standardReceipts[0].receiptMethodId).toBe(123);
+    // Resolved Oracle customer account id → receipt is customer-identified.
+    expect(result.standardReceipts[0].customerId).toBe(300000051631461);
     // Cash payment → no misc receipt
     expect(result.miscReceipts).toHaveLength(0);
+  });
+
+  it('throws when no Oracle customer account id is mapped', async () => {
+    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+      makeBackup({
+        orderPayments: [{ paymentName: 'Cash', amount: 100 }],
+        orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
+      }),
+    );
+    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+      receiptMethodId: 123n,
+      receiptIsCash: true,
+      receiptBankCharge: 0,
+      receiptMethodTax: 0,
+    });
+    // Customer account not in the map → the build must hold the order rather
+    // than create an unidentified, unapplicable receipt.
+    prisma.fusionCustomerAccount.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
+    ).rejects.toThrow('No Oracle customer account id mapped');
   });
 
   it('throws when the register has no bank/cash account (Java parity)', async () => {
@@ -433,8 +462,8 @@ describe('OdooTransformationService', () => {
 
   // ── Journal entries ───────────────────────────────────────────────────────
 
-  it('returns no journal headers when journalMeta is null', async () => {
-    prisma.serviceProviderJournalMeta.findFirst.mockResolvedValueOnce(null);
+  it('returns no journal headers for NORMAL retail sales', async () => {
+    // Default order is a NORMAL sale → no service-provider journal.
     const result = await service.buildOrderPayloads(
       'backup-001',
       'CCNTRBHR',
@@ -443,29 +472,84 @@ describe('OdooTransformationService', () => {
     expect(result.journalHeaders).toHaveLength(0);
   });
 
-  it('builds journal header when journalMeta is present and there are invoice lines', async () => {
+  it('builds a balanced Dr/Cr journal for a service-provider order', async () => {
     prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
       makeBackup({
+        customerType: 'TABBY',
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.serviceProviderJournalMeta.findFirst.mockResolvedValueOnce({
-      ledgerId: 1001,
-      jeSource: 'Odoo',
-      jeCategory: 'Sales',
-      chartOfAccountsId: 2,
-      company: '01',
-      account: '4000',
-      department: null,
-    });
+    // Non-NORMAL bill-to resolves by (customerType, region).
+    prisma.fusionSalesMetadata.findFirst.mockResolvedValueOnce(
+      makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
+    );
+    // Paired provider rows: CREDIT-row account is debited, DEBIT-row credited.
+    prisma.serviceProviderJournalMeta.findMany.mockResolvedValueOnce([
+      {
+        creditDebit: 'CREDIT',
+        ledgerId: 1001n,
+        chartOfAccountsId: 2n,
+        company: '01',
+        account: '3020044',
+        department: '46',
+        productCategory: '00',
+        interCompany: '01',
+        futUsed: '00',
+        extraSegment1: null,
+        extraSegment2: null,
+        extraSegment3: null,
+        jeSource: 'Vend',
+        jeCategory: 'Vend',
+      },
+      {
+        creditDebit: 'DEBIT',
+        ledgerId: 1001n,
+        chartOfAccountsId: 2n,
+        company: '01',
+        account: '5000104',
+        department: '46',
+        jeSource: 'Vend',
+        jeCategory: 'Vend',
+      },
+    ]);
+    // Store cost center (SEGMENT4) from the store's own NORMAL metadata row.
+    prisma.fusionSalesMetadata.findMany.mockResolvedValueOnce([
+      { billToName: 'Central', costCenterCode: '0502' },
+    ]);
+
     const result = await service.buildOrderPayloads(
       'backup-001',
       'CCNTRBHR',
       'AE',
     );
     expect(result.journalHeaders).toHaveLength(1);
-    expect(result.journalHeaders[0].ledgerId).toBe(1001);
-    expect(result.journalHeaders[0].journalLines).toHaveLength(1);
+    const lines = result.journalHeaders[0].journalLines;
+    expect(lines).toHaveLength(2);
+    // Balanced: one debit to 3020044, one credit to 5000104, equal amounts.
+    const dr = lines.find((l) => l.enteredDrAmount != null)!;
+    const cr = lines.find((l) => l.enteredCrAmount != null)!;
+    expect(dr.segment2).toBe('3020044');
+    expect(cr.segment2).toBe('5000104');
+    expect(dr.segment4).toBe('0502');
+    expect(dr.enteredDrAmount).toBe(cr.enteredCrAmount);
+  });
+
+  it('throws when a service-provider journal lacks a CREDIT/DEBIT account pair', async () => {
+    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+      makeBackup({
+        customerType: 'TABBY',
+        orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
+      }),
+    );
+    prisma.fusionSalesMetadata.findFirst.mockResolvedValueOnce(
+      makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
+    );
+    prisma.serviceProviderJournalMeta.findMany.mockResolvedValueOnce([
+      { creditDebit: 'CREDIT', ledgerId: 1n, chartOfAccountsId: 2n, account: '3020044' },
+    ]);
+    await expect(
+      service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
+    ).rejects.toThrow('missing a CREDIT/DEBIT account pair');
   });
 
   // ── transactionNumberOverride ─────────────────────────────────────────────
