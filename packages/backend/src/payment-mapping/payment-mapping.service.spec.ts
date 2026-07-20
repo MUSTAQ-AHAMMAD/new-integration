@@ -1,15 +1,14 @@
+import { Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
 import { PaymentMappingService } from './payment-mapping.service';
 
-const mockPrisma = {
-  paymentMethodMapping: {
-    findUnique: jest.fn(),
-    upsert: jest.fn().mockResolvedValue({}),
-    update: jest.fn(),
-    create: jest.fn(),
-    findMany: jest.fn(),
-  },
+const mockRepo = {
+  findOne: jest.fn(),
+  find: jest.fn(),
+  create: jest.fn((x) => x as PaymentMethodMapping),
+  save: jest.fn((x) => Promise.resolve(x as PaymentMethodMapping)),
+  update: jest.fn().mockResolvedValue({ affected: 1 }),
 };
 
 const mockAlerts = {
@@ -21,18 +20,22 @@ describe('PaymentMappingService', () => {
 
   beforeEach(() => {
     service = new PaymentMappingService(
-      mockPrisma as unknown as PrismaService,
+      mockRepo as unknown as Repository<PaymentMethodMapping>,
       mockAlerts as unknown as AlertsService,
     );
     jest.clearAllMocks();
-    mockPrisma.paymentMethodMapping.upsert.mockResolvedValue({});
+    mockRepo.create.mockImplementation((x) => x as PaymentMethodMapping);
+    mockRepo.save.mockImplementation((x) =>
+      Promise.resolve(x as PaymentMethodMapping),
+    );
+    mockRepo.update.mockResolvedValue({ affected: 1 });
   });
 
   // ── resolvePaymentMethod ─────────────────────────────────────
 
   describe('resolvePaymentMethod', () => {
     it('returns null when no mapping exists', async () => {
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(null);
+      mockRepo.findOne.mockResolvedValue(null);
 
       const result = await service.resolvePaymentMethod('ODOO', 'Cash');
 
@@ -40,7 +43,7 @@ describe('PaymentMappingService', () => {
     });
 
     it('fires a PAYMENT_METHOD_DISCOVERED alert when no mapping exists', async () => {
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(null);
+      mockRepo.findOne.mockResolvedValue(null);
 
       await service.resolvePaymentMethod('ODOO', 'CashREDSEA');
 
@@ -49,20 +52,19 @@ describe('PaymentMappingService', () => {
       );
     });
 
-    it('upserts a PENDING_MAPPING placeholder when no mapping exists', async () => {
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(null);
+    it('creates a PENDING_MAPPING placeholder when no mapping exists', async () => {
+      mockRepo.findOne.mockResolvedValue(null);
 
       await service.resolvePaymentMethod('ODOO', 'CashREDSEA');
 
-      expect(mockPrisma.paymentMethodMapping.upsert).toHaveBeenCalledWith(
+      expect(mockRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          create: expect.objectContaining({
-            oracleReceiptMethodName: 'PENDING_MAPPING',
-            isActive: false,
-            requiresApproval: true,
-          }),
+          oracleReceiptMethodName: 'PENDING_MAPPING',
+          isActive: false,
+          requiresApproval: true,
         }),
       );
+      expect(mockRepo.save).toHaveBeenCalled();
     });
 
     it('returns the mapping when it exists and is active', async () => {
@@ -73,7 +75,7 @@ describe('PaymentMappingService', () => {
         requiresApproval: false,
         approvedAt: null,
       };
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(mapping);
+      mockRepo.findOne.mockResolvedValue(mapping);
 
       const result = await service.resolvePaymentMethod('ODOO', 'Cash');
 
@@ -88,7 +90,7 @@ describe('PaymentMappingService', () => {
         requiresApproval: false,
         approvedAt: null,
       };
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(mapping);
+      mockRepo.findOne.mockResolvedValue(mapping);
 
       const result = await service.resolvePaymentMethod('ODOO', 'OldCash');
 
@@ -103,7 +105,7 @@ describe('PaymentMappingService', () => {
         requiresApproval: true,
         approvedAt: null,
       };
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce(mapping);
+      mockRepo.findOne.mockResolvedValue(mapping);
 
       const result = await service.resolvePaymentMethod('ODOO', 'NewCard');
 
@@ -111,7 +113,7 @@ describe('PaymentMappingService', () => {
     });
 
     it('does NOT fire an alert when a valid mapping already exists', async () => {
-      mockPrisma.paymentMethodMapping.findUnique.mockResolvedValueOnce({
+      mockRepo.findOne.mockResolvedValue({
         id: 'm-4',
         isActive: true,
         requiresApproval: false,
@@ -128,21 +130,17 @@ describe('PaymentMappingService', () => {
 
   describe('approvePendingMapping', () => {
     it('sets requiresApproval=false, isActive=true, and records approvedBy', async () => {
-      mockPrisma.paymentMethodMapping.update.mockResolvedValueOnce({
-        id: 'm-5',
-      });
+      mockRepo.findOne.mockResolvedValue({ id: 'm-5' });
 
       await service.approvePendingMapping('m-5', 'admin@example.com');
 
-      expect(mockPrisma.paymentMethodMapping.update).toHaveBeenCalledWith(
+      expect(mockRepo.update).toHaveBeenCalledWith(
+        'm-5',
         expect.objectContaining({
-          where: { id: 'm-5' },
-          data: expect.objectContaining({
-            requiresApproval: false,
-            isActive: true,
-            approvedBy: 'admin@example.com',
-            approvedAt: expect.any(Date),
-          }),
+          requiresApproval: false,
+          isActive: true,
+          approvedBy: 'admin@example.com',
+          approvedAt: expect.any(Date),
         }),
       );
     });
@@ -152,25 +150,22 @@ describe('PaymentMappingService', () => {
 
   describe('listMappings', () => {
     it('returns all mappings when no sourceSystem filter is supplied', async () => {
-      mockPrisma.paymentMethodMapping.findMany.mockResolvedValueOnce([
-        { id: 'm-1' },
-        { id: 'm-2' },
-      ]);
+      mockRepo.find.mockResolvedValue([{ id: 'm-1' }, { id: 'm-2' }]);
 
       const result = await service.listMappings();
 
       expect(result).toHaveLength(2);
-      expect(mockPrisma.paymentMethodMapping.findMany).toHaveBeenCalledWith(
+      expect(mockRepo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: undefined }),
       );
     });
 
     it('filters by sourceSystem when provided', async () => {
-      mockPrisma.paymentMethodMapping.findMany.mockResolvedValueOnce([]);
+      mockRepo.find.mockResolvedValue([]);
 
       await service.listMappings('ODOO');
 
-      expect(mockPrisma.paymentMethodMapping.findMany).toHaveBeenCalledWith(
+      expect(mockRepo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { sourceSystem: 'ODOO' } }),
       );
     });

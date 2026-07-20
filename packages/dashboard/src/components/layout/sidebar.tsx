@@ -8,6 +8,7 @@ import {
   Activity,
   AlertTriangle,
   Archive,
+  Ban,
   BarChart3,
   Bell,
   Bot,
@@ -17,6 +18,7 @@ import {
   CreditCard,
   Database,
   Download,
+  FileMinus,
   FileText,
   Globe,
   Heart,
@@ -25,7 +27,6 @@ import {
   Package,
   Play,
   RefreshCw,
-  RotateCcw,
   Search,
   Send,
   Settings,
@@ -68,13 +69,20 @@ const operationalItems: NavItem[] = [
   { href: '/alerts', label: 'Alerts', icon: Bell },
   { href: '/failed', label: 'Failed Transactions', icon: AlertTriangle },
   { href: '/payments', label: 'Payment Mappings', icon: CreditCard },
-  { href: '/refunds', label: 'Refund Reconciliation', icon: RotateCcw },
   { href: '/inventory', label: 'Inventory Warnings', icon: Package },
   { href: '/audit', label: 'Audit Trail', icon: Search },
   { href: '/health', label: 'System Health', icon: Heart },
   { href: '/settings', label: 'Settings', icon: Settings },
   { href: '/notifications', label: 'Notifications', icon: Bell },
   { href: '/webhooks', label: 'Webhook Events', icon: Activity },
+];
+
+// Cancelled and refund orders never sync to Oracle as invoices — they live in
+// their own section. Cancelled orders are skipped; refunds are pushed as credit
+// memos (see /refunds).
+const cancellationsItems: NavItem[] = [
+  { href: '/cancelled-orders', label: 'Cancelled Orders', icon: Ban },
+  { href: '/refunds', label: 'Refunds & Credit Memos', icon: FileMinus },
 ];
 
 const adminGroups: NavGroup[] = [
@@ -228,6 +236,10 @@ export function Sidebar({ mobile = false, onNavigate }: { mobile?: boolean; onNa
         ))}
         <SectionLabel label="Operations" />
         {operationalItems.map((item) => (
+          <NavLink key={item.href} {...item} onNavigate={onNavigate} />
+        ))}
+        <SectionLabel label="Cancellations & Refunds" />
+        {cancellationsItems.map((item) => (
           <NavLink key={item.href} {...item} onNavigate={onNavigate} />
         ))}
         <SectionLabel label="Admin Panel" />

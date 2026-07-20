@@ -2,13 +2,60 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { CircuitBreakerService } from '../circuit-breaker.service';
 import {
+  ApplyCreditMemoRequest,
   ApplyReceiptRequest,
+  CreditMemoHeader,
   InvoiceHeader,
   JournalHeader,
   MiscReceiptRequest,
   OracleSoapClient,
   StandardReceiptRequest,
 } from './oracle-soap.client';
+
+function makeCreditMemoHeader(
+  overrides: Partial<CreditMemoHeader> = {},
+): CreditMemoHeader {
+  return {
+    billToCustomerName: 'Test Customer',
+    billToLocation: 'DXB-SITE',
+    billToAccountNumber: 'CUST-001',
+    businessUnit: 'BU-UAE',
+    memoDate: new Date('2024-01-20T10:00:00Z'),
+    transactionSource: 'Manual',
+    transactionType: 'PASA CREDIT MEMO',
+    invoiceCurrencyCode: 'AED',
+    conversionRateType: 'Corporate',
+    conversionRate: 1,
+    originalTransactionNumber: 'INV-001',
+    reason: 'Customer return',
+    creditMemoLines: [
+      {
+        lineNumber: 1,
+        itemNumber: 'ITEM-001',
+        description: 'Product A',
+        quantity: 2,
+        unitSellingPrice: 50,
+        currencyCode: 'AED',
+        salesOrder: 'REF-001',
+        salesOrderLine: '1',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function makeApplyCreditMemoRequest(
+  overrides: Partial<ApplyCreditMemoRequest> = {},
+): ApplyCreditMemoRequest {
+  return {
+    applyDate: new Date('2024-01-20T10:00:00Z'),
+    transactionNumber: 'INV-001',
+    creditMemoNumber: 'CM-500',
+    amountApplied: 100,
+    currencyCode: 'AED',
+    ...overrides,
+  };
+}
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -891,6 +938,133 @@ describe('OracleSoapClient', () => {
       const promise = client.getCustomerProfile('UNKNOWN');
       const assertion = expect(promise).rejects.toThrow(
         'Oracle SOAP fault [getActiveCustomerProfile]',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+  });
+
+  // ── createCreditMemo ──────────────────────────────────────────
+  describe('createCreditMemo', () => {
+    it('creates a credit memo and returns the transaction number', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          TransactionNumber: 'CM-500',
+          CustomerTrxId: 'TRX-CM-1',
+        }),
+      });
+
+      const result = await client.createCreditMemo(makeCreditMemoHeader());
+
+      expect(result.transactionNumber).toBe('CM-500');
+      expect(result.serviceStatus).toBe('SUCCESS');
+    });
+
+    it('negates line amounts and sends the credit-memo transaction type', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'CM-500' }),
+      });
+
+      await client.createCreditMemo(makeCreditMemoHeader());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain('PASA CREDIT MEMO');
+      // 50 → -50 on the wire (credit).
+      expect(soapBody).toContain('>-50<');
+      // Reference to the credited invoice is carried through.
+      expect(soapBody).toContain('INV-001');
+    });
+
+    it('posts to the RecInvoiceService endpoint', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ TransactionNumber: 'CM-500' }),
+      });
+
+      await client.createCreditMemo(makeCreditMemoHeader());
+
+      const path = mockHttpPost.mock.calls[0][0] as string;
+      expect(path).toBe('/fscmService/RecInvoiceService');
+    });
+
+    it('throws on Status E with an error message', async () => {
+      mockHttpPost.mockResolvedValue({
+        data: buildSuccessXml({
+          ServiceStatus: 'E',
+          ErrorMessage: 'Invalid credit memo transaction type',
+        }),
+      });
+
+      const promise = client.createCreditMemo(makeCreditMemoHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'Invalid credit memo transaction type',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+
+    it('throws when no transaction number is returned', async () => {
+      mockHttpPost.mockResolvedValue({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS' }),
+      });
+
+      const promise = client.createCreditMemo(makeCreditMemoHeader());
+      const assertion = expect(promise).rejects.toThrow(
+        'returned no transaction number',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+  });
+
+  // ── applyCreditMemo ───────────────────────────────────────────
+  describe('applyCreditMemo', () => {
+    const ORIGINAL_ENV = process.env;
+
+    afterEach(() => {
+      process.env = ORIGINAL_ENV;
+    });
+
+    it('short-circuits without calling Oracle when application is disabled', async () => {
+      process.env = { ...ORIGINAL_ENV, ORACLE_CM_APPLY_ENABLED: 'false' };
+
+      const result = await client.applyCreditMemo(makeApplyCreditMemoRequest());
+
+      expect(result.disabled).toBe(true);
+      expect(result.serviceStatus).toBe('DISABLED');
+      expect(mockHttpPost).not.toHaveBeenCalled();
+    });
+
+    it('applies the memo to the invoice when enabled', async () => {
+      process.env = { ...ORIGINAL_ENV, ORACLE_CM_APPLY_ENABLED: 'true' };
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          ApplicationId: 'APP-77',
+        }),
+      });
+
+      const result = await client.applyCreditMemo(makeApplyCreditMemoRequest());
+
+      expect(result.applicationId).toBe('APP-77');
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      // Both the credit memo and the invoice it credits are in the envelope.
+      expect(soapBody).toContain('CM-500');
+      expect(soapBody).toContain('INV-001');
+    });
+
+    it('throws on Status E when application is rejected', async () => {
+      process.env = { ...ORIGINAL_ENV, ORACLE_CM_APPLY_ENABLED: 'true' };
+      mockHttpPost.mockResolvedValue({
+        data: buildSuccessXml({
+          ServiceStatus: 'E',
+          ErrorMessage: 'Amount exceeds invoice balance',
+        }),
+      });
+
+      const promise = client.applyCreditMemo(makeApplyCreditMemoRequest());
+      const assertion = expect(promise).rejects.toThrow(
+        'Amount exceeds invoice balance',
       );
       await jest.runAllTimersAsync();
       await assertion;

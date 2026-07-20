@@ -19,7 +19,9 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { FusionCredential } from '../../database/entities/fusion-credential.entity';
 import { FusionAppParams } from '../../utils/fusion-app-params';
 import { Credential } from '../auth/credential';
 
@@ -44,7 +46,8 @@ export class FusionCredentialResolver {
   private readonly logger = new Logger(FusionCredentialResolver.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(FusionCredential)
+    private readonly fusionCredentials: Repository<FusionCredential>,
     private readonly configService: ConfigService,
   ) {}
 
@@ -121,9 +124,9 @@ export class FusionCredentialResolver {
       // more than one credential is active, which silently pins Oracle auth to
       // the wrong host/user. Order by updatedAt (then id) so the newest
       // credential is always chosen, and warn when the choice is ambiguous.
-      const active = await this.prisma.fusionCredential.findMany({
+      const active = await this.fusionCredentials.find({
         where: { active: true },
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        order: { updatedAt: 'DESC', id: 'DESC' },
         select: {
           hostName: true,
           server: true,

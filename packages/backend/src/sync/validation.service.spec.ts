@@ -1,15 +1,16 @@
+import { Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { ValidationService } from './validation.service';
-import { ValidationStatus } from '@prisma/client';
+import { ValidationStatus } from '../database/enums';
 
-const mockPrisma = {
-  orderSyncQueue: {
-    findUnique: jest.fn(),
-  },
-  storeConfiguration: {
-    findUnique: jest.fn(),
-  },
+const mockOrdersRepo = {
+  findOne: jest.fn(),
+};
+
+// Store config returned by getOrCreateStoreConfig; driven per-test.
+const storeConfigResult = {
+  findOne: jest.fn(),
 };
 
 const mockAlerts = {
@@ -17,11 +18,9 @@ const mockAlerts = {
 };
 
 const mockStoreConfig = {
-  // Delegate to the Prisma mock so existing `storeConfiguration.findUnique`
-  // expectations continue to drive the store config returned to the service.
-  getOrCreateStoreConfig: jest.fn(() =>
-    mockPrisma.storeConfiguration.findUnique(),
-  ),
+  // Delegate to the store-config mock so existing expectations continue to drive
+  // the store config returned to the service.
+  getOrCreateStoreConfig: jest.fn(() => storeConfigResult.findOne()),
 };
 
 /** Helper: a valid paid order with no negative inventory */
@@ -50,7 +49,7 @@ describe('ValidationService', () => {
 
   beforeEach(() => {
     service = new ValidationService(
-      mockPrisma as unknown as PrismaService,
+      mockOrdersRepo as unknown as Repository<OrderSyncQueue>,
       mockAlerts as unknown as AlertsService,
       mockStoreConfig as never,
     );
@@ -58,7 +57,7 @@ describe('ValidationService', () => {
   });
 
   it('returns invalid when order is not found', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(null);
+    mockOrdersRepo.findOne.mockResolvedValueOnce(null);
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(result.errors).toContain('Order order-1 not found in sync queue');
@@ -66,32 +65,28 @@ describe('ValidationService', () => {
   });
 
   it('returns invalid when order is not paid', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({ isPaid: false }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes('not paid'))).toBe(true);
   });
 
   it('returns invalid when order is cancelled', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({ isCancelled: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(result.errors).toContain('Order is cancelled');
   });
 
   it('returns invalid when store config is missing', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(makePaidOrder());
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(null);
+    mockOrdersRepo.findOne.mockResolvedValueOnce(makePaidOrder());
+    storeConfigResult.findOne.mockResolvedValueOnce(null);
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(false);
     expect(
@@ -102,10 +97,8 @@ describe('ValidationService', () => {
   });
 
   it('returns valid for a paid, active, fully-configured order', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(makePaidOrder());
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    mockOrdersRepo.findOne.mockResolvedValueOnce(makePaidOrder());
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
     const result = await service.validateOrder('order-1', 'BR001');
     expect(result.isValid).toBe(true);
     expect(result.errors).toHaveLength(0);
@@ -113,15 +106,13 @@ describe('ValidationService', () => {
   });
 
   it('fires a NEGATIVE_INVENTORY alert when negative inventory flag is set', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({
         negativeInventoryFlag: true,
         negativeInventoryItems: [{ sku: 'SKU-A', quantity: -3 }],
       }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
 
     await service.validateOrder('order-1', 'BR001');
 
@@ -131,15 +122,13 @@ describe('ValidationService', () => {
   });
 
   it('includes SKU details in the NEGATIVE_INVENTORY alert message', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({
         negativeInventoryFlag: true,
         negativeInventoryItems: [{ sku: 'SKU-B', quantity: -7 }],
       }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
 
     await service.validateOrder('order-1', 'BR001');
 
@@ -150,12 +139,10 @@ describe('ValidationService', () => {
   });
 
   it('sets holdForNegativeInventory=true for a valid order with negative inventory', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({ negativeInventoryFlag: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
 
     const result = await service.validateOrder('order-1', 'BR001');
 
@@ -164,10 +151,8 @@ describe('ValidationService', () => {
   });
 
   it('sets holdForNegativeInventory=false when negative inventory is absent', async () => {
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(makePaidOrder());
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    mockOrdersRepo.findOne.mockResolvedValueOnce(makePaidOrder());
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
 
     const result = await service.validateOrder('order-1', 'BR001');
 
@@ -176,12 +161,10 @@ describe('ValidationService', () => {
 
   it('does NOT set holdForNegativeInventory when the order itself is invalid', async () => {
     // Order has negative inventory BUT is also unpaid — invalid wins; hold must be false
-    mockPrisma.orderSyncQueue.findUnique.mockResolvedValueOnce(
+    mockOrdersRepo.findOne.mockResolvedValueOnce(
       makePaidOrder({ isPaid: false, negativeInventoryFlag: true }),
     );
-    mockPrisma.storeConfiguration.findUnique.mockResolvedValueOnce(
-      makeActiveStore(),
-    );
+    storeConfigResult.findOne.mockResolvedValueOnce(makeActiveStore());
 
     const result = await service.validateOrder('order-1', 'BR001');
 

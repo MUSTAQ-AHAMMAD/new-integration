@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ErrorType } from '@prisma/client';
+import { ErrorType } from '../database/enums';
 
 export interface ErrorCodeInfo {
   code: string;

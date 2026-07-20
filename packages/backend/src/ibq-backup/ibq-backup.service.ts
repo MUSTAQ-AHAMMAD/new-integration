@@ -1,6 +1,6 @@
 /**
  * IbqBackupService — scheduled backup of POS orders from the IBQ (Odoo)
- * REST API into local PostgreSQL tables.
+ * REST API into the local Oracle tables.
  *
  * Runs every 15 minutes. For each active IbqCredential it:
  *  1. Checks that the region is not disabled (SalesIntegrationStatus with
@@ -10,8 +10,8 @@
  *     Paginates (offset/limit) until fewer than IBQ_PAGE_SIZE records are
  *     returned so every order is captured in a single invocation.
  *  3. Upserts each order into BackupIbqOrder, then replaces all child
- *     BackupIbqOrderLine / BackupIbqOrderPayment rows via deleteMany +
- *     createMany (two round-trips per order instead of N+1 per line/payment).
+ *     BackupIbqOrderLine / BackupIbqOrderPayment rows via delete +
+ *     insert (two round-trips per order instead of N+1 per line/payment).
  *  4. Advances the lastSyncAt watermark on the credential.
  *  5. Ingests each fetched order into OrderSyncQueue so the downstream
  *     BullMQ→Oracle pipeline has real data to process.
@@ -20,6 +20,8 @@
  */
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import axios from 'axios';
 import * as https from 'https';
 import {
@@ -27,7 +29,11 @@ import {
   normalizeOrderForIngestion,
   toApiDatetime,
 } from '../common/odoo-utils';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupIbqOrderLine } from '../database/entities/backup-ibq-order-line.entity';
+import { BackupIbqOrderPayment } from '../database/entities/backup-ibq-order-payment.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
+import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
 import { OrderSyncService } from '../sync/order-sync.service';
 import { SyncControlService } from '../sync/sync-control.service';
 
@@ -141,7 +147,16 @@ export class IbqBackupService {
   private readonly logger = new Logger(IbqBackupService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(IbqCredential)
+    private readonly credentials: Repository<IbqCredential>,
+    @InjectRepository(SalesIntegrationStatus)
+    private readonly integrationStatus: Repository<SalesIntegrationStatus>,
+    @InjectRepository(BackupIbqOrder)
+    private readonly orders: Repository<BackupIbqOrder>,
+    @InjectRepository(BackupIbqOrderLine)
+    private readonly orderLines: Repository<BackupIbqOrderLine>,
+    @InjectRepository(BackupIbqOrderPayment)
+    private readonly orderPayments: Repository<BackupIbqOrderPayment>,
     @Inject(forwardRef(() => OrderSyncService))
     private readonly orderSyncService: OrderSyncService,
     @Inject(forwardRef(() => SyncControlService))
@@ -166,7 +181,7 @@ export class IbqBackupService {
     let hasError = false;
 
     try {
-      const credentials = await this.prisma.ibqCredential.findMany({
+      const credentials = await this.credentials.find({
         where: { active: true },
       });
 
@@ -356,10 +371,7 @@ export class IbqBackupService {
 
     // Advance watermark only on scheduled cron runs (no overrides)
     if (!overrides) {
-      await this.prisma.ibqCredential.update({
-        where: { id: cred.id },
-        data: { lastSyncAt: runAt },
-      });
+      await this.credentials.update({ id: cred.id }, { lastSyncAt: runAt });
     }
 
     return { saved: totalSaved, skipped: totalSkipped, orders: allOrders };
@@ -381,7 +393,7 @@ export class IbqBackupService {
       limit?: number;
     },
   ): Promise<{ saved: number; skipped: number; orders: IbqOrderRaw[] }> {
-    const cred = await this.prisma.ibqCredential.findUnique({
+    const cred = await this.credentials.findOne({
       where: { id: credentialId },
     });
     if (!cred) {
@@ -395,8 +407,8 @@ export class IbqBackupService {
   // ---------------------------------------------------------------------------
 
   async isRegionEnabled(region: string): Promise<boolean> {
-    const record = await this.prisma.salesIntegrationStatus.findUnique({
-      where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
+    const record = await this.integrationStatus.findOne({
+      where: { region, integMode: IBQ_INTEG_MODE },
     });
     return !record || record.status !== STATUS_DISABLED;
   }
@@ -404,11 +416,7 @@ export class IbqBackupService {
   async enableRegion(
     region: string,
   ): Promise<{ region: string; status: string }> {
-    const record = await this.prisma.salesIntegrationStatus.upsert({
-      where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
-      create: { region, integMode: IBQ_INTEG_MODE, status: STATUS_ENABLED },
-      update: { status: STATUS_ENABLED },
-    });
+    const record = await this.upsertIntegrationStatus(region, STATUS_ENABLED);
     this.logger.log(`IBQ integration ENABLED for region=${region}`);
     return { region: record.region, status: record.status };
   }
@@ -416,11 +424,7 @@ export class IbqBackupService {
   async disableRegion(
     region: string,
   ): Promise<{ region: string; status: string }> {
-    const record = await this.prisma.salesIntegrationStatus.upsert({
-      where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
-      create: { region, integMode: IBQ_INTEG_MODE, status: STATUS_DISABLED },
-      update: { status: STATUS_DISABLED },
-    });
+    const record = await this.upsertIntegrationStatus(region, STATUS_DISABLED);
     this.logger.log(`IBQ integration DISABLED for region=${region}`);
     return { region: record.region, status: record.status };
   }
@@ -437,10 +441,10 @@ export class IbqBackupService {
     }>;
   }> {
     const [statusRecord, credentials] = await Promise.all([
-      this.prisma.salesIntegrationStatus.findUnique({
-        where: { region_integMode: { region, integMode: IBQ_INTEG_MODE } },
+      this.integrationStatus.findOne({
+        where: { region, integMode: IBQ_INTEG_MODE },
       }),
-      this.prisma.ibqCredential.findMany({
+      this.credentials.find({
         where: { region },
         select: {
           id: true,
@@ -459,6 +463,31 @@ export class IbqBackupService {
     };
   }
 
+  /**
+   * Upserts a SalesIntegrationStatus row for (region, IBQ_BACKUP) to the given
+   * status. Emulates Prisma's composite-key upsert with find-then-save so it
+   * works on Oracle without relying on ON CONFLICT semantics.
+   */
+  private async upsertIntegrationStatus(
+    region: string,
+    status: string,
+  ): Promise<SalesIntegrationStatus> {
+    const existing = await this.integrationStatus.findOne({
+      where: { region, integMode: IBQ_INTEG_MODE },
+    });
+    if (existing) {
+      existing.status = status;
+      return this.integrationStatus.save(existing);
+    }
+    return this.integrationStatus.save(
+      this.integrationStatus.create({
+        region,
+        integMode: IBQ_INTEG_MODE,
+        status,
+      }),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -466,10 +495,10 @@ export class IbqBackupService {
   /**
    * Upserts one IBQ POS order and its line items + payments.
    *
-   * Parent BackupIbqOrder: findUnique + create/update (preserving the
+   * Parent BackupIbqOrder: findOne + create/update (preserving the
    * is-new flag for saved/skipped counting).
-   * Child BackupIbqOrderLine / BackupIbqOrderPayment: deleteMany then
-   * createMany so stale rows are replaced without N+1 findFirst calls.
+   * Child BackupIbqOrderLine / BackupIbqOrderPayment: delete then
+   * insert so stale rows are replaced without N+1 findFirst calls.
    *
    * Returns true when the record was newly created, false when it was updated.
    */
@@ -509,22 +538,18 @@ export class IbqBackupService {
       rawJson: order as object,
     };
 
-    const existing = await this.prisma.backupIbqOrder.findUnique({
-      where: { orderId_region: { orderId: order.id, region } },
+    const existing = await this.orders.findOne({
+      where: { orderId: order.id, region },
       select: { id: true },
     });
 
     let parentId: string;
+    const wasNew = !existing;
     if (existing) {
-      await this.prisma.backupIbqOrder.update({
-        where: { id: existing.id },
-        data: orderData,
-      });
+      await this.orders.update({ id: existing.id }, orderData);
       parentId = existing.id;
     } else {
-      const created = await this.prisma.backupIbqOrder.create({
-        data: orderData,
-      });
+      const created = await this.orders.save(this.orders.create(orderData));
       parentId = created.id;
     }
 
@@ -552,14 +577,10 @@ export class IbqBackupService {
       parentOrderId: parentId,
     }));
 
-    await this.prisma.$transaction([
-      this.prisma.backupIbqOrderLine.deleteMany({
-        where: { orderId: order.id, region },
-      }),
-      ...(lineData.length > 0
-        ? [this.prisma.backupIbqOrderLine.createMany({ data: lineData })]
-        : []),
-    ]);
+    await this.orderLines.delete({ orderId: order.id, region });
+    if (lineData.length > 0) {
+      await this.orderLines.insert(lineData);
+    }
 
     // ── Payments: Odoo v15 uses statement_ids, v18 may use payment_ids ────────
     const rawPayments: IbqOrderPaymentRaw[] = Array.isArray(order.statement_ids)
@@ -577,19 +598,11 @@ export class IbqBackupService {
       parentOrderId: parentId,
     }));
 
-    await this.prisma.$transaction([
-      this.prisma.backupIbqOrderPayment.deleteMany({
-        where: { orderId: order.id, region },
-      }),
-      ...(paymentData.length > 0
-        ? [
-            this.prisma.backupIbqOrderPayment.createMany({
-              data: paymentData,
-            }),
-          ]
-        : []),
-    ]);
+    await this.orderPayments.delete({ orderId: order.id, region });
+    if (paymentData.length > 0) {
+      await this.orderPayments.insert(paymentData);
+    }
 
-    return !existing;
+    return wasNew;
   }
 }

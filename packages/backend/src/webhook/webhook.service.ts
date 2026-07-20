@@ -1,8 +1,10 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { Prisma, SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { WebhookEvent } from '../database/entities/webhook-event.entity';
+import { SyncStatus } from '../database/enums';
 import { OrderSyncService } from '../sync/order-sync.service';
 
 @Injectable()
@@ -11,7 +13,8 @@ export class WebhookService {
   private readonly webhookSecret: string | undefined;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(WebhookEvent)
+    private readonly webhookEvents: Repository<WebhookEvent>,
     private readonly orderSyncService: OrderSyncService,
     private readonly configService: ConfigService,
   ) {
@@ -42,13 +45,23 @@ export class WebhookService {
         : undefined;
 
     if (externalEventId) {
-      const duplicate = await this.prisma.webhookEvent.findFirst({
+      // Oracle stores the payload as a CLOB (no JSON-path querying), so scan
+      // recent successfully-processed Odoo events and match the parsed payload.
+      const candidates = await this.webhookEvents.find({
         where: {
           sourceSystem: 'ODOO',
           processingStatus: SyncStatus.SYNCED,
-          payload: { path: ['event_id'], equals: externalEventId },
         },
-        select: { id: true },
+        order: { receivedAt: 'DESC' },
+        take: 500,
+      });
+
+      const duplicate = candidates.find((c) => {
+        const eventId = (c.payload as Record<string, unknown> | null)?.event_id;
+        return (
+          (typeof eventId === 'string' || typeof eventId === 'number') &&
+          String(eventId) === externalEventId
+        );
       });
 
       if (duplicate) {
@@ -59,32 +72,29 @@ export class WebhookService {
       }
     }
 
-    const event = await this.prisma.webhookEvent.create({
-      data: {
+    const event = await this.webhookEvents.save(
+      this.webhookEvents.create({
         eventType,
         sourceSystem: 'ODOO',
-        payload: payload as Prisma.InputJsonObject,
+        payload,
         processingStatus: SyncStatus.PENDING,
-      },
-    });
+      }),
+    );
 
     try {
       await this.handleEvent(eventType, payload);
 
-      await this.prisma.webhookEvent.update({
-        where: { id: event.id },
-        data: { processedAt: new Date(), processingStatus: SyncStatus.SYNCED },
+      await this.webhookEvents.update(event.id, {
+        processedAt: new Date(),
+        processingStatus: SyncStatus.SYNCED,
       });
 
       return { received: true, eventId: event.id };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      await this.prisma.webhookEvent.update({
-        where: { id: event.id },
-        data: {
-          processingStatus: SyncStatus.FAILED,
-          processingError: errorMessage,
-        },
+      await this.webhookEvents.update(event.id, {
+        processingStatus: SyncStatus.FAILED,
+        processingError: errorMessage,
       });
       this.logger.error(
         `Failed to process webhook event ${event.id}`,

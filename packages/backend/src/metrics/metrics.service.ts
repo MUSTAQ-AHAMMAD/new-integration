@@ -1,4 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   Registry,
   collectDefaultMetrics,
@@ -6,10 +8,13 @@ import {
   Gauge,
   Histogram,
 } from 'prom-client';
-import { PrismaService } from '../prisma/prisma.service';
+import { AlertLog } from '../database/entities/alert-log.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { AlertSeverity, SyncStatus } from '../database/enums';
 import { QueuesService } from '../queues/queues.service';
 import { StalledOrdersService } from '../sync/stalled-orders.service';
-import { SyncStatus } from '@prisma/client';
 import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 @Injectable()
@@ -34,7 +39,14 @@ export class MetricsService implements OnModuleInit {
   private readonly stalledOrdersTotal: Gauge;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderQueue: Repository<OrderSyncQueue>,
+    @InjectRepository(AlertLog)
+    private readonly alertLog: Repository<AlertLog>,
+    @InjectRepository(StoreConfiguration)
+    private readonly storeConfig: Repository<StoreConfiguration>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
     private readonly queuesService: QueuesService,
     private readonly stalledOrdersService: StalledOrdersService,
   ) {
@@ -152,9 +164,7 @@ export class MetricsService implements OnModuleInit {
   private async refreshOrderStats() {
     const statuses = Object.values(SyncStatus);
     const counts = await Promise.all(
-      statuses.map((status) =>
-        this.prisma.orderSyncQueue.count({ where: { status } }),
-      ),
+      statuses.map((status) => this.orderQueue.count({ where: { status } })),
     );
     statuses.forEach((status, i) => {
       this.ordersByStatus.set({ status }, counts[i]);
@@ -162,10 +172,15 @@ export class MetricsService implements OnModuleInit {
   }
 
   private async refreshAlertStats() {
-    const severities = ['INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const;
+    const severities = [
+      AlertSeverity.INFO,
+      AlertSeverity.WARNING,
+      AlertSeverity.ERROR,
+      AlertSeverity.CRITICAL,
+    ] as const;
     const counts = await Promise.all(
       severities.map((severity) =>
-        this.prisma.alertLog.count({ where: { severity, isResolved: false } }),
+        this.alertLog.count({ where: { severity, isResolved: false } }),
       ),
     );
     severities.forEach((severity, i) => {
@@ -174,14 +189,14 @@ export class MetricsService implements OnModuleInit {
   }
 
   private async refreshStoreStats() {
-    const count = await this.prisma.storeConfiguration.count({
+    const count = await this.storeConfig.count({
       where: { isActive: true },
     });
     this.activeStores.set(count);
   }
 
   private async refreshFailedTransactionStats() {
-    const count = await this.prisma.failedTransaction.count({
+    const count = await this.failedTransactions.count({
       where: { isResolved: false },
     });
     this.failedTransactionsTotal.set(count);

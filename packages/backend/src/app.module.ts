@@ -7,7 +7,7 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { LoggerModule } from 'nestjs-pino';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { PrismaModule } from './prisma/prisma.module';
+import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
 import { QueuesModule } from './queues/queues.module';
 import { SyncModule } from './sync/sync.module';
@@ -87,7 +87,8 @@ import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
       playground: process.env.NODE_ENV !== 'production',
     }),
     ScheduleModule.forRoot(),
-    PrismaModule,
+    // Oracle (TypeORM) is the application database.
+    DatabaseModule,
     RedisModule,
     QueuesModule,
     SyncModule,

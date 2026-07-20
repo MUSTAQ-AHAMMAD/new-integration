@@ -10,6 +10,8 @@ import {
   Put,
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   IsBoolean,
   IsInt,
@@ -19,7 +21,8 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
 import { IbqBackupService } from './ibq-backup.service';
 
 // ---------------------------------------------------------------------------
@@ -93,7 +96,10 @@ export class UpdateIbqCredentialDto {
 export class IbqBackupController {
   constructor(
     private readonly backupService: IbqBackupService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(IbqCredential)
+    private readonly credentials: Repository<IbqCredential>,
+    @InjectRepository(BackupIbqOrder)
+    private readonly orders: Repository<BackupIbqOrder>,
   ) {}
 
   // ── Trigger controls ───────────────────────────────────────────────────────
@@ -121,7 +127,7 @@ export class IbqBackupController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger IBQ backup for a specific credential' })
   async triggerOne(@Param('credentialId') credentialId: string) {
-    const cred = await this.prisma.ibqCredential.findUnique({
+    const cred = await this.credentials.findOne({
       where: { id: credentialId },
     });
     if (!cred || !cred.active) {
@@ -143,7 +149,7 @@ export class IbqBackupController {
     summary: 'Trigger IBQ backup for all credentials in a region',
   })
   async triggerByRegion(@Param('region') region: string) {
-    const creds = await this.prisma.ibqCredential.findMany({
+    const creds = await this.credentials.find({
       where: { region, active: true },
     });
     if (creds.length === 0) {
@@ -175,7 +181,7 @@ export class IbqBackupController {
   @Get('regions')
   @ApiOperation({ summary: 'List all regions with active IBQ credentials' })
   async listRegions() {
-    return this.prisma.ibqCredential.findMany({
+    return this.credentials.find({
       where: { active: true },
       select: {
         id: true,
@@ -184,7 +190,7 @@ export class IbqBackupController {
         companyId: true,
         lastSyncAt: true,
       },
-      orderBy: { region: 'asc' },
+      order: { region: 'ASC' },
     });
   }
 
@@ -227,8 +233,8 @@ export class IbqBackupController {
   @Get('credentials')
   @ApiOperation({ summary: 'List all IBQ credentials' })
   async listCredentials() {
-    const creds = await this.prisma.ibqCredential.findMany({
-      orderBy: { region: 'asc' },
+    const creds = await this.credentials.find({
+      order: { region: 'ASC' },
     });
     return creds.map((c) => ({
       ...c,
@@ -242,15 +248,15 @@ export class IbqBackupController {
   @Post('credentials')
   @ApiOperation({ summary: 'Create a new IBQ credential' })
   async createCredential(@Body() dto: CreateIbqCredentialDto) {
-    const cred = await this.prisma.ibqCredential.create({
-      data: {
+    const cred = await this.credentials.save(
+      this.credentials.create({
         baseUrl: dto.baseUrl,
         apiKey: dto.apiKey,
         companyId: dto.companyId ?? null,
         region: dto.region,
         active: dto.active ?? true,
-      },
-    });
+      }),
+    );
     return { ...cred, apiKey: this.maskKey(cred.apiKey) };
   }
 
@@ -263,17 +269,18 @@ export class IbqBackupController {
     @Param('id') id: string,
     @Body() dto: UpdateIbqCredentialDto,
   ) {
-    const cred = await this.prisma.ibqCredential.update({
-      where: { id },
-      data: {
+    await this.credentials.update(
+      { id },
+      {
         ...(dto.baseUrl !== undefined && { baseUrl: dto.baseUrl }),
         ...(dto.apiKey !== undefined && { apiKey: dto.apiKey }),
         ...(dto.companyId !== undefined && { companyId: dto.companyId }),
         ...(dto.region !== undefined && { region: dto.region }),
         ...(dto.active !== undefined && { active: dto.active }),
       },
-    });
-    return { ...cred, apiKey: this.maskKey(cred.apiKey) };
+    );
+    const cred = await this.credentials.findOne({ where: { id } });
+    return cred ? { ...cred, apiKey: this.maskKey(cred.apiKey) } : { id };
   }
 
   /**
@@ -283,7 +290,7 @@ export class IbqBackupController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete an IBQ credential' })
   async deleteCredential(@Param('id') id: string) {
-    await this.prisma.ibqCredential.delete({ where: { id } });
+    await this.credentials.delete({ id });
     return { ok: true, id };
   }
 
@@ -295,9 +302,9 @@ export class IbqBackupController {
   @Get('orders/:region')
   @ApiOperation({ summary: 'List recent backed-up IBQ orders for a region' })
   async listOrders(@Param('region') region: string) {
-    return this.prisma.backupIbqOrder.findMany({
+    return this.orders.find({
       where: { region },
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       take: 100,
       select: {
         id: true,

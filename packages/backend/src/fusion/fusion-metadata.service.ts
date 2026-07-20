@@ -1,23 +1,37 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
 
 @Injectable()
 export class FusionMetadataService {
   private readonly logger = new Logger(FusionMetadataService.name);
-  private cache = new Map<string, any>();
+  private cache = new Map<string, FusionSalesMetadata>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(FusionSalesMetadata)
+    private readonly salesMetadata: Repository<FusionSalesMetadata>,
+    @InjectRepository(FusionBusinessUnitMap)
+    private readonly businessUnitMap: Repository<FusionBusinessUnitMap>,
+    @InjectRepository(FusionReceiptMethod)
+    private readonly receiptMethod: Repository<FusionReceiptMethod>,
+    @InjectRepository(ServiceProviderJournalMeta)
+    private readonly journalMeta: Repository<ServiceProviderJournalMeta>,
+  ) {}
 
-  async getSalesMetadata(region: string): Promise<any> {
+  async getSalesMetadata(region: string): Promise<FusionSalesMetadata> {
     // Check cache first
     if (this.cache.has(region)) {
       this.logger.debug(`Cache hit for region ${region}`);
-      return this.cache.get(region);
+      return this.cache.get(region)!;
     }
 
     this.logger.log(`Fetching FusionSalesMetadata for region: ${region}`);
 
-    const metadata = await this.prisma.fusionSalesMetadata.findFirst({
+    const metadata = await this.salesMetadata.findOne({
       where: { region: region },
     });
 
@@ -26,7 +40,7 @@ export class FusionMetadataService {
       this.logger.warn(
         `No metadata found for region ${region}, using fallback`,
       );
-      const fallback = await this.prisma.fusionSalesMetadata.findFirst();
+      const fallback = await this.salesMetadata.findOne({ where: {} });
       if (fallback) {
         this.logger.log(
           `Using fallback metadata from region ${fallback.region}`,
@@ -44,14 +58,19 @@ export class FusionMetadataService {
     return metadata;
   }
 
-  async getBusinessUnitMap(region: string): Promise<any> {
-    return this.prisma.fusionBusinessUnitMap.findFirst({
+  async getBusinessUnitMap(
+    region: string,
+  ): Promise<FusionBusinessUnitMap | null> {
+    return this.businessUnitMap.findOne({
       where: { region: region },
     });
   }
 
-  async getReceiptMethod(region: string, methodName: string): Promise<any> {
-    return this.prisma.fusionReceiptMethod.findFirst({
+  async getReceiptMethod(
+    region: string,
+    methodName: string,
+  ): Promise<FusionReceiptMethod | null> {
+    return this.receiptMethod.findOne({
       where: {
         region: region,
         receiptMethodName: methodName,
@@ -59,8 +78,10 @@ export class FusionMetadataService {
     });
   }
 
-  async getJournalMeta(region: string): Promise<any> {
-    return this.prisma.serviceProviderJournalMeta.findFirst({
+  async getJournalMeta(
+    region: string,
+  ): Promise<ServiceProviderJournalMeta | null> {
+    return this.journalMeta.findOne({
       where: { region: region },
     });
   }

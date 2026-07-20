@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AlertSeverity, AlertType, ValidationStatus } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { AlertSeverity, AlertType, ValidationStatus } from '../database/enums';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { StoreConfigService } from '../store-config/store-config.service';
 
 export interface ValidationResult {
@@ -17,7 +19,8 @@ export class ValidationService {
   private readonly logger = new Logger(ValidationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
     private readonly alertsService: AlertsService,
     private readonly storeConfigService: StoreConfigService,
   ) {}
@@ -29,8 +32,8 @@ export class ValidationService {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
-      where: { odooOrderId_branchCode: { odooOrderId, branchCode } },
+    const order = await this.orders.findOne({
+      where: { odooOrderId, branchCode },
     });
 
     if (!order) {

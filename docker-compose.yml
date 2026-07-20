@@ -253,12 +253,11 @@ services:
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
     # Use ts-node directly — devDependencies are installed in the development image,
-    # so no build step is required. Prisma generate is needed for the Prisma client.
+    # so no build step is required. seed-csv imports into the Oracle app DB (APP_DB_*).
     entrypoint:
       - sh
       - -c
       - >
-        pnpm exec prisma generate &&
         node_modules/.bin/ts-node -r tsconfig-paths/register src/scripts/seed-csv.ts "$@"
       - --
     volumes:
@@ -277,7 +276,7 @@ services:
       target: development
     container_name: integration_worker
     restart: unless-stopped
-    command: ['sh', '-c', 'set -e && pnpm exec prisma db push --skip-generate --accept-data-loss && pnpm run start:worker:dev']
+    command: ['sh', '-c', 'pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
       # Direct PostgreSQL connection (bypassing PgBouncer for development)

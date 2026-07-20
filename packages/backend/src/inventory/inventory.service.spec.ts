@@ -1,12 +1,15 @@
 import { NotFoundException } from '@nestjs/common';
+import { Repository } from 'typeorm';
 import { InventoryService } from './inventory.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { InventorySyncTracker } from '../database/entities/inventory-sync-tracker.entity';
 
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
 
-function makeRecord(overrides: Record<string, unknown> = {}) {
+function makeRecord(
+  overrides: Partial<InventorySyncTracker> = {},
+): InventorySyncTracker {
   return {
     id: 'inv-001',
     productSku: 'SKU-A',
@@ -20,12 +23,21 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
     reviewNote: null,
     createdAt: new Date('2024-01-15T00:00:00Z'),
     ...overrides,
-  };
+  } as unknown as InventorySyncTracker;
 }
 
-function makePrisma() {
+function makeQb() {
   return {
-    $queryRaw: jest.fn(),
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    groupBy: jest.fn().mockReturnThis(),
+    take: jest.fn().mockReturnThis(),
+    getMany: jest.fn().mockResolvedValue([]),
+    getRawOne: jest.fn().mockResolvedValue(undefined),
+    getRawMany: jest.fn().mockResolvedValue([]),
   };
 }
 
@@ -35,11 +47,25 @@ function makePrisma() {
 
 describe('InventoryService', () => {
   let service: InventoryService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let repo: {
+    createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+    save: jest.Mock;
+    find: jest.Mock;
+  };
+  let qb: ReturnType<typeof makeQb>;
 
   beforeEach(() => {
-    prisma = makePrisma();
-    service = new InventoryService(prisma as unknown as PrismaService);
+    qb = makeQb();
+    repo = {
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+      findOne: jest.fn(),
+      save: jest.fn((x) => Promise.resolve(x)),
+      find: jest.fn().mockResolvedValue([]),
+    };
+    service = new InventoryService(
+      repo as unknown as Repository<InventorySyncTracker>,
+    );
     jest.clearAllMocks();
   });
 
@@ -47,37 +73,36 @@ describe('InventoryService', () => {
 
   describe('listNegativeInventory', () => {
     it('returns records with isNegativeInventory=true', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeRecord()]);
+      qb.getMany.mockResolvedValueOnce([makeRecord()]);
       const result = await service.listNegativeInventory();
       expect(result).toHaveLength(1);
       expect(result[0].isNegativeInventory).toBe(true);
     });
 
     it('returns empty array when no negative inventory', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      qb.getMany.mockResolvedValueOnce([]);
       const result = await service.listNegativeInventory();
       expect(result).toHaveLength(0);
     });
 
-    it('applies branchCode filter in query when provided', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeRecord()]);
+    it('applies branchCode filter when provided', async () => {
+      qb.getMany.mockResolvedValueOnce([makeRecord()]);
       await service.listNegativeInventory({ branchCode: 'BR001' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('BR001');
+      expect(qb.andWhere).toHaveBeenCalledWith('t.branchCode = :branchCode', {
+        branchCode: 'BR001',
+      });
     });
 
     it('uses default limit of 50', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      qb.getMany.mockResolvedValueOnce([]);
       await service.listNegativeInventory();
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('50');
+      expect(qb.take).toHaveBeenCalledWith(50);
     });
 
     it('uses custom limit when provided', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      qb.getMany.mockResolvedValueOnce([]);
       await service.listNegativeInventory({ limit: 10 });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('10');
+      expect(qb.take).toHaveBeenCalledWith(10);
     });
   });
 
@@ -85,12 +110,7 @@ describe('InventoryService', () => {
 
   describe('markAsReviewed', () => {
     it('returns the updated record on success', async () => {
-      const reviewed = makeRecord({
-        reviewedAt: new Date(),
-        reviewedBy: 'admin',
-        reviewNote: 'Checked and confirmed',
-      });
-      prisma.$queryRaw.mockResolvedValueOnce([reviewed]);
+      repo.findOne.mockResolvedValueOnce(makeRecord());
       const result = await service.markAsReviewed(
         'inv-001',
         'admin',
@@ -98,10 +118,12 @@ describe('InventoryService', () => {
       );
       expect(result.reviewedBy).toBe('admin');
       expect(result.reviewNote).toBe('Checked and confirmed');
+      expect(result.reviewedAt).toBeInstanceOf(Date);
+      expect(repo.save).toHaveBeenCalled();
     });
 
     it('throws NotFoundException when record is not found', async () => {
-      prisma.$queryRaw.mockResolvedValue([]);
+      repo.findOne.mockResolvedValue(null);
       await expect(service.markAsReviewed('missing', 'admin')).rejects.toThrow(
         NotFoundException,
       );
@@ -110,14 +132,10 @@ describe('InventoryService', () => {
       );
     });
 
-    it('passes null for reviewNote when omitted', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([
-        makeRecord({ reviewedAt: new Date() }),
-      ]);
-      await service.markAsReviewed('inv-001', 'admin');
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      // null should appear in the parameterised query values
-      expect(sqlStr).toContain('null');
+    it('sets null for reviewNote when omitted', async () => {
+      repo.findOne.mockResolvedValueOnce(makeRecord());
+      const result = await service.markAsReviewed('inv-001', 'admin');
+      expect(result.reviewNote).toBeNull();
     });
   });
 
@@ -125,13 +143,14 @@ describe('InventoryService', () => {
 
   describe('getInventoryStats', () => {
     it('returns summary and byBranch stats', async () => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce([
-          { totalNegative: 5, reviewed: 3, unreviewed: 2 },
-        ])
-        .mockResolvedValueOnce([
-          { branchCode: 'BR001', total: 5, reviewed: 3, unreviewed: 2 },
-        ]);
+      qb.getRawOne.mockResolvedValueOnce({
+        totalNegative: 5,
+        reviewed: 3,
+        unreviewed: 2,
+      });
+      qb.getRawMany.mockResolvedValueOnce([
+        { branchCode: 'BR001', total: 5, reviewed: 3, unreviewed: 2 },
+      ]);
       const result = await service.getInventoryStats();
       expect(result.totalNegative).toBe(5);
       expect(result.reviewed).toBe(3);
@@ -141,7 +160,8 @@ describe('InventoryService', () => {
     });
 
     it('returns zeros when no data', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      qb.getRawOne.mockResolvedValueOnce(undefined);
+      qb.getRawMany.mockResolvedValueOnce([]);
       const result = await service.getInventoryStats();
       expect(result.totalNegative).toBe(0);
       expect(result.reviewed).toBe(0);
@@ -154,7 +174,7 @@ describe('InventoryService', () => {
 
   describe('getAlertHistory', () => {
     it('returns records ordered by createdAt desc', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([
+      repo.find.mockResolvedValueOnce([
         makeRecord(),
         makeRecord({ id: 'inv-002' }),
       ]);
@@ -163,17 +183,19 @@ describe('InventoryService', () => {
     });
 
     it('passes custom limit to the query', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       await service.getAlertHistory(10);
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('10');
+      expect(repo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 10 }),
+      );
     });
 
     it('defaults to limit 50 when not specified', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       await service.getAlertHistory();
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('50');
+      expect(repo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 50 }),
+      );
     });
   });
 });

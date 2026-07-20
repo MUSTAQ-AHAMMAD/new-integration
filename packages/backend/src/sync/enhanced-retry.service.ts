@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ErrorType, SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { MoreThan, MoreThanOrEqual, Repository } from 'typeorm';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { ErrorType, SyncStatus } from '../database/enums';
 import { QueuesService } from '../queues/queues.service';
 import { DeadLetterQueueService } from '../queues/dead-letter.service';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
@@ -78,7 +81,10 @@ export class EnhancedRetryService {
   };
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactionRepo: Repository<FailedTransaction>,
     private readonly queuesService: QueuesService,
     private readonly deadLetterQueue: DeadLetterQueueService,
     private readonly circuitBreaker: CircuitBreakerService,
@@ -151,10 +157,8 @@ export class EnhancedRetryService {
         `Error type ${error.type} is not retryable. Moving to dead-letter queue.`,
       );
 
-      const order = await this.prisma.orderSyncQueue.findUnique({
-        where: {
-          odooOrderId_branchCode: { odooOrderId, branchCode },
-        },
+      const order = await this.orderSyncQueueRepo.findOne({
+        where: { odooOrderId, branchCode },
       });
 
       if (order) {
@@ -182,10 +186,8 @@ export class EnhancedRetryService {
         `Max retries (${maxRetries}) exceeded for order ${odooOrderId}. Moving to dead-letter queue.`,
       );
 
-      const order = await this.prisma.orderSyncQueue.findUnique({
-        where: {
-          odooOrderId_branchCode: { odooOrderId, branchCode },
-        },
+      const order = await this.orderSyncQueueRepo.findOne({
+        where: { odooOrderId, branchCode },
       });
 
       if (order) {
@@ -263,21 +265,17 @@ export class EnhancedRetryService {
     );
 
     // Update order sync queue
-    await this.prisma.orderSyncQueue.update({
-      where: {
-        odooOrderId_branchCode: { odooOrderId, branchCode },
-      },
-      data: {
+    await this.orderSyncQueueRepo.update(
+      { odooOrderId, branchCode },
+      {
         status: SyncStatus.QUEUED_FOR_RETRY,
         syncAttempts: attempt,
       },
-    });
+    );
 
     // Get order details for queue
-    const order = await this.prisma.orderSyncQueue.findUnique({
-      where: {
-        odooOrderId_branchCode: { odooOrderId, branchCode },
-      },
+    const order = await this.orderSyncQueueRepo.findOne({
+      where: { odooOrderId, branchCode },
     });
 
     if (!order) {
@@ -297,16 +295,16 @@ export class EnhancedRetryService {
 
     // Update next retry timestamp in failed transactions
     const nextRetryAt = new Date(Date.now() + delayMs);
-    await this.prisma.failedTransaction.updateMany({
-      where: {
+    await this.failedTransactionRepo.update(
+      {
         orderSyncQueueId: order.id,
         isResolved: false,
       },
-      data: {
+      {
         nextRetryAt,
         retryCount: attempt,
       },
-    });
+    );
   }
 
   /**
@@ -318,7 +316,7 @@ export class EnhancedRetryService {
   }> {
     this.logger.log('Recovering pending retries after system restart...');
 
-    const pendingRetries = await this.prisma.orderSyncQueue.findMany({
+    const pendingRetries = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.QUEUED_FOR_RETRY,
       },
@@ -331,11 +329,8 @@ export class EnhancedRetryService {
     for (const order of pendingRetries) {
       try {
         // Reset to PENDING and let the system re-queue
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: {
-            status: SyncStatus.PENDING,
-          },
+        await this.orderSyncQueueRepo.update(order.id, {
+          status: SyncStatus.PENDING,
         });
 
         await this.queuesService.enqueueOrderSync({
@@ -377,29 +372,31 @@ export class EnhancedRetryService {
 
     const [pendingRetries, retriesLast24h, retriesLast7d, failedTransactions] =
       await Promise.all([
-        this.prisma.orderSyncQueue.count({
+        this.orderSyncQueueRepo.count({
           where: { status: SyncStatus.QUEUED_FOR_RETRY },
         }),
-        this.prisma.failedTransaction.count({
-          where: { createdAt: { gte: oneDayAgo } },
+        this.failedTransactionRepo.count({
+          where: { createdAt: MoreThanOrEqual(oneDayAgo) },
         }),
-        this.prisma.failedTransaction.count({
-          where: { createdAt: { gte: sevenDaysAgo } },
+        this.failedTransactionRepo.count({
+          where: { createdAt: MoreThanOrEqual(sevenDaysAgo) },
         }),
-        this.prisma.failedTransaction.groupBy({
-          by: ['errorType'],
-          _count: { errorType: true },
-          orderBy: { _count: { errorType: 'desc' } },
-          take: 10,
-        }),
+        this.failedTransactionRepo
+          .createQueryBuilder('ft')
+          .select('ft.errorType', 'errorType')
+          .addSelect('COUNT(*)', 'count')
+          .groupBy('ft.errorType')
+          .orderBy('count', 'DESC')
+          .limit(10)
+          .getRawMany<{ errorType: ErrorType; count: string | number }>(),
       ]);
 
     // Calculate average attempts before success
-    const successfulRetries = await this.prisma.orderSyncQueue.findMany({
+    const successfulRetries = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.SYNCED,
-        syncAttempts: { gt: 1 },
-        updatedAt: { gte: sevenDaysAgo },
+        syncAttempts: MoreThan(1),
+        updatedAt: MoreThanOrEqual(sevenDaysAgo),
       },
       select: { syncAttempts: true },
     });
@@ -412,7 +409,7 @@ export class EnhancedRetryService {
 
     const topErrorTypes = failedTransactions.map((ft) => ({
       errorType: ft.errorType,
-      count: ft._count.errorType,
+      count: Number(ft.count),
     }));
 
     return {

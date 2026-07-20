@@ -2,10 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { HealthStatus, ServiceName } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { IntegrationHealthCheck } from '../database/entities/integration-health-check.entity';
+import {
+  AlertSeverity,
+  AlertType,
+  HealthStatus,
+  ServiceName,
+} from '../database/enums';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
-import { PrismaService } from '../prisma/prisma.service';
 import { GatewayService } from '../gateway/gateway.service';
 import { AlertsService } from '../alerts/alerts.service';
 
@@ -55,7 +62,8 @@ export class EnhancedOracleHealthService {
   private consecutiveSoapFailures = 0;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(IntegrationHealthCheck)
+    private readonly healthChecks: Repository<IntegrationHealthCheck>,
     private readonly gateway: GatewayService,
     private readonly alertsService: AlertsService,
     private readonly configService: ConfigService,
@@ -348,8 +356,8 @@ export class EnhancedOracleHealthService {
     }
 
     // Save to database
-    await this.prisma.integrationHealthCheck.create({
-      data: {
+    await this.healthChecks.save(
+      this.healthChecks.create({
         serviceName:
           serviceType === 'REST'
             ? ServiceName.ORACLE_REST
@@ -360,14 +368,14 @@ export class EnhancedOracleHealthService {
             : HealthStatus.UNHEALTHY,
         responseTimeMs: result.responseTimeMs,
         lastSuccessAt: result.status === 'HEALTHY' ? new Date() : new Date(0),
-        lastFailureAt: result.status !== 'HEALTHY' ? new Date() : undefined,
-        failureReason: result.details.errorMessage,
+        lastFailureAt: result.status !== 'HEALTHY' ? new Date() : null,
+        failureReason: result.details.errorMessage ?? null,
         consecutiveFailures:
           serviceType === 'REST'
             ? this.consecutiveRestFailures
             : this.consecutiveSoapFailures,
-      },
-    });
+      }),
+    );
 
     // Emit real-time update
     this.gateway.emitHealthUpdate({
@@ -403,8 +411,8 @@ export class EnhancedOracleHealthService {
       consecutiveFailures >= this.CONSECUTIVE_FAILURES_THRESHOLD
     ) {
       await this.alertsService.createAlert({
-        alertType: 'ORACLE_CONNECTION_FAILED',
-        severity: 'CRITICAL',
+        alertType: AlertType.ORACLE_CONNECTION_FAILED,
+        severity: AlertSeverity.CRITICAL,
         title: `Oracle ${serviceType} API is DOWN`,
         message: `Oracle ${serviceType} API has failed ${consecutiveFailures} consecutive health checks. Last error: ${result.details.errorMessage}. Immediate action required.`,
         relatedEntityId: `oracle-${serviceType.toLowerCase()}`,
@@ -415,8 +423,8 @@ export class EnhancedOracleHealthService {
     // Warning alert: Degraded performance
     if (result.status === 'DEGRADED') {
       await this.alertsService.createAlert({
-        alertType: 'ORACLE_PERFORMANCE_DEGRADED',
-        severity: 'WARNING',
+        alertType: AlertType.ORACLE_PERFORMANCE_DEGRADED,
+        severity: AlertSeverity.WARNING,
         title: `Oracle ${serviceType} API performance degraded`,
         message: `Oracle ${serviceType} API response time is elevated (${result.responseTimeMs}ms). May impact sync performance.`,
         relatedEntityId: `oracle-${serviceType.toLowerCase()}`,
@@ -431,8 +439,8 @@ export class EnhancedOracleHealthService {
       this.wasRecentlyDown(serviceType)
     ) {
       await this.alertsService.createAlert({
-        alertType: 'ORACLE_CONNECTION_RECOVERED',
-        severity: 'INFO',
+        alertType: AlertType.ORACLE_CONNECTION_RECOVERED,
+        severity: AlertSeverity.INFO,
         title: `Oracle ${serviceType} API recovered`,
         message: `Oracle ${serviceType} API is now healthy and responding normally.`,
         relatedEntityId: `oracle-${serviceType.toLowerCase()}`,

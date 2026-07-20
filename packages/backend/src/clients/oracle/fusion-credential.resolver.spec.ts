@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Repository } from 'typeorm';
+import { FusionCredential } from '../../database/entities/fusion-credential.entity';
 import { FusionCredentialResolver } from './fusion-credential.resolver';
 import { FUSION_REST_API_VERSION } from '../../utils/fusion-app-params';
 
@@ -24,15 +25,13 @@ function makeDbCredential(
   };
 }
 
-function makePrisma(
+function makeRepo(
   credential: ReturnType<typeof makeDbCredential> | null = makeDbCredential(),
 ) {
   return {
-    fusionCredential: {
-      // Resolver now uses findMany + orderBy for deterministic selection.
-      findMany: jest.fn().mockResolvedValue(credential ? [credential] : []),
-    },
-  } as unknown as PrismaService;
+    // Resolver now uses repo.find + order for deterministic selection.
+    find: jest.fn().mockResolvedValue(credential ? [credential] : []),
+  } as unknown as Repository<FusionCredential>;
 }
 
 function makeConfigService(overrides: Record<string, string> = {}) {
@@ -62,7 +61,7 @@ describe('FusionCredentialResolver', () => {
 
     beforeEach(() => {
       resolver = new FusionCredentialResolver(
-        makePrisma(makeDbCredential()),
+        makeRepo(makeDbCredential()),
         makeConfigService(),
       );
     });
@@ -104,7 +103,7 @@ describe('FusionCredentialResolver', () => {
 
     beforeEach(() => {
       resolver = new FusionCredentialResolver(
-        makePrisma(null),
+        makeRepo(null),
         makeConfigService({
           ORACLE_SOAP_BASE_URL: 'https://oracle-env.example.com',
           ORACLE_REST_BASE_URL: 'https://oracle-env.example.com/rest',
@@ -139,7 +138,7 @@ describe('FusionCredentialResolver', () => {
   describe('resolveOracleConnectionSettings — no credentials at all', () => {
     it('returns null when neither DB nor env vars are configured', async () => {
       const resolver = new FusionCredentialResolver(
-        makePrisma(null),
+        makeRepo(null),
         makeConfigService(), // all empty
       );
       const settings = await resolver.resolveOracleConnectionSettings();
@@ -149,16 +148,12 @@ describe('FusionCredentialResolver', () => {
 
   describe('resolveOracleConnectionSettings — DB error', () => {
     it('falls back to environment variables when DB throws', async () => {
-      const brokenPrisma = {
-        fusionCredential: {
-          findMany: jest
-            .fn()
-            .mockRejectedValue(new Error('DB connection lost')),
-        },
-      } as unknown as PrismaService;
+      const brokenRepo = {
+        find: jest.fn().mockRejectedValue(new Error('DB connection lost')),
+      } as unknown as Repository<FusionCredential>;
 
       const resolver = new FusionCredentialResolver(
-        brokenPrisma,
+        brokenRepo,
         makeConfigService({
           ORACLE_SOAP_BASE_URL: 'https://fallback.example.com',
           ORACLE_USERNAME: 'fb_user',

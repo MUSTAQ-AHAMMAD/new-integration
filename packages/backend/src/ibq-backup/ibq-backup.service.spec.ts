@@ -1,4 +1,10 @@
 import axios from 'axios';
+import { Repository } from 'typeorm';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupIbqOrderLine } from '../database/entities/backup-ibq-order-line.entity';
+import { BackupIbqOrderPayment } from '../database/entities/backup-ibq-order-payment.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
+import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
 import { IbqBackupService } from './ibq-backup.service';
 
 // ---------------------------------------------------------------------------
@@ -26,34 +32,34 @@ function makeOrder(
   };
 }
 
-function makePrisma() {
-  return {
-    ibqCredential: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    salesIntegrationStatus: {
-      findUnique: jest.fn(),
-      upsert: jest.fn(),
-    },
-    backupIbqOrder: {
-      findUnique: jest.fn(),
-      create: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
-      update: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
-    },
-    backupIbqOrderLine: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    backupIbqOrderPayment: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    $transaction: jest
-      .fn()
-      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops)),
+function makeRepos() {
+  const credentials = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
   };
+  const integrationStatus = {
+    findOne: jest.fn(),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
+  };
+  const orders = {
+    findOne: jest.fn(),
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  const orderLines = {
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    insert: jest.fn().mockResolvedValue({}),
+  };
+  const orderPayments = {
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    insert: jest.fn().mockResolvedValue({}),
+  };
+  return { credentials, integrationStatus, orders, orderLines, orderPayments };
 }
 
 function makeCred(overrides: Record<string, unknown> = {}) {
@@ -84,16 +90,20 @@ function makeSyncControl() {
 }
 
 function makeService(
-  prisma = makePrisma(),
+  repos = makeRepos(),
   orderSyncService = makeOrderSyncService(),
   syncControl = makeSyncControl(),
 ) {
   const service = new IbqBackupService(
-    prisma as never,
+    repos.credentials as unknown as Repository<IbqCredential>,
+    repos.integrationStatus as unknown as Repository<SalesIntegrationStatus>,
+    repos.orders as unknown as Repository<BackupIbqOrder>,
+    repos.orderLines as unknown as Repository<BackupIbqOrderLine>,
+    repos.orderPayments as unknown as Repository<BackupIbqOrderPayment>,
     orderSyncService as never,
     syncControl as never,
   );
-  return { service, prisma, orderSyncService, syncControl };
+  return { service, repos, orderSyncService, syncControl };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,33 +226,33 @@ describe('IbqBackupService', () => {
     });
 
     it('persists a new order as BackupIbqOrder', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const order = makeOrder();
       mockAxios.mockResolvedValue({ data: { result: [order] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       const result = await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrder.create).toHaveBeenCalledTimes(1);
+      expect(repos.orders.save).toHaveBeenCalledTimes(1);
       expect(result.saved).toBe(1);
       expect(result.skipped).toBe(0);
     });
 
     it('updates an existing order rather than creating a duplicate', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const order = makeOrder();
       mockAxios.mockResolvedValue({ data: { result: [order] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue({ id: 'existing-id' });
+      repos.orders.findOne.mockResolvedValue({ id: 'existing-id' });
 
       const result = await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrder.update).toHaveBeenCalledTimes(1);
-      expect(prisma.backupIbqOrder.create).not.toHaveBeenCalled();
+      expect(repos.orders.update).toHaveBeenCalledTimes(1);
+      expect(repos.orders.save).not.toHaveBeenCalled();
       expect(result.skipped).toBe(1);
     });
 
     it('persists order lines when present', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const order = makeOrder({
         lines: [
           {
@@ -266,79 +276,72 @@ describe('IbqBackupService', () => {
         ],
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderLine.deleteMany).toHaveBeenCalled();
-      expect(prisma.backupIbqOrderLine.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ lineId: 1, qty: 2 }),
-            expect.objectContaining({ lineId: 2, qty: 1 }),
-          ]),
-        }),
+      expect(repos.orderLines.delete).toHaveBeenCalled();
+      expect(repos.orderLines.insert).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ lineId: 1, qty: 2 }),
+          expect.objectContaining({ lineId: 2, qty: 1 }),
+        ]),
       );
     });
 
     it('persists payments from statement_ids when present', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const order = makeOrder({
         statement_ids: [{ id: 10, name: 'Cash', amount: 105.0 }],
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderPayment.deleteMany).toHaveBeenCalled();
-      expect(prisma.backupIbqOrderPayment.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ paymentName: 'Cash', amount: 105.0 }),
-          ]),
-        }),
+      expect(repos.orderPayments.delete).toHaveBeenCalled();
+      expect(repos.orderPayments.insert).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ paymentName: 'Cash', amount: 105.0 }),
+        ]),
       );
     });
 
     it('falls back to payment_ids when statement_ids is absent', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const order = makeOrder({
         statement_ids: undefined,
         payment_ids: [{ id: 20, name: 'Card', amount: 50.0 }],
       });
       mockAxios.mockResolvedValue({ data: { result: [order] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupIbqOrderPayment.deleteMany).toHaveBeenCalled();
-      expect(prisma.backupIbqOrderPayment.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ paymentName: 'Card', amount: 50.0 }),
-          ]),
-        }),
+      expect(repos.orderPayments.delete).toHaveBeenCalled();
+      expect(repos.orderPayments.insert).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ paymentName: 'Card', amount: 50.0 }),
+        ]),
       );
     });
 
     it('advances lastSyncAt watermark after a successful run', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.ibqCredential.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
-        }),
+      expect(repos.credentials.update).toHaveBeenCalledWith(
+        { id: 'cred-001' },
+        expect.objectContaining({ lastSyncAt: expect.any(Date) }),
       );
     });
 
     it('handles result wrapped in {data: [...]} envelope', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({ data: { data: [makeOrder()] } });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       const result = await service.backupRegion(makeCred());
 
@@ -346,9 +349,9 @@ describe('IbqBackupService', () => {
     });
 
     it('handles unwrapped array response', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({ data: [makeOrder()] });
-      prisma.backupIbqOrder.findUnique.mockResolvedValue(null);
+      repos.orders.findOne.mockResolvedValue(null);
 
       const result = await service.backupRegion(makeCred());
 
@@ -370,11 +373,11 @@ describe('IbqBackupService', () => {
     });
 
     it('increments skipped count when individual order persistence fails', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: { result: [makeOrder(), makeOrder({ id: 102 })] },
       });
-      prisma.backupIbqOrder.findUnique
+      repos.orders.findOne
         .mockResolvedValueOnce(null)
         .mockRejectedValueOnce(new Error('DB error'));
 
@@ -392,11 +395,9 @@ describe('IbqBackupService', () => {
     });
 
     it('skips a region when integration is DISABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'SA' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'SA' })]);
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
         status: 'DISABLED',
@@ -408,11 +409,9 @@ describe('IbqBackupService', () => {
     });
 
     it('processes a region when integration is ENABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'SA' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'SA' })]);
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
         status: 'ENABLED',
@@ -425,11 +424,9 @@ describe('IbqBackupService', () => {
     });
 
     it('processes a region when no status record exists (default ENABLED)', async () => {
-      const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'AE' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'AE' })]);
+      repos.integrationStatus.findOne.mockResolvedValue(null);
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
       await service.runBackupJob();
@@ -438,8 +435,8 @@ describe('IbqBackupService', () => {
     });
 
     it('logs a warning and returns early when there are no active credentials', async () => {
-      const { service, prisma } = makeService();
-      prisma.ibqCredential.findMany.mockResolvedValue([]);
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([]);
       const logSpy = jest
         .spyOn(
           (service as unknown as { logger: { warn: jest.Mock } }).logger,
@@ -456,8 +453,9 @@ describe('IbqBackupService', () => {
 
   describe('enableRegion / disableRegion', () => {
     it('upserts SalesIntegrationStatus to ENABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
+      repos.integrationStatus.save.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
         status: 'ENABLED',
@@ -465,17 +463,16 @@ describe('IbqBackupService', () => {
 
       const result = await service.enableRegion('SA');
 
-      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: { status: 'ENABLED' },
-        }),
+      expect(repos.integrationStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'ENABLED' }),
       );
       expect(result.status).toBe('ENABLED');
     });
 
     it('upserts SalesIntegrationStatus to DISABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
+      repos.integrationStatus.save.mockResolvedValue({
         region: 'SA',
         integMode: 'IBQ_BACKUP',
         status: 'DISABLED',
@@ -483,10 +480,28 @@ describe('IbqBackupService', () => {
 
       const result = await service.disableRegion('SA');
 
-      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: { status: 'DISABLED' },
-        }),
+      expect(repos.integrationStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'DISABLED' }),
+      );
+      expect(result.status).toBe('DISABLED');
+    });
+
+    it('updates an existing status record in place', async () => {
+      const { service, repos } = makeService();
+      const existing = {
+        region: 'SA',
+        integMode: 'IBQ_BACKUP',
+        status: 'ENABLED',
+      };
+      repos.integrationStatus.findOne.mockResolvedValue(existing);
+      repos.integrationStatus.save.mockImplementation((x) =>
+        Promise.resolve(x),
+      );
+
+      const result = await service.disableRegion('SA');
+
+      expect(repos.integrationStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'DISABLED' }),
       );
       expect(result.status).toBe('DISABLED');
     });

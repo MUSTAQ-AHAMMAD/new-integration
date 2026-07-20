@@ -1,136 +1,160 @@
 import { NotFoundException } from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { AuditLog } from '../database/entities/audit-log.entity';
+import { AuditStatus } from '../database/enums';
 import { AuditService } from './audit.service';
-import { PrismaService } from '../prisma/prisma.service';
 
-// ---------------------------------------------------------------------------
-// Mock factories
-// ---------------------------------------------------------------------------
-
-function makeAuditRecord(overrides: Record<string, unknown> = {}) {
+function makeAuditRecord(overrides: Partial<AuditLog> = {}): AuditLog {
   return {
     id: 'audit-001',
-    action: 'CREATE_INVOICE',
-    entityType: 'ORDER',
-    entityId: 'order-001',
-    branchCode: 'BR001',
-    userId: null,
+    idempotencyKey: 'key-001',
+    externalId: 'order-001',
+    externalSystem: 'ODOO',
+    targetSystem: 'ORACLE',
+    operation: 'CREATE_INVOICE',
+    status: AuditStatus.SUCCESS,
     requestPayload: {},
     responsePayload: null,
+    oracleResponseId: null,
     errorMessage: null,
-    statusCode: 200,
-    durationMs: 150,
-    correlationId: null,
+    errorCode: null,
+    processingDurationMs: 150,
+    attempts: 1,
     createdAt: new Date('2024-01-15T10:00:00Z'),
-    ...overrides,
-  };
+    syncDate: new Date('2024-01-15T10:00:00Z'),
+    assignId: jest.fn(),
+  } as unknown as AuditLog;
 }
-
-function makePrisma() {
-  return {
-    $queryRaw: jest.fn(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('AuditService', () => {
   let service: AuditService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let repo: {
+    findOne: jest.Mock;
+    count: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
+  let qb: {
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    take: jest.Mock;
+    skip: jest.Mock;
+    select: jest.Mock;
+    addSelect: jest.Mock;
+    groupBy: jest.Mock;
+    getMany: jest.Mock;
+    getRawMany: jest.Mock;
+  };
 
   beforeEach(() => {
-    prisma = makePrisma();
-    service = new AuditService(prisma as unknown as PrismaService);
+    qb = {
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+      getRawMany: jest.fn().mockResolvedValue([]),
+    };
+    repo = {
+      findOne: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+      createQueryBuilder: jest.fn().mockReturnValue(qb),
+    };
+    service = new AuditService(repo as unknown as Repository<AuditLog>);
     jest.clearAllMocks();
+    repo.createQueryBuilder.mockReturnValue(qb);
   });
 
   // ── search ────────────────────────────────────────────────────────────────
 
   describe('search', () => {
     it('executes query with no conditions when params are empty', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeAuditRecord()]);
+      qb.getMany.mockResolvedValueOnce([makeAuditRecord()]);
       const result = await service.search({});
-      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(qb.andWhere).not.toHaveBeenCalled();
       expect(result).toHaveLength(1);
     });
 
     it('returns empty array when no records match', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+      qb.getMany.mockResolvedValueOnce([]);
       const result = await service.search({ orderId: 'nonexistent' });
       expect(result).toHaveLength(0);
     });
 
-    it('passes the query with orderId filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+    it('applies orderId filter against externalId', async () => {
       await service.search({ orderId: 'order-001' });
-      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
-      const sqlArg = prisma.$queryRaw.mock.calls[0][0];
-      // The Prisma.sql tagged template produces a Sql object — check it includes the term
-      const sqlStr = JSON.stringify(sqlArg);
-      expect(sqlStr).toContain('order-001');
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('externalId'),
+        expect.objectContaining({ orderId: '%order-001%' }),
+      );
     });
 
-    it('applies entityType filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
-      await service.search({ entityType: 'ORDER' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('ORDER');
+    it('applies entityType filter against externalSystem', async () => {
+      await service.search({ entityType: 'ODOO' });
+      expect(qb.andWhere).toHaveBeenCalledWith('a.externalSystem = :entityType', {
+        entityType: 'ODOO',
+      });
     });
 
-    it('applies action filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+    it('applies action filter against operation', async () => {
       await service.search({ action: 'CREATE_INVOICE' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('CREATE_INVOICE');
+      expect(qb.andWhere).toHaveBeenCalledWith('a.operation = :action', {
+        action: 'CREATE_INVOICE',
+      });
     });
 
     it('applies startDate and endDate filters', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
-      await service.search({
-        startDate: '2024-01-01',
-        endDate: '2024-01-31',
-      });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('2024-01-01');
-      expect(sqlStr).toContain('2024-01-31');
+      await service.search({ startDate: '2024-01-01', endDate: '2024-01-31' });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'a.createdAt >= :startDate',
+        expect.objectContaining({ startDate: expect.any(Date) }),
+      );
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'a.createdAt <= :endDate',
+        expect.objectContaining({ endDate: expect.any(Date) }),
+      );
     });
 
-    it('applies status "success" filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+    it('maps status "success" to AuditStatus.SUCCESS', async () => {
       await service.search({ status: 'success' });
-      // Successful path: COALESCE("statusCode", 0) < 400
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('400');
+      expect(qb.andWhere).toHaveBeenCalledWith('a.status = :status', {
+        status: AuditStatus.SUCCESS,
+      });
     });
 
-    it('applies status "failed" filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+    it('maps status "failed" to AuditStatus.FAILED', async () => {
       await service.search({ status: 'failed' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('400');
+      expect(qb.andWhere).toHaveBeenCalledWith('a.status = :status', {
+        status: AuditStatus.FAILED,
+      });
     });
 
-    it('applies status "error" filter (alias for failed)', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
+    it('maps status "error" to AuditStatus.FAILED', async () => {
       await service.search({ status: 'error' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('400');
+      expect(qb.andWhere).toHaveBeenCalledWith('a.status = :status', {
+        status: AuditStatus.FAILED,
+      });
     });
 
-    it('applies numeric status code filter', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
-      await service.search({ status: '500' });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('500');
+    it('passes an exact status value through', async () => {
+      await service.search({ status: 'RETRY' });
+      expect(qb.andWhere).toHaveBeenCalledWith('a.status = :status', {
+        status: 'RETRY',
+      });
     });
 
     it('respects limit and offset params', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([]);
       await service.search({ limit: 10, offset: 20 });
-      const sqlStr = JSON.stringify(prisma.$queryRaw.mock.calls[0][0]);
-      expect(sqlStr).toContain('10');
-      expect(sqlStr).toContain('20');
+      expect(qb.take).toHaveBeenCalledWith(10);
+      expect(qb.skip).toHaveBeenCalledWith(20);
+    });
+
+    it('defaults limit to 50 and offset to 0', async () => {
+      await service.search({});
+      expect(qb.take).toHaveBeenCalledWith(50);
+      expect(qb.skip).toHaveBeenCalledWith(0);
     });
   });
 
@@ -138,16 +162,16 @@ describe('AuditService', () => {
 
   describe('getEntry', () => {
     it('returns the record when found', async () => {
-      prisma.$queryRaw.mockResolvedValueOnce([makeAuditRecord()]);
+      repo.findOne.mockResolvedValueOnce(makeAuditRecord());
       const record = await service.getEntry('audit-001');
       expect(record).toMatchObject({
         id: 'audit-001',
-        action: 'CREATE_INVOICE',
+        operation: 'CREATE_INVOICE',
       });
     });
 
     it('throws NotFoundException when no record is found', async () => {
-      prisma.$queryRaw.mockResolvedValue([]);
+      repo.findOne.mockResolvedValue(null);
       await expect(service.getEntry('missing')).rejects.toThrow(
         NotFoundException,
       );
@@ -161,42 +185,29 @@ describe('AuditService', () => {
 
   describe('getStats', () => {
     it('returns stats with byAction, byEntityType, errorRate, total, errors', async () => {
-      // Three parallel queries: actions, entityTypes, totals
-      prisma.$queryRaw
-        .mockResolvedValueOnce([{ key: 'CREATE_INVOICE', count: 10 }])
-        .mockResolvedValueOnce([{ key: 'ORDER', count: 10 }])
-        .mockResolvedValueOnce([{ total: 10, errors: 2 }]);
+      qb.getRawMany
+        .mockResolvedValueOnce([{ key: 'CREATE_INVOICE', count: 10 }]) // actions
+        .mockResolvedValueOnce([{ key: 'ODOO', count: 10 }]); // entity types
+      repo.count
+        .mockResolvedValueOnce(10) // total
+        .mockResolvedValueOnce(2); // errors
 
       const stats = await service.getStats();
 
       expect(stats.byAction).toEqual([{ action: 'CREATE_INVOICE', count: 10 }]);
-      expect(stats.byEntityType).toEqual([{ entityType: 'ORDER', count: 10 }]);
+      expect(stats.byEntityType).toEqual([{ entityType: 'ODOO', count: 10 }]);
       expect(stats.total).toBe(10);
       expect(stats.errors).toBe(2);
       expect(stats.errorRate).toBeCloseTo(0.2);
     });
 
     it('returns 0 errorRate when total is 0', async () => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ total: 0, errors: 0 }]);
+      qb.getRawMany.mockResolvedValue([]);
+      repo.count.mockResolvedValueOnce(0).mockResolvedValueOnce(0);
 
       const stats = await service.getStats();
       expect(stats.errorRate).toBe(0);
       expect(stats.total).toBe(0);
-    });
-
-    it('handles missing totals row gracefully', async () => {
-      prisma.$queryRaw
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([]); // empty totals
-
-      const stats = await service.getStats();
-      expect(stats.total).toBe(0);
-      expect(stats.errors).toBe(0);
-      expect(stats.errorRate).toBe(0);
     });
   });
 });

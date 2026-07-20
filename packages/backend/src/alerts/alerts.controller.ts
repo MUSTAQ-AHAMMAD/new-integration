@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { AlertSeverity } from '@prisma/client';
+import { AlertSeverity } from '../database/enums';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { parseLimit } from '../common/parse-limit';
 import { AlertsService } from './alerts.service';

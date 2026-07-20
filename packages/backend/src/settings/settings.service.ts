@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CronTime, validateCronExpression } from 'cron';
+import { NotificationRecipient } from '../database/entities/notification-recipient.entity';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 
 export interface AlertThresholds {
@@ -41,15 +43,16 @@ export class SettingsService {
   private readonly retryPolicyKey = 'settings:retry-policy';
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(NotificationRecipient)
+    private readonly recipients: Repository<NotificationRecipient>,
     private readonly redis: RedisService,
     private readonly configService: ConfigService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
   async getSettings() {
-    const recipients = await this.prisma.notificationRecipient.findMany({
-      orderBy: { name: 'asc' },
+    const recipients = await this.recipients.find({
+      order: { name: 'ASC' },
     });
 
     return {

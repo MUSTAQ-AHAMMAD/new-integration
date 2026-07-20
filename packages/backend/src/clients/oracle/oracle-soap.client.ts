@@ -60,6 +60,84 @@ export interface InvoiceResponse {
   customerTrxId: string;
 }
 
+/**
+ * A credit-memo line. Amounts are always POSITIVE magnitudes here — the SOAP
+ * builder negates unitSellingPrice so Oracle records a credit (matching the
+ * "negative-amount transaction = credit note" convention used across the sync).
+ */
+export interface CreditMemoLine {
+  lineNumber: number;
+  itemNumber?: string;
+  memoLineName?: string;
+  description?: string;
+  quantity: number;
+  uomCode?: string;
+  /** Positive magnitude of the unit price; emitted negated on the wire. */
+  unitSellingPrice: number;
+  currencyCode: string;
+  salesOrder: string;
+  salesOrderLine?: string;
+  taxClassificationCode?: string;
+}
+
+/**
+ * Credit-memo header. Mirrors InvoiceHeader but is sent to Oracle with a
+ * Credit-Memo-class transaction type and negated line amounts. When
+ * originalTransactionNumber is set, the memo references the original Oracle
+ * invoice so finance/AutoInvoice can net it against that transaction; when it
+ * is absent the memo is created on-account (standalone).
+ */
+export interface CreditMemoHeader {
+  billToCustomerName: string;
+  billToLocation: string;
+  billToAccountNumber: string;
+  businessUnit: string;
+  outletName?: string;
+  memoDate: Date;
+  /** GL date; defaults to memoDate. */
+  glDate?: Date;
+  paymentTermsName?: string;
+  transactionSource: string;
+  /** Oracle transaction type of class "Credit Memo". */
+  transactionType: string;
+  invoiceCurrencyCode: string;
+  conversionRateType: string;
+  conversionRate?: number;
+  conversionDate?: Date;
+  /** Oracle TransactionNumber of the invoice this memo credits, if known. */
+  originalTransactionNumber?: string;
+  /** Free-text reason surfaced on the memo (Comments). */
+  reason?: string;
+  creditMemoLines: CreditMemoLine[];
+}
+
+export interface CreditMemoResponse {
+  serviceStatus: string;
+  transactionNumber: string;
+  customerTrxId: string;
+}
+
+/**
+ * Application of a credit memo against the invoice it credits (the AR
+ * "receivable application" the Receivables UI creates). transactionNumber is
+ * the ORIGINAL invoice; creditMemoNumber is the memo created by createCreditMemo.
+ * amountApplied is a positive magnitude.
+ */
+export interface ApplyCreditMemoRequest {
+  applyDate: Date;
+  /** Oracle TransactionNumber of the invoice being credited. */
+  transactionNumber: string;
+  /** Oracle TransactionNumber of the credit memo to apply. */
+  creditMemoNumber: string;
+  amountApplied: number;
+  currencyCode: string;
+}
+
+export interface ApplyCreditMemoResponse {
+  serviceStatus: string;
+  applicationId: string;
+}
+
 export interface StandardReceiptRequest {
   currencyCode: string;
   saleDate: Date;
@@ -239,6 +317,129 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
         ${linesXml}
       </typ:invoiceHeaderInformation>
     </typ:createSimpleInvoice>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+/**
+ * Builds the SOAP envelope for a credit memo. Uses the same RecInvoiceService
+ * createSimpleInvoice operation as an invoice (the operation accepts any
+ * transaction type, including a Credit-Memo-class type), with two differences:
+ *   • TransactionType is a Credit-Memo-class type (header.transactionType), and
+ *   • every line's UnitSellingPrice is NEGATED, so Oracle records a credit.
+ * When header.originalTransactionNumber is present it is emitted as a
+ * CrossReference/Comments so the memo is tied back to the invoice it credits
+ * (an "applied" memo); otherwise the memo is created on-account.
+ *
+ * NOTE: The exact reference element name Oracle expects for auto-application via
+ * this wrapper service can differ by pod configuration. We send the linkage as a
+ * Comments note (always safe) plus a CrossReference tag; verify against your
+ * Fusion instance and adjust the tag name if AutoInvoice does not auto-apply.
+ */
+function buildCreditMemoSoap(header: CreditMemoHeader): string {
+  const linesXml = header.creditMemoLines
+    .map(
+      (l) => `
+        <typ1:InvoiceLine>
+          <typ1:LineNumber>${l.lineNumber}</typ1:LineNumber>
+          ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
+          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
+          ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
+          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${-Math.abs(l.unitSellingPrice)}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
+          ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
+          ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
+        </typ1:InvoiceLine>`,
+    )
+    .join('');
+
+  const comments = [
+    header.originalTransactionNumber
+      ? `Credit memo for invoice ${header.originalTransactionNumber}`
+      : 'On-account credit memo',
+    header.reason,
+  ]
+    .filter(Boolean)
+    .join(' — ');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:typ="http://xmlns.oracle.com/apps/financials/receivables/transactions/invoices/invoiceService/types/"
+  xmlns:typ1="http://xmlns.oracle.com/apps/financials/receivables/transactions/invoices/invoiceService/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <typ:createSimpleInvoice>
+      <typ:invoiceHeaderInformation>
+        <typ1:BusinessUnit>${escapeXml(header.businessUnit)}</typ1:BusinessUnit>
+        <typ1:TransactionSource>${escapeXml(header.transactionSource)}</typ1:TransactionSource>
+        <typ1:TransactionType>${escapeXml(header.transactionType)}</typ1:TransactionType>
+        <typ1:TrxDate>${xmlDate(header.memoDate)}</typ1:TrxDate>
+        <typ1:GlDate>${xmlDate(header.glDate ?? header.memoDate)}</typ1:GlDate>
+        <typ1:BillToCustomerName>${escapeXml(header.billToCustomerName)}</typ1:BillToCustomerName>
+        <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
+        <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
+        ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
+        <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
+        ${
+          header.conversionRateType === 'User'
+            ? `<typ1:ConversionRateType>User</typ1:ConversionRateType>
+        ${header.conversionRate !== undefined ? `<typ1:ConversionRate>${header.conversionRate}</typ1:ConversionRate>` : ''}
+        ${header.conversionDate ? `<typ1:ConversionDate>${xmlDate(header.conversionDate)}</typ1:ConversionDate>` : ''}`
+            : ''
+        }
+        ${header.originalTransactionNumber ? `<typ1:CrossReference>${escapeXml(header.originalTransactionNumber)}</typ1:CrossReference>` : ''}
+        ${comments ? `<typ1:Comments>${escapeXml(comments)}</typ1:Comments>` : ''}
+        ${linesXml}
+      </typ:invoiceHeaderInformation>
+    </typ:createSimpleInvoice>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+// ── Credit-memo application ────────────────────────────────────────────────
+// Applies a credit memo to the invoice it credits, mirroring the shape of the
+// (working) createApplyReceipt envelope. The service path, SOAPAction and target
+// namespace are ENV-CONFIGURABLE because the exact op differs by Fusion pod and
+// is not verifiable offline — set them from your instance's WSDL:
+//   ORACLE_CM_APPLY_SERVICE_PATH  (default below)
+//   ORACLE_CM_APPLY_SOAP_ACTION   (default below)
+//   ORACLE_CM_APPLY_NAMESPACE     (default below)
+// The whole step is gated by ORACLE_CM_APPLY_ENABLED (default off) so it never
+// fires against an unverified endpoint.
+const CM_APPLY_DEFAULTS = {
+  servicePath: '/fscmService/CreditMemoService',
+  soapAction:
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/applyCreditMemo',
+  namespaceTypes:
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/types/',
+  namespaceModel:
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/',
+};
+
+function buildApplyCreditMemoSoap(req: ApplyCreditMemoRequest): string {
+  const nsTypes =
+    process.env.ORACLE_CM_APPLY_NAMESPACE_TYPES ??
+    CM_APPLY_DEFAULTS.namespaceTypes;
+  const nsModel =
+    process.env.ORACLE_CM_APPLY_NAMESPACE ?? CM_APPLY_DEFAULTS.namespaceModel;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:typ="${nsTypes}"
+  xmlns:typ1="${nsModel}">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <typ:applyCreditMemo>
+      <typ:creditMemoApplication>
+        <typ1:ApplyDate>${xmlDate(req.applyDate)}</typ1:ApplyDate>
+        <typ1:TransactionNumber>${escapeXml(req.transactionNumber)}</typ1:TransactionNumber>
+        <typ1:CreditMemoNumber>${escapeXml(req.creditMemoNumber)}</typ1:CreditMemoNumber>
+        <typ1:AmountApplied>${Math.abs(req.amountApplied)}</typ1:AmountApplied>
+        <typ1:CurrencyCode>${req.currencyCode}</typ1:CurrencyCode>
+      </typ:creditMemoApplication>
+    </typ:applyCreditMemo>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -762,6 +963,173 @@ export class OracleSoapClient implements OnModuleInit {
           transactionNumber,
           customerTrxId,
         };
+      }),
+    );
+  }
+
+  // ── Credit Memo Service ────────────────────────────────────
+
+  /**
+   * Creates an Oracle AR credit memo for a refund via RecInvoiceService
+   * (createSimpleInvoice with a Credit-Memo-class transaction type and negated
+   * line amounts). Returns the credit-memo transaction number on success and
+   * throws on Oracle Status E / empty transaction number so the caller can mark
+   * the refund FAILED and surface it for review.
+   */
+  async createCreditMemo(
+    header: CreditMemoHeader,
+  ): Promise<CreditMemoResponse> {
+    return this.circuitBreaker.execute('oracle:createCreditMemo', () =>
+      this.withRetries(async () => {
+        const memoTotal = header.creditMemoLines.reduce(
+          (s, l) => s + Math.abs(l.unitSellingPrice) * l.quantity,
+          0,
+        );
+        this.logger.log(
+          `Creating credit memo for ${header.billToCustomerName} ` +
+            `(type=${header.transactionType}, amount=-${memoTotal} ${header.invoiceCurrencyCode}, ` +
+            `${header.originalTransactionNumber ? `applied to invoice ${header.originalTransactionNumber}` : 'on-account'})...`,
+        );
+
+        const body = buildCreditMemoSoap(header);
+        const truncatedBody =
+          body.length > 5000 ? body.substring(0, 5000) + '\n... (truncated)' : body;
+        this.logger.debug(
+          `📤 Oracle Credit Memo SOAP XML Payload (${body.length} chars):\n${truncatedBody}`,
+        );
+
+        const xml = await this.soapPost(
+          '/fscmService/RecInvoiceService',
+          body,
+          'http://xmlns.oracle.com/apps/financials/receivables/transactions/invoices/invoiceService/createSimpleInvoice',
+          'createCreditMemo',
+        );
+        this.assertNoFault(xml, 'createCreditMemo');
+
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
+          'SUCCESS';
+        const transactionNumber =
+          extractTag(xml, 'TransactionNumber') ||
+          extractTag(xml, 'transactionNumber') ||
+          '';
+        const customerTrxId =
+          extractTag(xml, 'CustomerTrxId') ||
+          extractTag(xml, 'customerTrxId') ||
+          '';
+
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          const errorMessage = extractErrorMessage(xml);
+          this.logger.error(
+            `❌ Credit memo creation failed with Status E:\n` +
+              `  Transaction Number: ${transactionNumber || 'null'}\n` +
+              `  Customer Trx ID: ${customerTrxId || 'N/A'}\n` +
+              `  Error Message: ${errorMessage || '(none)'}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+          throw new Error(
+            `Oracle credit memo creation failed with Status E: ${displayError} ` +
+              `Transaction Number: ${transactionNumber || 'null'}`,
+          );
+        }
+
+        if (!transactionNumber || transactionNumber.trim() === '') {
+          this.logger.error(
+            `❌ Credit memo creation returned empty transaction number:\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle credit memo creation succeeded but returned no transaction number. ` +
+              `Status: ${serviceStatus}, Customer Trx ID: ${customerTrxId || 'N/A'}`,
+          );
+        }
+
+        this.logger.log(
+          `✅ Credit memo created successfully: txn=${transactionNumber}, status=${serviceStatus}`,
+        );
+        return { serviceStatus, transactionNumber, customerTrxId };
+      }),
+    );
+  }
+
+  /** True when credit-memo application is opted in (ORACLE_CM_APPLY_ENABLED). */
+  isCreditMemoApplicationEnabled(): boolean {
+    return process.env.ORACLE_CM_APPLY_ENABLED === 'true';
+  }
+
+  /**
+   * Applies a credit memo to the invoice it credits. Opt-in and env-configurable
+   * (see CM_APPLY_DEFAULTS / buildApplyCreditMemoSoap) because the exact Oracle
+   * op differs by pod and cannot be verified offline. Returns disabled=true
+   * without calling Oracle when ORACLE_CM_APPLY_ENABLED !== 'true'.
+   */
+  async applyCreditMemo(
+    req: ApplyCreditMemoRequest,
+  ): Promise<ApplyCreditMemoResponse & { disabled?: boolean }> {
+    if (!this.isCreditMemoApplicationEnabled()) {
+      this.logger.debug(
+        'Credit-memo application is disabled (ORACLE_CM_APPLY_ENABLED != true) — ' +
+          'memo left on-account.',
+      );
+      return { serviceStatus: 'DISABLED', applicationId: '', disabled: true };
+    }
+
+    const servicePath =
+      process.env.ORACLE_CM_APPLY_SERVICE_PATH ?? CM_APPLY_DEFAULTS.servicePath;
+    const soapAction =
+      process.env.ORACLE_CM_APPLY_SOAP_ACTION ?? CM_APPLY_DEFAULTS.soapAction;
+
+    return this.circuitBreaker.execute('oracle:applyCreditMemo', () =>
+      this.withRetries(async () => {
+        this.logger.log(
+          `Applying credit memo ${req.creditMemoNumber} to invoice ` +
+            `${req.transactionNumber} (amount ${Math.abs(req.amountApplied)} ${req.currencyCode})...`,
+        );
+        const body = buildApplyCreditMemoSoap(req);
+        const xml = await this.soapPost(
+          servicePath,
+          body,
+          soapAction,
+          'applyCreditMemo',
+        );
+        this.assertNoFault(xml, 'applyCreditMemo');
+
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
+          'SUCCESS';
+        const applicationId =
+          extractTag(xml, 'ApplicationId') ||
+          extractTag(xml, 'applicationId') ||
+          extractTag(xml, 'ReceivableApplicationId') ||
+          '';
+
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          const errorMessage = extractErrorMessage(xml);
+          this.logger.error(
+            `❌ Credit memo application failed with Status E:\n` +
+              `  Credit Memo: ${req.creditMemoNumber}\n` +
+              `  Invoice: ${req.transactionNumber}\n` +
+              `  Error Message: ${errorMessage || '(none)'}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle credit memo application failed with Status E: ${
+              errorMessage || 'no error details'
+            } (memo ${req.creditMemoNumber} → invoice ${req.transactionNumber})`,
+          );
+        }
+
+        this.logger.log(
+          `✅ Credit memo ${req.creditMemoNumber} applied to invoice ${req.transactionNumber}` +
+            (applicationId ? ` (applicationId=${applicationId})` : ''),
+        );
+        return { serviceStatus, applicationId };
       }),
     );
   }

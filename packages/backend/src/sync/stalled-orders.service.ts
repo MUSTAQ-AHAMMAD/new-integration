@@ -1,15 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, LessThan, MoreThanOrEqual, Repository } from 'typeorm';
 import {
   AlertSeverity,
   AlertType,
   ErrorType,
-  Prisma,
   SyncStatus,
-} from '@prisma/client';
+} from '../database/enums';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { SyncControlService } from './sync-control.service';
 
 /** Default stale-order threshold in hours (overridden by STALE_THRESHOLD_HOURS env var). */
@@ -42,7 +44,10 @@ export class StalledOrdersService {
   private readonly maxSyncAttempts: number;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactionRepo: Repository<FailedTransaction>,
     private readonly alertsService: AlertsService,
     private readonly syncControl: SyncControlService,
     configService: ConfigService,
@@ -101,10 +106,10 @@ export class StalledOrdersService {
       Date.now() - this.staleThresholdHours * 60 * 60 * 1000,
     );
 
-    const stalledOrders = await this.prisma.orderSyncQueue.findMany({
+    const stalledOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.PENDING,
-        createdAt: { lt: cutoff },
+        createdAt: LessThan(cutoff),
       },
       select: {
         id: true,
@@ -113,7 +118,7 @@ export class StalledOrdersService {
         branchCode: true,
         createdAt: true,
       },
-      orderBy: { branchCode: 'asc' },
+      order: { branchCode: 'ASC' },
     });
 
     if (stalledOrders.length === 0) {
@@ -204,10 +209,10 @@ export class StalledOrdersService {
       Date.now() - this.cancelThresholdHours * 60 * 60 * 1000,
     );
 
-    const staleOrders = await this.prisma.orderSyncQueue.findMany({
+    const staleOrders = await this.orderSyncQueueRepo.find({
       where: {
-        status: { in: CLEANUP_ELIGIBLE_STATUSES },
-        createdAt: { lt: cutoff },
+        status: In(CLEANUP_ELIGIBLE_STATUSES),
+        createdAt: LessThan(cutoff),
       },
       select: {
         id: true,
@@ -268,10 +273,10 @@ export class StalledOrdersService {
    * number of orders failed.
    */
   private async failExhaustedRetries(): Promise<number> {
-    const exhaustedOrders = await this.prisma.orderSyncQueue.findMany({
+    const exhaustedOrders = await this.orderSyncQueueRepo.find({
       where: {
-        status: { in: CLEANUP_ELIGIBLE_STATUSES },
-        syncAttempts: { gte: this.maxSyncAttempts },
+        status: In(CLEANUP_ELIGIBLE_STATUSES),
+        syncAttempts: MoreThanOrEqual(this.maxSyncAttempts),
       },
       select: {
         id: true,
@@ -335,25 +340,22 @@ export class StalledOrdersService {
     attempts: number,
     errorType: ErrorType,
   ): Promise<void> {
-    await this.prisma.orderSyncQueue.update({
-      where: { id: orderId },
-      data: {
-        status: SyncStatus.FAILED,
-        validationErrors: { error: reason, cancelledByCleanup: true },
-      },
+    await this.orderSyncQueueRepo.update(orderId, {
+      status: SyncStatus.FAILED,
+      validationErrors: { error: reason, cancelledByCleanup: true },
     });
 
-    await this.prisma.failedTransaction
-      .create({
-        data: {
+    await this.failedTransactionRepo
+      .save(
+        this.failedTransactionRepo.create({
           orderSyncQueueId: orderId,
-          originalPayload: Prisma.JsonNull,
+          originalPayload: null,
           errorType,
           errorMessage: reason,
           retryCount: attempts,
           maxRetries: this.maxSyncAttempts,
-        },
-      })
+        }),
+      )
       .catch((err) =>
         this.logger.error(
           `Failed to record cleanup audit for order ${orderId}: ${(err as Error).message}`,
@@ -366,10 +368,10 @@ export class StalledOrdersService {
     const cutoff = new Date(
       Date.now() - this.staleThresholdHours * 60 * 60 * 1000,
     );
-    return this.prisma.orderSyncQueue.count({
+    return this.orderSyncQueueRepo.count({
       where: {
         status: SyncStatus.PENDING,
-        createdAt: { lt: cutoff },
+        createdAt: LessThan(cutoff),
       },
     });
   }

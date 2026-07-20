@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncStatus } from '../database/enums';
 import { QueuesService } from '../queues/queues.service';
-import { SyncStatus } from '@prisma/client';
 
 /**
  * Bulk retry service for processing thousands of failed transactions
@@ -12,7 +14,8 @@ export class BulkRetryService {
   private readonly logger = new Logger(BulkRetryService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
     private readonly queuesService: QueuesService,
   ) {}
 
@@ -49,13 +52,13 @@ export class BulkRetryService {
       // === STEP 1: IDENTIFY FAILED TRANSACTIONS ===
       this.logger.log('Step 1/5: Identifying failed transactions...');
 
-      const failedOrders = await this.prisma.orderSyncQueue.findMany({
+      const failedOrders = await this.orderSyncQueueRepo.find({
         where: {
           status: SyncStatus.FAILED,
         },
-        orderBy: [
-          { createdAt: 'asc' }, // FIFO ordering
-        ],
+        order: {
+          createdAt: 'ASC', // FIFO ordering
+        },
         take: maxTransactions,
         select: {
           id: true,
@@ -118,9 +121,9 @@ export class BulkRetryService {
       this.logger.log('Step 3/5: Checking for duplicates...');
 
       const orderIds = sortedOrders.map((o) => o.odooOrderId);
-      const alreadyQueued = await this.prisma.orderSyncQueue.findMany({
+      const alreadyQueued = await this.orderSyncQueueRepo.find({
         where: {
-          odooOrderId: { in: orderIds },
+          odooOrderId: In(orderIds),
           status: SyncStatus.QUEUED_FOR_RETRY,
         },
         select: { odooOrderId: true },
@@ -145,18 +148,21 @@ export class BulkRetryService {
       for (let i = 0; i < ordersToRetry.length; i += BATCH_SIZE) {
         const batch = ordersToRetry.slice(i, i + BATCH_SIZE);
 
-        await this.prisma.$transaction(async (tx) => {
+        await this.orderSyncQueueRepo.manager.transaction(async (mgr) => {
+          const txRepo = mgr.getRepository(OrderSyncQueue);
           for (const order of batch) {
             try {
-              // Update status to QUEUED_FOR_RETRY
-              await tx.orderSyncQueue.update({
-                where: { id: order.id },
-                data: {
+              // Update status to QUEUED_FOR_RETRY and bump syncAttempts by 1.
+              await txRepo
+                .createQueryBuilder()
+                .update(OrderSyncQueue)
+                .set({
                   status: SyncStatus.QUEUED_FOR_RETRY,
-                  syncAttempts: { increment: 1 },
+                  syncAttempts: () => '"syncAttempts" + 1',
                   updatedAt: new Date(),
-                },
-              });
+                })
+                .where('id = :id', { id: order.id })
+                .execute();
 
               // Add to BullMQ queue
               await this.queuesService.enqueueOrderSync({
@@ -185,7 +191,7 @@ export class BulkRetryService {
       // === STEP 5: VERIFY ===
       this.logger.log('Step 5/5: Verifying queue status...');
 
-      const nowQueued = await this.prisma.orderSyncQueue.count({
+      const nowQueued = await this.orderSyncQueueRepo.count({
         where: {
           status: SyncStatus.QUEUED_FOR_RETRY,
         },
@@ -243,46 +249,44 @@ export class BulkRetryService {
     oldestFailed: Date | null;
   }> {
     const [totalFailed, byStatus, byBranch, oldestOrder] = await Promise.all([
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: {
           status: SyncStatus.FAILED,
         },
       }),
-      this.prisma.orderSyncQueue.groupBy({
-        by: ['status'],
+      this.orderSyncQueueRepo
+        .createQueryBuilder('o')
+        .select('o.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('o.status = :status', { status: SyncStatus.FAILED })
+        .groupBy('o.status')
+        .getRawMany<{ status: string; count: string | number }>(),
+      this.orderSyncQueueRepo
+        .createQueryBuilder('o')
+        .select('o.branchCode', 'branchCode')
+        .addSelect('COUNT(*)', 'count')
+        .where('o.status = :status', { status: SyncStatus.FAILED })
+        .groupBy('o.branchCode')
+        .orderBy('count', 'DESC')
+        .limit(10)
+        .getRawMany<{ branchCode: string; count: string | number }>(),
+      this.orderSyncQueueRepo.findOne({
         where: {
           status: SyncStatus.FAILED,
         },
-        _count: true,
-      }),
-      this.prisma.orderSyncQueue.groupBy({
-        by: ['branchCode'],
-        where: {
-          status: SyncStatus.FAILED,
-        },
-        _count: true,
-        orderBy: {
-          _count: {
-            branchCode: 'desc',
-          },
-        },
-        take: 10,
-      }),
-      this.prisma.orderSyncQueue.findFirst({
-        where: {
-          status: SyncStatus.FAILED,
-        },
-        orderBy: { createdAt: 'asc' },
+        order: { createdAt: 'ASC' },
         select: { createdAt: true },
       }),
     ]);
 
     return {
       totalFailed,
-      byStatus: Object.fromEntries(byStatus.map((s) => [s.status, s._count])),
+      byStatus: Object.fromEntries(
+        byStatus.map((s) => [s.status, Number(s.count)]),
+      ),
       byBranch: byBranch.map((b) => ({
         branchCode: b.branchCode,
-        count: b._count,
+        count: Number(b.count),
       })),
       oldestFailed: oldestOrder?.createdAt || null,
     };

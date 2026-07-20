@@ -17,8 +17,10 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { OracleNativeService } from '../admin/oracle-native.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
 import { SyncControlService } from '../sync/sync-control.service';
 
 /** Oracle DB source table holding the item master. */
@@ -37,7 +39,8 @@ export class ItemSyncService {
   private readonly logger = new Logger(ItemSyncService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(VendHqItemMeta)
+    private readonly itemMeta: Repository<VendHqItemMeta>,
     private readonly oracleNative: OracleNativeService,
     private readonly syncControl: SyncControlService,
   ) {}
@@ -105,9 +108,9 @@ export class ItemSyncService {
   }
 
   async getItemSyncStatus(region?: string) {
-    return this.prisma.vendHqItemMeta.findMany({
+    return this.itemMeta.find({
       where: region ? { region } : undefined,
-      orderBy: { lastUpdateDate: 'desc' },
+      order: { lastUpdateDate: 'DESC' },
       take: 100,
     });
   }

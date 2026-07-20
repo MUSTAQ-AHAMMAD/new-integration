@@ -1,7 +1,10 @@
 import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
 
 /**
  * Diagnostic controller to help troubleshoot Odoo backup data issues.
@@ -10,7 +13,14 @@ import { PrismaService } from '../prisma/prisma.service';
 @ApiTags('odoo-backup-diagnostics')
 @Controller('odoo-backup/diagnostics')
 export class OdooBackupDiagnosticsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(BackupOdooOrder)
+    private readonly orders: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupOdooOrderLine)
+    private readonly orderLines: Repository<BackupOdooOrderLine>,
+    @InjectRepository(BackupOdooOrderPayment)
+    private readonly orderPayments: Repository<BackupOdooOrderPayment>,
+  ) {}
 
   /**
    * Analyze the structure of a specific order's raw JSON to diagnose why
@@ -22,7 +32,7 @@ export class OdooBackupDiagnosticsController {
       'Analyze raw JSON structure of an order to diagnose missing lines/payments',
   })
   async analyzeOrder(@Param('orderId') orderId: string) {
-    const order = await this.prisma.backupOdooOrder.findFirst({
+    const order = await this.orders.findOne({
       where: { orderId: parseInt(orderId, 10) },
       select: {
         id: true,
@@ -65,13 +75,13 @@ export class OdooBackupDiagnosticsController {
       'Get summary of backup data quality (orders with/without embedded lines/payments)',
   })
   async getSummary() {
-    const totalOrders = await this.prisma.backupOdooOrder.count();
-    const totalLines = await this.prisma.backupOdooOrderLine.count();
-    const totalPayments = await this.prisma.backupOdooOrderPayment.count();
+    const totalOrders = await this.orders.count();
+    const totalLines = await this.orderLines.count();
+    const totalPayments = await this.orderPayments.count();
 
     // Get a sample order to analyze
-    const sampleOrder = await this.prisma.backupOdooOrder.findFirst({
-      where: { rawJson: { not: Prisma.JsonNull } },
+    const sampleOrder = await this.orders.findOne({
+      where: { rawJson: Not(IsNull()) },
       select: { orderId: true, orderName: true, rawJson: true },
     });
 
@@ -238,10 +248,10 @@ export class OdooBackupDiagnosticsController {
   }
 
   private async getActualCounts(orderId: number) {
-    const lineCount = await this.prisma.backupOdooOrderLine.count({
+    const lineCount = await this.orderLines.count({
       where: { orderId },
     });
-    const paymentCount = await this.prisma.backupOdooOrderPayment.count({
+    const paymentCount = await this.orderPayments.count({
       where: { orderId },
     });
 

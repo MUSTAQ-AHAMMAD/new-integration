@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { JobType, ScopeType } from '@prisma/client';
+import { JobType, ScopeType } from '../../database/enums';
 import {
   IsArray,
   IsDateString,

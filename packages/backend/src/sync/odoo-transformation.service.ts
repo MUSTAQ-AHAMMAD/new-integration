@@ -18,8 +18,12 @@
  *   StoreConfiguration               → billTo / businessUnit / transactionSource
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   ApplyReceiptRequest,
+  CreditMemoHeader,
+  CreditMemoLine,
   InvoiceHeader,
   InvoiceLine,
   JournalHeader,
@@ -27,7 +31,14 @@ import {
   MiscReceiptRequest,
   StandardReceiptRequest,
 } from '../clients/oracle/oracle-soap.client';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionCustomerAccount } from '../database/entities/fusion-customer-account.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 
 export interface OdooTransformResult {
@@ -42,7 +53,24 @@ export interface OdooTransformResult {
 export class OdooTransformationService {
   private readonly logger = new Logger(OdooTransformationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(FusionSalesMetadata)
+    private readonly salesMetadataRepo: Repository<FusionSalesMetadata>,
+    @InjectRepository(VendHqRegister)
+    private readonly registerRepo: Repository<VendHqRegister>,
+    @InjectRepository(FusionCustomerAccount)
+    private readonly customerAccountRepo: Repository<FusionCustomerAccount>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOrderRepo: Repository<BackupOdooOrder>,
+    @InjectRepository(StoreConfiguration)
+    private readonly storeConfigRepo: Repository<StoreConfiguration>,
+    @InjectRepository(FusionBusinessUnitMap)
+    private readonly businessUnitMapRepo: Repository<FusionBusinessUnitMap>,
+    @InjectRepository(FusionReceiptMethod)
+    private readonly receiptMethodRepo: Repository<FusionReceiptMethod>,
+    @InjectRepository(ServiceProviderJournalMeta)
+    private readonly journalMetaRepo: Repository<ServiceProviderJournalMeta>,
+  ) {}
 
   /**
    * Convert Prisma Decimal or BigInt to number safely
@@ -70,12 +98,12 @@ export class OdooTransformationService {
     branchName: string,
   ) {
     if (customerType && customerType.toUpperCase() !== 'NORMAL') {
-      const byType = await this.prisma.fusionSalesMetadata.findFirst({
+      const byType = await this.salesMetadataRepo.findOne({
         where: { customerType, region },
       });
       if (byType) return byType;
     }
-    const candidates = await this.prisma.fusionSalesMetadata.findMany({
+    const candidates = await this.salesMetadataRepo.find({
       where: { region, customerType: 'NORMAL' },
     });
     const target = this.normalizeName(branchName);
@@ -91,7 +119,7 @@ export class OdooTransformationService {
    * the source of truth for receipt remittance accounts.
    */
   private async resolveRegisterAccounts(branchName: string, region: string) {
-    const registers = await this.prisma.vendHqRegister.findMany({
+    const registers = await this.registerRepo.find({
       where: { region },
     });
     const target = this.normalizeName(branchName);
@@ -117,8 +145,8 @@ export class OdooTransformationService {
       ? BigInt(accountNumber.trim())
       : null;
     if (parsed == null) return null;
-    const row = await this.prisma.fusionCustomerAccount.findUnique({
-      where: { accountNumber_region: { accountNumber: parsed, region } },
+    const row = await this.customerAccountRepo.findOne({
+      where: { accountNumber: parsed, region },
     });
     return row ? bigIntToNumber(row.customerAccountId, 'customerAccountId') : null;
   }
@@ -141,16 +169,16 @@ export class OdooTransformationService {
     transactionNumberOverride?: string,
   ): Promise<OdooTransformResult> {
     // ── 1. Load raw backup data ──────────────────────────────────────────────
-    const backup = await this.prisma.backupOdooOrder.findUnique({
+    const backup = await this.backupOrderRepo.findOne({
       where: { id: backupOrderId },
-      include: { orderLines: true, orderPayments: true },
+      relations: { orderLines: true, orderPayments: true },
     });
     if (!backup) {
       throw new Error(`BackupOdooOrder not found: ${backupOrderId}`);
     }
 
     // ── 2. Load store configuration ──────────────────────────────────────────
-    const storeConfig = await this.prisma.storeConfiguration.findUnique({
+    const storeConfig = await this.storeConfigRepo.findOne({
       where: { branchCode },
     });
     if (!storeConfig) {
@@ -160,7 +188,7 @@ export class OdooTransformationService {
     }
 
     // ── 3. Load Oracle regional config tables ────────────────────────────────
-    const buMap = await this.prisma.fusionBusinessUnitMap.findFirst({
+    const buMap = await this.businessUnitMapRepo.findOne({
       where: { region },
     });
 
@@ -305,7 +333,7 @@ export class OdooTransformationService {
       const pmtMethod = payment.paymentName ?? '';
       if (!pmtMethod || pmtMethod.toLowerCase() === 'credit on cust') continue;
 
-      const receiptMethod = await this.prisma.fusionReceiptMethod.findFirst({
+      const receiptMethod = await this.receiptMethodRepo.findOne({
         where: { receiptMethodName: pmtMethod, region },
       });
 
@@ -456,6 +484,166 @@ export class OdooTransformationService {
     };
   }
 
+  /**
+   * Builds the Oracle credit-memo payload for a refund order. A refund is NOT
+   * pushed as an invoice; instead this produces a Credit-Memo-class transaction
+   * with the refund's line items (amounts are magnitudes here — the SOAP builder
+   * negates them). When `originalTransactionNumber` is supplied the memo is tied
+   * to the invoice it credits ("applied"); otherwise it is created on-account.
+   *
+   * Receipts and journals are intentionally omitted — a credit memo reduces the
+   * customer's receivable and is settled by finance (refund payment / netting),
+   * not by an AR receipt in this integration.
+   *
+   * @param backupOrderId  BackupOdooOrder.id of the refund order, or null when
+   *                       only the header is known (a single line is synthesised
+   *                       from `refundAmount`).
+   */
+  async buildCreditMemoPayload(
+    backupOrderId: string | null,
+    branchCode: string,
+    region: string,
+    opts: {
+      refundOrderNumber: string;
+      refundAmount: number;
+      refundDate?: Date;
+      reason?: string;
+      originalTransactionNumber?: string;
+    },
+  ): Promise<CreditMemoHeader> {
+    // ── 1. Store configuration (region, bill-to store, CM transaction type) ──
+    const storeConfig = await this.storeConfigRepo.findOne({
+      where: { branchCode },
+    });
+    if (!storeConfig) {
+      throw new Error(
+        `StoreConfiguration not found for branchCode=${branchCode}`,
+      );
+    }
+
+    // Credit memos require a Credit-Memo-class transaction type. Resolve the
+    // per-store override first, then the global env default; refuse to build if
+    // neither is configured so a wrong/invoice type never reaches Oracle.
+    const creditMemoTransactionType =
+      storeConfig.creditMemoTransactionType ??
+      process.env.ORACLE_CREDIT_MEMO_TRANSACTION_TYPE ??
+      null;
+    if (!creditMemoTransactionType) {
+      throw new Error(
+        `No credit-memo transaction type configured for branch ${branchCode} ` +
+          `(region ${region}). Set StoreConfiguration.creditMemoTransactionType ` +
+          `or ORACLE_CREDIT_MEMO_TRANSACTION_TYPE to a valid Oracle Credit Memo ` +
+          `transaction type before pushing refunds as credit memos.`,
+      );
+    }
+
+    // ── 2. Load the refund backup order (lines) when available ───────────────
+    const backup = backupOrderId
+      ? await this.backupOrderRepo.findOne({
+          where: { id: backupOrderId },
+          relations: { orderLines: true },
+        })
+      : null;
+
+    const memoDate =
+      backup?.dateOrder instanceof Date
+        ? backup.dateOrder
+        : opts.refundDate ?? new Date(String(backup?.dateOrder ?? new Date()));
+
+    // ── 3. Resolve the bill-to (same rules as the invoice path) ──────────────
+    const customerType = backup?.customerType ?? 'NORMAL';
+    const salesMeta = await this.resolveBillToMetadata(
+      customerType,
+      region,
+      storeConfig.branchName,
+    );
+    if (!salesMeta) {
+      throw new Error(
+        `No FusionSalesMetadata bill-to match for branch ${branchCode} ` +
+          `(name="${storeConfig.branchName}", type=${customerType}, ` +
+          `region=${region}) — cannot build credit memo.`,
+      );
+    }
+
+    const header: CreditMemoHeader = {
+      billToCustomerName: salesMeta.billToName,
+      billToLocation: salesMeta.siteNumber ?? '',
+      billToAccountNumber: String(
+        bigIntToNumber(salesMeta.billToAccount, 'billToAccount'),
+      ),
+      businessUnit: storeConfig.oracleBusinessUnit,
+      outletName: backup?.warehouseName ?? backup?.branchName ?? undefined,
+      memoDate,
+      glDate: memoDate,
+      paymentTermsName: storeConfig.paymentTermsName,
+      transactionSource: storeConfig.transactionSource,
+      transactionType: creditMemoTransactionType,
+      invoiceCurrencyCode: storeConfig.invoiceCurrencyCode,
+      conversionRateType: 'Corporate',
+      conversionRate: 1,
+      conversionDate: memoDate,
+      originalTransactionNumber: opts.originalTransactionNumber,
+      reason: opts.reason,
+      creditMemoLines: [],
+    };
+
+    // ── 4. Build credit-memo lines from the refund order lines ───────────────
+    if (backup && backup.orderLines.length > 0) {
+      for (const line of backup.orderLines) {
+        const qty = Math.abs(Number(line.qty ?? 1));
+        if (qty === 0) continue;
+
+        const total =
+          line.priceSubtotalIncl != null
+            ? this.convertDecimal(line.priceSubtotalIncl)
+            : line.priceSubtotal != null
+              ? this.convertDecimal(line.priceSubtotal)
+              : this.convertDecimal(line.priceUnit ?? 0) * qty;
+
+        const unitPrice =
+          line.priceUnit != null
+            ? Math.abs(this.convertDecimal(line.priceUnit))
+            : qty !== 0
+              ? Math.abs(total / qty)
+              : 0;
+
+        const productName = line.productName ?? '';
+        const isDiscount = productName === 'Discount Item';
+
+        const memoLine: CreditMemoLine = {
+          lineNumber: header.creditMemoLines.length + 1,
+          itemNumber:
+            line.productCode ??
+            (line.productId != null ? String(line.productId) : undefined),
+          memoLineName: isDiscount ? 'Discount Item' : undefined,
+          description: productName,
+          quantity: isDiscount && total > 0 ? 1 : qty,
+          unitSellingPrice: unitPrice,
+          currencyCode: header.invoiceCurrencyCode,
+          salesOrder: opts.refundOrderNumber,
+          salesOrderLine: String(header.creditMemoLines.length + 1),
+        };
+        header.creditMemoLines.push(memoLine);
+      }
+    }
+
+    // Header-only refund (no line detail) → synthesise a single line from the
+    // refund amount so Oracle always receives a valid, non-empty memo.
+    if (header.creditMemoLines.length === 0) {
+      header.creditMemoLines.push({
+        lineNumber: 1,
+        description: `Refund — ${opts.refundOrderNumber}`,
+        quantity: 1,
+        unitSellingPrice: Math.abs(opts.refundAmount),
+        currencyCode: header.invoiceCurrencyCode,
+        salesOrder: opts.refundOrderNumber,
+        salesOrderLine: '1',
+      });
+    }
+
+    return header;
+  }
+
   private getPeriodName(d: Date): string {
     const months = [
       'Jan',
@@ -481,7 +669,7 @@ export class OdooTransformationService {
     region: string,
   ): Promise<string | null> {
     const target = this.normalizeName(branchName);
-    const rows = await this.prisma.fusionSalesMetadata.findMany({
+    const rows = await this.salesMetadataRepo.find({
       where: { region, customerType: 'NORMAL' },
       select: { billToName: true, costCenterCode: true },
     });
@@ -511,7 +699,7 @@ export class OdooTransformationService {
     // NORMAL retail sales don't post a service-provider journal.
     if (!serviceProvider || serviceProvider.toUpperCase() === 'NORMAL') return [];
 
-    const metaRows = await this.prisma.serviceProviderJournalMeta.findMany({
+    const metaRows = await this.journalMetaRepo.find({
       where: { serviceProvider, region },
     });
     if (metaRows.length === 0) return [];

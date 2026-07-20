@@ -1,6 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { JobStatus, SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Not, IsNull, Repository } from 'typeorm';
+import { AlertLog } from '../database/entities/alert-log.entity';
+import { AuditLog } from '../database/entities/audit-log.entity';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { IntegrationHealthCheck } from '../database/entities/integration-health-check.entity';
+import { InventorySyncTracker } from '../database/entities/inventory-sync-tracker.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { WebhookEvent } from '../database/entities/webhook-event.entity';
+import { JobStatus, SyncStatus } from '../database/enums';
 import { RedisService } from '../redis/redis.service';
 
 // Cache TTLs in seconds
@@ -14,7 +25,26 @@ const CACHE_TTL = {
 @Injectable()
 export class DashboardService {
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(AlertLog)
+    private readonly alerts: Repository<AlertLog>,
+    @InjectRepository(SyncJob)
+    private readonly jobs: Repository<SyncJob>,
+    @InjectRepository(StoreConfiguration)
+    private readonly stores: Repository<StoreConfiguration>,
+    @InjectRepository(BackupVendHqSale)
+    private readonly vendhqSales: Repository<BackupVendHqSale>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
+    @InjectRepository(AuditLog)
+    private readonly audit: Repository<AuditLog>,
+    @InjectRepository(IntegrationHealthCheck)
+    private readonly health: Repository<IntegrationHealthCheck>,
+    @InjectRepository(InventorySyncTracker)
+    private readonly inventory: Repository<InventorySyncTracker>,
+    @InjectRepository(WebhookEvent)
+    private readonly webhooks: Repository<WebhookEvent>,
     private readonly redis: RedisService,
   ) {}
 
@@ -38,33 +68,24 @@ export class DashboardService {
       // When a specific region is provided, return VendHQ backup-based stats
       // (BackupVendHqSale has a `region` field) alongside global counts.
       if (region) {
-        const regionWhere = { region };
         const [totalOrders, syncedOrders, failedOrders, pendingOrders] =
           await Promise.all([
-            this.prisma.backupVendHqSale.count({ where: regionWhere }),
-            this.prisma.backupVendHqSale.count({
-              where: { ...regionWhere, fusionSynced: true },
+            this.vendhqSales.count({ where: { region } }),
+            this.vendhqSales.count({ where: { region, fusionSynced: true } }),
+            this.vendhqSales.count({
+              where: { region, fusionSyncError: Not(IsNull()) },
             }),
-            this.prisma.backupVendHqSale.count({
-              where: { ...regionWhere, fusionSyncError: { not: null } },
-            }),
-            this.prisma.backupVendHqSale.count({
-              where: {
-                ...regionWhere,
-                fusionSynced: false,
-                fusionSyncError: null,
-              },
+            this.vendhqSales.count({
+              where: { region, fusionSynced: false, fusionSyncError: IsNull() },
             }),
           ]);
 
         const [unresolvedAlerts, activeJobs, storeCount] = await Promise.all([
-          this.prisma.alertLog.count({ where: { isResolved: false } }),
-          this.prisma.syncJob.count({
-            where: {
-              status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] },
-            },
+          this.alerts.count({ where: { isResolved: false } }),
+          this.jobs.count({
+            where: { status: In([JobStatus.PENDING, JobStatus.PROCESSING]) },
           }),
-          this.prisma.storeConfiguration.count({ where: { isActive: true } }),
+          this.stores.count({ where: { isActive: true } }),
         ]);
 
         const syncRate =
@@ -93,27 +114,19 @@ export class DashboardService {
         pendingOrders,
         processingOrders,
       ] = await Promise.all([
-        this.prisma.orderSyncQueue.count(),
-        this.prisma.orderSyncQueue.count({
-          where: { status: SyncStatus.SYNCED },
-        }),
-        this.prisma.orderSyncQueue.count({
-          where: { status: SyncStatus.FAILED },
-        }),
-        this.prisma.orderSyncQueue.count({
-          where: { status: SyncStatus.PENDING },
-        }),
-        this.prisma.orderSyncQueue.count({
-          where: { status: SyncStatus.PROCESSING },
-        }),
+        this.orders.count(),
+        this.orders.count({ where: { status: SyncStatus.SYNCED } }),
+        this.orders.count({ where: { status: SyncStatus.FAILED } }),
+        this.orders.count({ where: { status: SyncStatus.PENDING } }),
+        this.orders.count({ where: { status: SyncStatus.PROCESSING } }),
       ]);
 
       const [unresolvedAlerts, activeJobs, storeCount] = await Promise.all([
-        this.prisma.alertLog.count({ where: { isResolved: false } }),
-        this.prisma.syncJob.count({
-          where: { status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] } },
+        this.alerts.count({ where: { isResolved: false } }),
+        this.jobs.count({
+          where: { status: In([JobStatus.PENDING, JobStatus.PROCESSING]) },
         }),
-        this.prisma.storeConfiguration.count({ where: { isActive: true } }),
+        this.stores.count({ where: { isActive: true } }),
       ]);
 
       const syncRate =
@@ -137,25 +150,26 @@ export class DashboardService {
     return this.getCached(
       `dashboard:sync-trend:${days}`,
       CACHE_TTL.syncTrend,
-      () => {
+      async () => {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - days);
-        return this.prisma.orderSyncQueue.groupBy({
-          by: ['status'],
-          where: { createdAt: { gte: startDate } },
-          _count: { id: true },
-        });
+        const rows = await this.orders
+          .createQueryBuilder('o')
+          .select('o.status', 'status')
+          .addSelect('COUNT(*)', 'count')
+          .where('o.createdAt >= :startDate', { startDate })
+          .groupBy('o.status')
+          .getRawMany<{ status: string; count: string | number }>();
+        return rows.map((r) => ({ status: r.status, count: Number(r.count) }));
       },
     );
   }
 
   async getFailedTransactions(limit = 20) {
-    return this.prisma.failedTransaction.findMany({
+    return this.failedTransactions.find({
       where: { isResolved: false },
-      include: {
-        orderSyncQueue: { select: { odooOrderNumber: true, branchCode: true } },
-      },
-      orderBy: { createdAt: 'desc' },
+      relations: { orderSyncQueue: true },
+      order: { createdAt: 'DESC' },
       take: limit,
     });
   }
@@ -164,17 +178,32 @@ export class DashboardService {
     return this.getCached(
       'dashboard:orders-by-branch',
       CACHE_TTL.ordersByBranch,
-      () =>
-        this.prisma.orderSyncQueue.groupBy({
-          by: ['branchCode', 'status'],
-          _count: { id: true },
-          orderBy: [{ branchCode: 'asc' }, { status: 'asc' }],
-        }),
+      async () => {
+        const rows = await this.orders
+          .createQueryBuilder('o')
+          .select('o.branchCode', 'branchCode')
+          .addSelect('o.status', 'status')
+          .addSelect('COUNT(*)', 'count')
+          .groupBy('o.branchCode')
+          .addGroupBy('o.status')
+          .orderBy('o.branchCode', 'ASC')
+          .addOrderBy('o.status', 'ASC')
+          .getRawMany<{
+            branchCode: string;
+            status: string;
+            count: string | number;
+          }>();
+        return rows.map((r) => ({
+          branchCode: r.branchCode,
+          status: r.status,
+          count: Number(r.count),
+        }));
+      },
     );
   }
 
   async getRecentActivity(limit = 50) {
-    return this.prisma.auditLog.findMany({
+    return this.audit.find({
       select: {
         id: true,
         externalId: true,
@@ -184,30 +213,36 @@ export class DashboardService {
         processingDurationMs: true,
         createdAt: true,
       },
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       take: limit,
     });
   }
 
   async getHealthStatus() {
-    return this.getCached('dashboard:health', CACHE_TTL.health, () =>
-      this.prisma.integrationHealthCheck.findMany({
-        orderBy: [{ serviceName: 'asc' }, { createdAt: 'desc' }],
-        distinct: ['serviceName'],
-      }),
-    );
+    return this.getCached('dashboard:health', CACHE_TTL.health, async () => {
+      // Oracle has no DISTINCT ON — take the latest record per service in memory.
+      const records = await this.health.find({
+        order: { serviceName: 'ASC', createdAt: 'DESC' },
+        take: 500,
+      });
+      const latest = new Map<string, IntegrationHealthCheck>();
+      for (const r of records) {
+        if (!latest.has(r.serviceName)) latest.set(r.serviceName, r);
+      }
+      return [...latest.values()];
+    });
   }
 
   async getNegativeInventory(limit = 20) {
-    return this.prisma.inventorySyncTracker.findMany({
+    return this.inventory.find({
       where: { isNegativeInventory: true, negativeInventoryAlertSent: false },
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       take: limit,
     });
   }
 
   async getWebhookEvents(limit = 100) {
-    return this.prisma.webhookEvent.findMany({
+    return this.webhooks.find({
       select: {
         id: true,
         eventType: true,
@@ -217,7 +252,7 @@ export class DashboardService {
         processedAt: true,
         processingError: true,
       },
-      orderBy: { receivedAt: 'desc' },
+      order: { receivedAt: 'DESC' },
       take: limit,
     });
   }

@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { JobStatus, JobType, ScopeType, SyncStatus } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
+import { JobStatus, JobType, ScopeType, SyncStatus } from '../database/enums';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
 import { PIPELINE_CREATOR_ID } from '../common/constants';
-import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
 import { SyncControlService } from './sync-control.service';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
@@ -34,7 +37,10 @@ export class PipelineSchedulerService {
   private readonly minBatchSize: number;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(SyncJob)
+    private readonly syncJobRepo: Repository<SyncJob>,
     private readonly syncService: SyncService,
     private readonly syncControl: SyncControlService,
     private readonly circuitBreaker: CircuitBreakerService,
@@ -102,10 +108,10 @@ export class PipelineSchedulerService {
       // Ensure only one ORDER_SYNC job runs at a time. If a previously created
       // job is still working through the queue, skip this cycle rather than
       // stacking a second job on top of it.
-      const inFlightJobs = await this.prisma.syncJob.count({
+      const inFlightJobs = await this.syncJobRepo.count({
         where: {
           jobType: JobType.ORDER_SYNC,
-          status: { in: [JobStatus.PENDING, JobStatus.PROCESSING] },
+          status: In([JobStatus.PENDING, JobStatus.PROCESSING]),
         },
       });
       if (inFlightJobs > 0) {
@@ -118,7 +124,7 @@ export class PipelineSchedulerService {
       }
 
       // Count how many orders are waiting to be processed
-      const pendingCount = await this.prisma.orderSyncQueue.count({
+      const pendingCount = await this.orderSyncQueueRepo.count({
         where: {
           status: SyncStatus.PENDING,
           isPaid: true,
@@ -151,7 +157,7 @@ export class PipelineSchedulerService {
       });
 
       this.logger.log(
-        `✅ Automatic sync job created: ${job.id} (${job.totalRecords} orders)`,
+        `✅ Automatic sync job created: ${job?.id} (${job?.totalRecords} orders)`,
       );
       await this.syncControl.markStopped('pipeline-scheduler', 'success');
     } catch (error) {
@@ -170,7 +176,7 @@ export class PipelineSchedulerService {
   @Cron('0 */30 * * * *')
   async retryNegativeInventoryOrders(): Promise<void> {
     try {
-      const holdCount = await this.prisma.orderSyncQueue.count({
+      const holdCount = await this.orderSyncQueueRepo.count({
         where: {
           status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         },
@@ -185,14 +191,14 @@ export class PipelineSchedulerService {
       );
 
       // Reset status to PENDING so they'll be picked up by the next pipeline run
-      await this.prisma.orderSyncQueue.updateMany({
-        where: {
+      await this.orderSyncQueueRepo.update(
+        {
           status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         },
-        data: {
+        {
           status: SyncStatus.PENDING,
         },
-      });
+      );
 
       this.logger.log(
         `✅ Reset ${holdCount} orders from NEGATIVE_INVENTORY_HOLD to PENDING`,
@@ -210,13 +216,15 @@ export class PipelineSchedulerService {
   @Cron(CronExpression.EVERY_MINUTE)
   async monitorPipelineHealth(): Promise<void> {
     try {
-      const stats = await this.prisma.orderSyncQueue.groupBy({
-        by: ['status'],
-        _count: true,
-      });
+      const stats = await this.orderSyncQueueRepo
+        .createQueryBuilder('q')
+        .select('q.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('q.status')
+        .getRawMany<{ status: SyncStatus; count: string | number }>();
 
       const statusCounts = Object.fromEntries(
-        stats.map((s) => [s.status, s._count]),
+        stats.map((s) => [s.status, Number(s.count)]),
       );
 
       const pending = statusCounts[SyncStatus.PENDING] || 0;

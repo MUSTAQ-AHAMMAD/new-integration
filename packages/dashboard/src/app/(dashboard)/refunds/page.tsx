@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, PlusCircle } from 'lucide-react';
+import { Download, PlusCircle, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { authStorage } from '@/lib/api';
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
@@ -178,6 +178,39 @@ export default function RefundsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // Push a single refund to Oracle as a credit memo.
+  const pushMutation = useMutation({
+    mutationFn: (refundId: string) =>
+      apiRequest<{ status: string; creditMemoNumber?: string; error?: string }>(
+        `/refunds/${refundId}/push`,
+        { method: 'POST' },
+      ),
+    onSuccess: (result) => {
+      if (result.status === 'SYNCED') {
+        toast.success(`Credit memo created${result.creditMemoNumber ? `: ${result.creditMemoNumber}` : ''}`);
+      } else {
+        toast.error(result.error || `Credit memo push ${result.status.toLowerCase()}`);
+      }
+      void queryClient.invalidateQueries({ queryKey: ['refunds'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Push every PENDING refund to Oracle in one go.
+  const processPendingMutation = useMutation({
+    mutationFn: () =>
+      apiRequest<Array<{ status: string }>>('/refunds/process-pending', {
+        method: 'POST',
+      }),
+    onSuccess: (results) => {
+      const synced = results.filter((r) => r.status === 'SYNCED').length;
+      const failed = results.filter((r) => r.status === 'FAILED').length;
+      toast.success(`Processed ${results.length} pending refund(s): ${synced} synced, ${failed} failed`);
+      void queryClient.invalidateQueries({ queryKey: ['refunds'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const exportFilteredRefunds = () => {
     downloadCsv(
       'refunds.csv',
@@ -209,13 +242,16 @@ export default function RefundsPage() {
         <div className="flex items-center gap-3">
           <div className="h-8 w-1 shrink-0 rounded-full bg-indigo-500" />
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Refund Reconciliation</h1>
-            <p className="mt-0.5 text-sm text-slate-500">Manage refund credit memo status, manual interventions, and reconciliation notes.</p>
+            <h1 className="text-xl font-bold text-slate-900">Refunds &amp; Credit Memos</h1>
+            <p className="mt-0.5 text-sm text-slate-500">Refunds never post as invoices — they are pushed to Oracle as credit memos. Review status, retry failures, and reconcile.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={exportFilteredRefunds} disabled={filteredRefunds.length === 0}>
             <Download className="h-4 w-4" /> Export to Excel
+          </Button>
+          <Button variant="outline" onClick={() => processPendingMutation.mutate()} disabled={processPendingMutation.isPending}>
+            <Send className="h-4 w-4" /> {processPendingMutation.isPending ? 'Pushing…' : 'Push All Pending'}
           </Button>
           <Button onClick={() => setManualDialogOpen(true)}>
             <PlusCircle className="h-4 w-4" /> Create Manual Credit Memo
@@ -313,6 +349,15 @@ export default function RefundsPage() {
                   <TableCell className="whitespace-nowrap text-gray-500">{formatDate(refund.refundDate)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
+                      {(refund.creditMemoStatus === 'PENDING' || refund.creditMemoStatus === 'FAILED') && (
+                        <Button
+                          size="sm"
+                          onClick={() => pushMutation.mutate(refund.id)}
+                          disabled={pushMutation.isPending}
+                        >
+                          <Send className="h-3.5 w-3.5" /> {refund.creditMemoStatus === 'FAILED' ? 'Retry Push' : 'Push to Oracle'}
+                        </Button>
+                      )}
                       {!refund.isReconciled && (
                         <Button size="sm" variant="outline" onClick={() => { setReconcileRefund(refund); setReconcileNote(refund.reconcileNote ?? ''); }}>
                           Reconcile

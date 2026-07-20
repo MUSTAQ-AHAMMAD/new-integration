@@ -1,7 +1,11 @@
+import { Repository } from 'typeorm';
 import { FusionInvToVendHqService } from './fusion-inv-to-vendhq.service';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
-import { PrismaService } from '../prisma/prisma.service';
+import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -17,27 +21,26 @@ function makeOnHand(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma() {
-  return {
-    vendHqCredential: {
-      findMany: jest.fn().mockResolvedValue([{ region: 'AE', active: true }]),
-    },
-    vendHqOutlet: {
-      findFirst: jest
-        .fn()
-        .mockResolvedValue({ outletId: 'outlet-001', outletName: 'MAIN' }),
-    },
-    vendHqItemMeta: {
-      findFirst: jest
-        .fn()
-        .mockResolvedValue({ id: 'meta-001', itemId: 'vend-item-001' }),
-      create: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    fusionInvTxn: {
-      create: jest.fn().mockResolvedValue({}),
-    },
+function makeRepos() {
+  const credentials = {
+    find: jest.fn().mockResolvedValue([{ region: 'AE', active: true }]),
   };
+  const outlets = {
+    findOne: jest
+      .fn()
+      .mockResolvedValue({ outletId: 'outlet-001', outletName: 'MAIN' }),
+  };
+  const itemMeta = {
+    findOne: jest
+      .fn()
+      .mockResolvedValue({ id: 'meta-001', itemId: 'vend-item-001' }),
+  };
+  const invTxns = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({}),
+    find: jest.fn().mockResolvedValue([]),
+  };
+  return { credentials, outlets, itemMeta, invTxns };
 }
 
 function makeOracle() {
@@ -58,12 +61,12 @@ function makeVendHq() {
 
 describe('FusionInvToVendHqService', () => {
   let service: FusionInvToVendHqService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let repos: ReturnType<typeof makeRepos>;
   let oracle: ReturnType<typeof makeOracle>;
   let vendHq: ReturnType<typeof makeVendHq>;
 
   beforeEach(() => {
-    prisma = makePrisma();
+    repos = makeRepos();
     oracle = makeOracle();
     vendHq = makeVendHq();
     const syncControl = {
@@ -72,7 +75,10 @@ describe('FusionInvToVendHqService', () => {
       markStopped: jest.fn().mockResolvedValue(undefined),
     };
     service = new FusionInvToVendHqService(
-      prisma as unknown as PrismaService,
+      repos.credentials as unknown as Repository<VendHqCredential>,
+      repos.outlets as unknown as Repository<VendHqOutlet>,
+      repos.itemMeta as unknown as Repository<VendHqItemMeta>,
+      repos.invTxns as unknown as Repository<FusionInvTxn>,
       oracle as unknown as OracleClient,
       vendHq as unknown as VendHqClient,
       syncControl as never,
@@ -84,13 +90,13 @@ describe('FusionInvToVendHqService', () => {
 
   describe('runInventorySync', () => {
     it('skips sync when no active VendHQ credentials are found', async () => {
-      prisma.vendHqCredential.findMany.mockResolvedValueOnce([]);
+      repos.credentials.find.mockResolvedValueOnce([]);
       await service.runInventorySync();
       expect(oracle.getInventoryOnHand).not.toHaveBeenCalled();
     });
 
     it('runs sync for each active credential region', async () => {
-      prisma.vendHqCredential.findMany.mockResolvedValueOnce([
+      repos.credentials.find.mockResolvedValueOnce([
         { region: 'AE' },
         { region: 'KW' },
       ]);
@@ -102,12 +108,12 @@ describe('FusionInvToVendHqService', () => {
     });
 
     it('catches per-region errors and continues to next region', async () => {
-      prisma.vendHqCredential.findMany.mockResolvedValueOnce([
+      repos.credentials.find.mockResolvedValueOnce([
         { region: 'AE' },
         { region: 'KW' },
       ]);
       // AE throws, KW succeeds
-      prisma.vendHqOutlet.findFirst
+      repos.outlets.findOne
         .mockRejectedValueOnce(new Error('DB error'))
         .mockResolvedValueOnce(null); // KW — no outlet → skipped
 
@@ -119,7 +125,7 @@ describe('FusionInvToVendHqService', () => {
 
   describe('syncInventoryForRegion', () => {
     it('returns skipped=1 when no outlet found for region', async () => {
-      prisma.vendHqOutlet.findFirst.mockResolvedValueOnce(null);
+      repos.outlets.findOne.mockResolvedValueOnce(null);
       const result = await service.syncInventoryForRegion('XX');
       expect(result.skipped).toBe(1);
       expect(result.synced).toBe(0);
@@ -137,7 +143,7 @@ describe('FusionInvToVendHqService', () => {
 
     it('skips items not found in VendHqItemMeta', async () => {
       oracle.getInventoryOnHand.mockResolvedValueOnce([makeOnHand()]);
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce(null);
+      repos.itemMeta.findOne.mockResolvedValueOnce(null);
       const result = await service.syncInventoryForRegion('AE');
       expect(result.skipped).toBe(1);
       expect(vendHq.updateInventory).not.toHaveBeenCalled();
@@ -145,7 +151,7 @@ describe('FusionInvToVendHqService', () => {
 
     it('successfully syncs an item and records a SUCCESS txn', async () => {
       oracle.getInventoryOnHand.mockResolvedValueOnce([makeOnHand()]);
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({
+      repos.itemMeta.findOne.mockResolvedValueOnce({
         itemId: 'vend-001',
       });
       vendHq.updateInventory.mockResolvedValueOnce({});
@@ -159,16 +165,15 @@ describe('FusionInvToVendHqService', () => {
         outletId: 'outlet-001',
         current: 50,
       });
-      expect(prisma.fusionInvTxn.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'SUCCESS' }),
-        }),
+      expect(repos.invTxns.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'SUCCESS' }),
       );
+      expect(repos.invTxns.save).toHaveBeenCalled();
     });
 
     it('increments failed and records an ERROR txn when updateInventory throws', async () => {
       oracle.getInventoryOnHand.mockResolvedValueOnce([makeOnHand()]);
-      prisma.vendHqItemMeta.findFirst.mockResolvedValueOnce({
+      repos.itemMeta.findOne.mockResolvedValueOnce({
         itemId: 'vend-001',
       });
       vendHq.updateInventory.mockRejectedValueOnce(new Error('VendHQ 500'));
@@ -177,10 +182,8 @@ describe('FusionInvToVendHqService', () => {
 
       expect(result.failed).toBe(1);
       expect(result.errors[0]).toContain('SKU-001');
-      expect(prisma.fusionInvTxn.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'ERROR' }),
-        }),
+      expect(repos.invTxns.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'ERROR' }),
       );
     });
 
@@ -193,7 +196,7 @@ describe('FusionInvToVendHqService', () => {
         .mockResolvedValueOnce(fullPage) // page 1 — triggers another fetch
         .mockResolvedValueOnce(emptyPage); // page 2 — stops pagination
       // Simulate items not in VendHqItemMeta so we don't need updateInventory mocks for 500 items
-      prisma.vendHqItemMeta.findFirst.mockResolvedValue(null);
+      repos.itemMeta.findOne.mockResolvedValue(null);
 
       await service.syncInventoryForRegion('AE');
 
@@ -201,7 +204,7 @@ describe('FusionInvToVendHqService', () => {
     });
 
     it('uses region as organizationCode fallback when no outlet name', async () => {
-      prisma.vendHqOutlet.findFirst.mockResolvedValueOnce({
+      repos.outlets.findOne.mockResolvedValueOnce({
         outletId: 'outlet-001',
         outletName: null,
       });
@@ -216,24 +219,18 @@ describe('FusionInvToVendHqService', () => {
 
   describe('getInventoryTransactions', () => {
     it('returns transactions without region filter when region is omitted', async () => {
-      prisma.fusionInvTxn = {
-        findMany: jest.fn().mockResolvedValue([{}]),
-      } as unknown as typeof prisma.fusionInvTxn;
+      repos.invTxns.find.mockResolvedValueOnce([{}]);
       const result = await service.getInventoryTransactions();
-      expect(
-        (prisma.fusionInvTxn as unknown as { findMany: jest.Mock }).findMany,
-      ).toHaveBeenCalledWith(expect.objectContaining({ where: undefined }));
+      expect(repos.invTxns.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: undefined }),
+      );
       expect(result).toHaveLength(1);
     });
 
     it('filters by region when provided', async () => {
-      prisma.fusionInvTxn = {
-        findMany: jest.fn().mockResolvedValue([]),
-      } as unknown as typeof prisma.fusionInvTxn;
+      repos.invTxns.find.mockResolvedValueOnce([]);
       await service.getInventoryTransactions('AE');
-      expect(
-        (prisma.fusionInvTxn as unknown as { findMany: jest.Mock }).findMany,
-      ).toHaveBeenCalledWith(
+      expect(repos.invTxns.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { region: 'AE' } }),
       );
     });

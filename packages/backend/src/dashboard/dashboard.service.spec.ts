@@ -1,70 +1,89 @@
 import { DashboardService } from './dashboard.service';
-import { SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { SyncStatus } from '../database/enums';
 import { RedisService } from '../redis/redis.service';
 
-const mockPrisma = {
-  orderSyncQueue: {
-    count: jest.fn(),
-    groupBy: jest.fn(),
-    findMany: jest.fn(),
-  },
-  syncJob: {
-    count: jest.fn(),
-  },
-  alertLog: {
-    count: jest.fn(),
-  },
-  storeConfiguration: {
-    count: jest.fn(),
-  },
-  failedTransaction: {
-    findMany: jest.fn(),
-  },
-  auditLog: {
-    findMany: jest.fn(),
-  },
-  integrationHealthCheck: {
-    findMany: jest.fn(),
-  },
-  inventorySyncTracker: {
-    findMany: jest.fn(),
-  },
-  webhookEvent: {
-    findMany: jest.fn(),
-  },
-};
+function makeQb() {
+  return {
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    groupBy: jest.fn().mockReturnThis(),
+    addGroupBy: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    addOrderBy: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn().mockResolvedValue([]),
+  };
+}
 
-// Cache miss by default so every test exercises the real Prisma path
-const mockRedis = {
-  get: jest.fn().mockResolvedValue(null),
-  setex: jest.fn().mockResolvedValue('OK'),
-};
+function makeRepo() {
+  return {
+    count: jest.fn().mockResolvedValue(0),
+    find: jest.fn().mockResolvedValue([]),
+    createQueryBuilder: jest.fn(),
+  };
+}
 
 describe('DashboardService', () => {
   let service: DashboardService;
+  let orders: ReturnType<typeof makeRepo>;
+  let alerts: ReturnType<typeof makeRepo>;
+  let jobs: ReturnType<typeof makeRepo>;
+  let stores: ReturnType<typeof makeRepo>;
+  let vendhqSales: ReturnType<typeof makeRepo>;
+  let failedTransactions: ReturnType<typeof makeRepo>;
+  let audit: ReturnType<typeof makeRepo>;
+  let health: ReturnType<typeof makeRepo>;
+  let inventory: ReturnType<typeof makeRepo>;
+  let webhooks: ReturnType<typeof makeRepo>;
+  let ordersQb: ReturnType<typeof makeQb>;
+
+  const mockRedis = {
+    get: jest.fn().mockResolvedValue(null),
+    setex: jest.fn().mockResolvedValue('OK'),
+  };
 
   beforeEach(() => {
+    orders = makeRepo();
+    alerts = makeRepo();
+    jobs = makeRepo();
+    stores = makeRepo();
+    vendhqSales = makeRepo();
+    failedTransactions = makeRepo();
+    audit = makeRepo();
+    health = makeRepo();
+    inventory = makeRepo();
+    webhooks = makeRepo();
+    ordersQb = makeQb();
+    orders.createQueryBuilder.mockReturnValue(ordersQb);
+
     service = new DashboardService(
-      mockPrisma as unknown as PrismaService,
+      orders as never,
+      alerts as never,
+      jobs as never,
+      stores as never,
+      vendhqSales as never,
+      failedTransactions as never,
+      audit as never,
+      health as never,
+      inventory as never,
+      webhooks as never,
       mockRedis as unknown as RedisService,
     );
-    jest.clearAllMocks();
     mockRedis.get.mockResolvedValue(null);
     mockRedis.setex.mockResolvedValue('OK');
   });
 
   describe('getOverview', () => {
     beforeEach(() => {
-      mockPrisma.orderSyncQueue.count
+      orders.count
         .mockResolvedValueOnce(100) // totalOrders
         .mockResolvedValueOnce(80) // synced
         .mockResolvedValueOnce(10) // failed
         .mockResolvedValueOnce(8) // pending
         .mockResolvedValueOnce(2); // processing
-      mockPrisma.alertLog.count.mockResolvedValueOnce(3);
-      mockPrisma.syncJob.count.mockResolvedValueOnce(2);
-      mockPrisma.storeConfiguration.count.mockResolvedValueOnce(5);
+      alerts.count.mockResolvedValueOnce(3);
+      jobs.count.mockResolvedValueOnce(2);
+      stores.count.mockResolvedValueOnce(5);
     });
 
     it('returns correct overview with sync rate', async () => {
@@ -79,17 +98,11 @@ describe('DashboardService', () => {
     });
 
     it('returns 0 syncRate when totalOrders is 0', async () => {
-      jest.resetAllMocks();
-      // Re-mock all count calls for the zero-total scenario
-      mockPrisma.orderSyncQueue.count
-        .mockResolvedValueOnce(0) // totalOrders
-        .mockResolvedValueOnce(0) // synced
-        .mockResolvedValueOnce(0) // failed
-        .mockResolvedValueOnce(0) // pending
-        .mockResolvedValueOnce(0); // processing
-      mockPrisma.alertLog.count.mockResolvedValueOnce(0);
-      mockPrisma.syncJob.count.mockResolvedValueOnce(0);
-      mockPrisma.storeConfiguration.count.mockResolvedValueOnce(0);
+      orders.count.mockReset();
+      orders.count.mockResolvedValue(0);
+      alerts.count.mockResolvedValue(0);
+      jobs.count.mockResolvedValue(0);
+      stores.count.mockResolvedValue(0);
 
       const result = await service.getOverview();
 
@@ -99,82 +112,82 @@ describe('DashboardService', () => {
 
   describe('getFailedTransactions', () => {
     it('returns failed transactions with order info', async () => {
-      const mockTransactions = [
+      failedTransactions.find.mockResolvedValueOnce([
         {
           id: 'tx-1',
           errorType: 'ORACLE',
           isResolved: false,
           orderSyncQueue: { odooOrderNumber: 'ODO-001', branchCode: 'BR001' },
         },
-      ];
-      mockPrisma.failedTransaction.findMany.mockResolvedValueOnce(
-        mockTransactions,
-      );
+      ]);
 
       const result = await service.getFailedTransactions();
 
       expect(result).toHaveLength(1);
       expect(result[0].orderSyncQueue?.odooOrderNumber).toBe('ODO-001');
+      expect(failedTransactions.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { isResolved: false },
+          relations: { orderSyncQueue: true },
+        }),
+      );
     });
   });
 
   describe('getOrdersByBranch', () => {
     it('groups orders by branch code and status', async () => {
-      const mockData = [
-        { branchCode: 'BR001', status: SyncStatus.SYNCED, _count: { id: 45 } },
-        { branchCode: 'BR001', status: SyncStatus.FAILED, _count: { id: 5 } },
-      ];
-      mockPrisma.orderSyncQueue.groupBy.mockResolvedValueOnce(mockData);
+      ordersQb.getRawMany.mockResolvedValueOnce([
+        { branchCode: 'BR001', status: SyncStatus.SYNCED, count: 45 },
+        { branchCode: 'BR001', status: SyncStatus.FAILED, count: 5 },
+      ]);
 
       const result = await service.getOrdersByBranch();
 
       expect(result).toHaveLength(2);
-      expect(mockPrisma.orderSyncQueue.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({ by: ['branchCode', 'status'] }),
-      );
+      expect(result[0]).toEqual({
+        branchCode: 'BR001',
+        status: SyncStatus.SYNCED,
+        count: 45,
+      });
+      expect(ordersQb.groupBy).toHaveBeenCalledWith('o.branchCode');
+      expect(ordersQb.addGroupBy).toHaveBeenCalledWith('o.status');
     });
   });
 
   describe('getSyncTrend', () => {
     it('groups by status for the last 7 days by default', async () => {
-      mockPrisma.orderSyncQueue.groupBy.mockResolvedValueOnce([]);
+      ordersQb.getRawMany.mockResolvedValueOnce([]);
 
       await service.getSyncTrend();
 
-      expect(mockPrisma.orderSyncQueue.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          by: ['status'],
-          where: expect.objectContaining({
-            createdAt: expect.objectContaining({ gte: expect.any(Date) }),
-          }),
-        }),
+      expect(ordersQb.groupBy).toHaveBeenCalledWith('o.status');
+      expect(ordersQb.where).toHaveBeenCalledWith(
+        'o.createdAt >= :startDate',
+        expect.objectContaining({ startDate: expect.any(Date) }),
       );
     });
 
     it('accepts a custom number of days', async () => {
-      mockPrisma.orderSyncQueue.groupBy.mockResolvedValueOnce([]);
+      ordersQb.getRawMany.mockResolvedValueOnce([]);
 
       await service.getSyncTrend(30);
 
-      const call = mockPrisma.orderSyncQueue.groupBy.mock.calls[0][0] as {
-        where: { createdAt: { gte: Date } };
-      };
-      const daysBack =
-        (Date.now() - call.where.createdAt.gte.getTime()) / 86_400_000;
+      const call = ordersQb.where.mock.calls[0][1] as { startDate: Date };
+      const daysBack = (Date.now() - call.startDate.getTime()) / 86_400_000;
       expect(daysBack).toBeCloseTo(30, 0);
     });
   });
 
   describe('getNegativeInventory', () => {
     it('returns unresolved negative inventory items', async () => {
-      mockPrisma.inventorySyncTracker.findMany.mockResolvedValueOnce([
+      inventory.find.mockResolvedValueOnce([
         { id: 'inv-1', productSku: 'SKU-001', isNegativeInventory: true },
       ]);
 
       const result = await service.getNegativeInventory();
 
       expect(result).toHaveLength(1);
-      expect(mockPrisma.inventorySyncTracker.findMany).toHaveBeenCalledWith(
+      expect(inventory.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             isNegativeInventory: true,

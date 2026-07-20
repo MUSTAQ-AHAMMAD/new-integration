@@ -3,176 +3,128 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, ObjectLiteral, Repository } from 'typeorm';
+import { EntityMetadata } from 'typeorm';
 import { numberToBigInt } from '../common/utils/bigint-utils';
+import {
+  FieldCategory,
+  fieldCategoryMap,
+  regionRelationProperty,
+} from '../database/entity-fields';
+import { ApiEndpointConfig } from '../database/entities/api-endpoint-config.entity';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupIbqOrderLine } from '../database/entities/backup-ibq-order-line.entity';
+import { BackupIbqOrderPayment } from '../database/entities/backup-ibq-order-payment.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
+import { BackupVendHqLineItem } from '../database/entities/backup-vend-hq-line-item.entity';
+import { BackupVendHqPayment } from '../database/entities/backup-vend-hq-payment.entity';
+import { BackupVendHqPromotion } from '../database/entities/backup-vend-hq-promotion.entity';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionCredential } from '../database/entities/fusion-credential.entity';
+import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
+import { FusionJournalHeader } from '../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../database/entities/fusion-journal-line.entity';
+import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
+import { SaleSyncStatus } from '../database/entities/sale-sync-status.entity';
+import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqDiscountItem } from '../database/entities/vend-hq-discount-item.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { VendHqServiceProvider } from '../database/entities/vend-hq-service-provider.entity';
+import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
 
-/** Minimal typed interface for the dynamic Prisma delegates used by AdminService. */
-interface PrismaDelegate {
-  findMany(args?: Record<string, unknown>): Promise<Record<string, unknown>[]>;
-  count(args?: Record<string, unknown>): Promise<number>;
-  findUnique(
-    args: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | null>;
-  create(args: Record<string, unknown>): Promise<Record<string, unknown>>;
-  update(args: Record<string, unknown>): Promise<Record<string, unknown>>;
-  delete(args: Record<string, unknown>): Promise<Record<string, unknown>>;
-}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type EntityClass = new () => any;
 
-// Map of route slug → Prisma delegate name
-const TABLE_MAP: Record<string, keyof PrismaService> = {
-  'fusion-credentials': 'fusionCredential',
-  'vendhq-credentials': 'vendHqCredential',
-  'odoo-credentials': 'odooCredential',
-  // CSV import/export for the custom /payments and /stores admin pages.
-  'payment-mappings': 'paymentMethodMapping',
-  'store-configs': 'storeConfiguration',
-  'outlet-config': 'outletIntegrationConfig',
-  'fusion-bu-map': 'fusionBusinessUnitMap',
-  'fusion-receipt-methods': 'fusionReceiptMethod',
-  'fusion-sales-metadata': 'fusionSalesMetadata',
-  'service-provider-journal-meta': 'serviceProviderJournalMeta',
-  'sales-integration-status': 'salesIntegrationStatus',
-  'vendhq-discount-items': 'vendHqDiscountItem',
-  'vendhq-tax-meta': 'vendHqTaxMeta',
-  'vendhq-outlets': 'vendHqOutlet',
-  'vendhq-registers': 'vendHqRegister',
-  'vendhq-service-providers': 'vendHqServiceProvider',
-  'vendhq-item-meta': 'vendHqItemMeta',
-  'fusion-invoice-headers': 'fusionInvoiceHeader',
-  'fusion-invoice-lines': 'fusionInvoiceLine',
-  'fusion-standard-receipts': 'fusionStandardReceipt',
-  'fusion-misc-receipts': 'fusionMiscReceipt',
-  'fusion-apply-receipts': 'fusionApplyReceipt',
-  'fusion-journal-headers': 'fusionJournalHeader',
-  'fusion-journal-lines': 'fusionJournalLine',
-  'fusion-inv-txns': 'fusionInvTxn',
-  'backup-sales': 'backupVendHqSale',
-  'backup-line-items': 'backupVendHqLineItem',
-  'backup-payments': 'backupVendHqPayment',
-  'backup-promotions': 'backupVendHqPromotion',
-  'backup-odoo-orders': 'backupOdooOrder',
-  'backup-odoo-order-lines': 'backupOdooOrderLine',
-  'backup-odoo-order-payments': 'backupOdooOrderPayment',
-  'ibq-credentials': 'ibqCredential',
-  'backup-ibq-orders': 'backupIbqOrder',
-  'backup-ibq-order-lines': 'backupIbqOrderLine',
-  'backup-ibq-order-payments': 'backupIbqOrderPayment',
-  'sale-sync-status': 'saleSyncStatus',
-  'api-endpoint-configs': 'apiEndpointConfig',
+// Map of route slug → TypeORM entity class (was Prisma delegate name).
+// Exported so the CSV seeding script can reuse the same slug↔entity mapping.
+export const ENTITY_MAP: Record<string, EntityClass> = {
+  'fusion-credentials': FusionCredential,
+  'vendhq-credentials': VendHqCredential,
+  'odoo-credentials': OdooCredential,
+  'payment-mappings': PaymentMethodMapping,
+  'store-configs': StoreConfiguration,
+  'outlet-config': OutletIntegrationConfig,
+  'fusion-bu-map': FusionBusinessUnitMap,
+  'fusion-receipt-methods': FusionReceiptMethod,
+  'fusion-sales-metadata': FusionSalesMetadata,
+  'service-provider-journal-meta': ServiceProviderJournalMeta,
+  'sales-integration-status': SalesIntegrationStatus,
+  'vendhq-discount-items': VendHqDiscountItem,
+  'vendhq-tax-meta': VendHqTaxMeta,
+  'vendhq-outlets': VendHqOutlet,
+  'vendhq-registers': VendHqRegister,
+  'vendhq-service-providers': VendHqServiceProvider,
+  'vendhq-item-meta': VendHqItemMeta,
+  'fusion-invoice-headers': FusionInvoiceHeader,
+  'fusion-invoice-lines': FusionInvoiceLine,
+  'fusion-standard-receipts': FusionStandardReceipt,
+  'fusion-misc-receipts': FusionMiscReceipt,
+  'fusion-apply-receipts': FusionApplyReceipt,
+  'fusion-journal-headers': FusionJournalHeader,
+  'fusion-journal-lines': FusionJournalLine,
+  'fusion-inv-txns': FusionInvTxn,
+  'backup-sales': BackupVendHqSale,
+  'backup-line-items': BackupVendHqLineItem,
+  'backup-payments': BackupVendHqPayment,
+  'backup-promotions': BackupVendHqPromotion,
+  'backup-odoo-orders': BackupOdooOrder,
+  'backup-odoo-order-lines': BackupOdooOrderLine,
+  'backup-odoo-order-payments': BackupOdooOrderPayment,
+  'ibq-credentials': IbqCredential,
+  'backup-ibq-orders': BackupIbqOrder,
+  'backup-ibq-order-lines': BackupIbqOrderLine,
+  'backup-ibq-order-payments': BackupIbqOrderPayment,
+  'sale-sync-status': SaleSyncStatus,
+  'api-endpoint-configs': ApiEndpointConfig,
 };
 
-// ── Prisma DMMF helpers ─────────────────────────────────────────────────────
-
 /**
- * Converts a TABLE_MAP delegate name (lowerCamelCase) to the Prisma model
- * name (PascalCase) so we can look it up in Prisma.dmmf at runtime.
+ * Builds a lookup from UPPER_SNAKE_CASE (external CSV headers) to the camelCase
+ * field names used by the entities. Also passes camelCase keys through verbatim.
+ * Example: "RECEIPT_METHOD_ID" → "receiptMethodId".
  */
-function delegateToModelName(delegateName: string): string {
-  return delegateName.charAt(0).toUpperCase() + delegateName.slice(1);
-}
-
-/** Returns a Map<fieldName, prismaType> for the given table slug. */
-function getModelFieldTypes(table: string): Map<string, string> {
-  const delegateName = TABLE_MAP[table];
-  if (!delegateName) return new Map();
-  const modelName = delegateToModelName(String(delegateName));
-  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
-  if (!model) return new Map();
-  return new Map(model.fields.map((f) => [f.name, f.type]));
-}
-
-/**
- * Returns the best `orderBy` clause for a table.
- * Uses `createdAt` when available, falls back to `updatedAt`, then `id`.
- * This prevents runtime errors on models that lack `createdAt`
- * (e.g. SalesIntegrationStatus only has `updatedAt`).
- */
-function getOrderBy(table: string): Record<string, 'asc' | 'desc'> {
-  const fields = getModelFieldTypes(table);
-  if (fields.has('createdAt')) return { createdAt: 'desc' };
-  if (fields.has('updatedAt')) return { updatedAt: 'desc' };
-  return { id: 'desc' };
-}
-
-/**
- * Builds the Prisma `where` clause for an optional region filter.
- *
- * Most tables have a direct `region` column and can be filtered with
- * `{ region }` directly.  Child tables (e.g. BackupOdooOrderLine,
- * BackupOdooOrderPayment) do not carry `region` themselves but are linked
- * to a parent `BackupOdooOrder` via an `order` relation.  For those tables
- * the region must be filtered through the relation: `{ order: { region } }`.
- *
- * If neither a direct `region` field nor an `order` relation is found, an
- * empty object is returned (no filter applied) so the query still succeeds.
- */
-function getRegionWhere(
-  table: string,
-  region: string,
-): Record<string, unknown> {
-  const fields = getModelFieldTypes(table);
-  if (fields.has('region')) {
-    return { region };
-  }
-
-  // Fall back to filtering through the `order` relation when the model is a
-  // child of a table that carries `region` (e.g. order-line, order-payment).
-  const delegateName = TABLE_MAP[table];
-  if (!delegateName) return {};
-  const modelName = delegateToModelName(String(delegateName));
-  const model = Prisma.dmmf.datamodel.models.find((m) => m.name === modelName);
-  if (model) {
-    const hasOrderRelation = model.fields.some(
-      (f) => f.name === 'order' && f.kind === 'object',
-    );
-    if (hasOrderRelation) {
-      return { order: { region } };
-    }
-  }
-
-  return {};
-}
-
-/**
- * Builds a lookup map from UPPER_SNAKE_CASE (external CSV headers) to the
- * camelCase field names used by Prisma.  Also handles keys that are already
- * camelCase by including them verbatim.
- *
- * Example: "RECEIPT_METHOD_ID" → "receiptMethodId"
- *
- * Note: Prisma field names always start with a lowercase letter (camelCase),
- * so the `replace(/^_/, '')` guard exists only as a safety measure.
- */
-function buildKeyNormalizer(
-  fieldTypes: Map<string, string>,
+export function buildKeyNormalizer(
+  fieldNames: Iterable<string>,
 ): (key: string) => string {
   const upperToLower = new Map<string, string>();
-  for (const camel of fieldTypes.keys()) {
-    // Derive the UPPER_SNAKE_CASE form so we can recognize external CSVs.
-    // Works correctly for all Prisma camelCase field names that start with
-    // a lowercase letter (e.g. "receiptMethodId" → "RECEIPT_METHOD_ID").
+  for (const camel of fieldNames) {
     const upper = camel
       .replace(/([A-Z])/g, '_$1')
       .toUpperCase()
       .replace(/^_/, '');
     upperToLower.set(upper, camel);
-    // Also allow the camelCase form directly (self-exported CSVs).
     upperToLower.set(camel, camel);
   }
   return (key: string) => upperToLower.get(key) ?? key;
 }
 
 /**
- * Coerces a CSV string value to the correct JS type based on the Prisma
- * field type.  CSV export always produces strings, so without this step
- * Prisma would reject numeric and boolean columns.
+ * Coerces a CSV string value to the JS type the entity/transformer expects,
+ * based on the field category. CSV export always produces strings.
  */
-function coerceCsvValue(value: unknown, prismaType: string): unknown {
+export function coerceCsvValue(value: unknown, category: FieldCategory): unknown {
   if (value === null || value === undefined || value === '') return null;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const s = String(value);
-  switch (prismaType) {
+  switch (category) {
     case 'Int': {
       const n = parseInt(s, 10);
       return isNaN(n) ? null : n;
@@ -184,20 +136,22 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
         return null;
       }
     }
-    case 'Float':
     case 'Decimal': {
       const n = parseFloat(s);
       return isNaN(n) ? null : n;
     }
     case 'Boolean':
-      // Any value in the truthy list → true; everything else (including 'false',
-      // '0', 'no', 'n', or any unrecognised string) → false.
       return ['true', '1', 'yes', 'y'].includes(s.toLowerCase());
     case 'DateTime': {
-      // Dates exported by the app are in ISO 8601 format (YYYY-MM-DD or full
-      // ISO string), so new Date() parses them consistently.
       const d = new Date(s);
       return isNaN(d.getTime()) ? null : d;
+    }
+    case 'Json': {
+      try {
+        return JSON.parse(s);
+      } catch {
+        return s;
+      }
     }
     default:
       return value;
@@ -206,50 +160,72 @@ function coerceCsvValue(value: unknown, prismaType: string): unknown {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  getDelegate(table: string): PrismaDelegate {
-    const delegateName = TABLE_MAP[table];
-    if (!delegateName) throw new BadRequestException(`Unknown table: ${table}`);
+  private getRepo(table: string): Repository<ObjectLiteral> {
+    const entity = ENTITY_MAP[table];
+    if (!entity) throw new BadRequestException(`Unknown table: ${table}`);
+    return this.dataSource.getRepository(entity);
+  }
 
-    return (this.prisma as unknown as Record<string, unknown>)[
-      delegateName as string
-    ] as PrismaDelegate;
+  private getMeta(table: string): EntityMetadata {
+    const entity = ENTITY_MAP[table];
+    if (!entity) throw new BadRequestException(`Unknown table: ${table}`);
+    return this.dataSource.getMetadata(entity);
+  }
+
+  /**
+   * Region filter. Tables with a direct `region` column filter on it; child
+   * tables (order lines/payments) filter through their parent relation.
+   */
+  private regionWhere(
+    table: string,
+    region: string,
+  ): Record<string, unknown> {
+    const meta = this.getMeta(table);
+    if (meta.columns.some((c) => c.propertyName === 'region')) {
+      return { region };
+    }
+    const rel = regionRelationProperty(meta);
+    return rel ? { [rel]: { region } } : {};
+  }
+
+  /** Best orderBy: createdAt → updatedAt → id. */
+  private orderBy(table: string): Record<string, 'DESC'> {
+    const names = new Set(
+      this.getMeta(table).columns.map((c) => c.propertyName),
+    );
+    if (names.has('createdAt')) return { createdAt: 'DESC' };
+    if (names.has('updatedAt')) return { updatedAt: 'DESC' };
+    return { id: 'DESC' };
   }
 
   async list(
     table: string,
     options: { skip?: number; take?: number; region?: string },
   ) {
-    const delegate = this.getDelegate(table);
-    const where = options.region ? getRegionWhere(table, options.region) : {};
-    const orderBy = getOrderBy(table);
-    const [data, total] = await Promise.all([
-      delegate.findMany({
-        where,
-        skip: options.skip ?? 0,
-        // Increased from 50 → 100 to reduce round-trips for bulk admin operations.
-        take: options.take ?? 100,
-        orderBy,
-      }),
-      delegate.count({ where }),
-    ]);
+    const repo = this.getRepo(table);
+    const where = options.region ? this.regionWhere(table, options.region) : {};
+    const [data, total] = await repo.findAndCount({
+      where,
+      skip: options.skip ?? 0,
+      take: options.take ?? 100,
+      order: this.orderBy(table),
+    });
     return { data, total, skip: options.skip ?? 0, take: options.take ?? 100 };
   }
 
   async getOne(table: string, id: string) {
-    const delegate = this.getDelegate(table);
-    const record = await delegate.findUnique({ where: { id } });
+    const repo = this.getRepo(table);
+    const record = await repo.findOne({ where: { id } });
     if (!record)
       throw new NotFoundException(`Record ${id} not found in ${table}`);
     return record;
   }
 
   /**
-   * Canonicalise a `region` value (trim + uppercase) so cross-table joins stay
-   * consistent. Region is a free-form string on every model and is matched by
-   * exact equality everywhere, so an un-normalised 'sa' would silently fail to
-   * join against 'SA'. Applied on every write path (create/update/CSV import).
+   * Canonicalise `region` (trim + uppercase) so cross-table joins stay
+   * consistent. Applied on every write path.
    */
   static normalizeRegion<T extends Record<string, unknown>>(data: T): T {
     if (typeof data.region === 'string' && data.region.trim() !== '') {
@@ -258,41 +234,41 @@ export class AdminService {
     return data;
   }
 
-  create(table: string, body: Record<string, unknown>) {
-    const delegate = this.getDelegate(table);
-    // Strip id if provided so default cuid() is used
+  async create(table: string, body: Record<string, unknown>) {
+    const repo = this.getRepo(table);
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    return delegate.create({ data: AdminService.normalizeRegion(data) });
+    const entity = repo.create(AdminService.normalizeRegion(data));
+    return repo.save(entity);
   }
 
   async update(table: string, id: string, body: Record<string, unknown>) {
     await this.getOne(table, id);
-    const delegate = this.getDelegate(table);
+    const repo = this.getRepo(table);
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    return delegate.update({
-      where: { id },
-      data: AdminService.normalizeRegion(data),
-    });
+    await repo.update(
+      id,
+      AdminService.normalizeRegion(data) as ObjectLiteral,
+    );
+    return this.getOne(table, id);
   }
 
   async remove(table: string, id: string) {
     await this.getOne(table, id);
-    const delegate = this.getDelegate(table);
-    await delegate.delete({ where: { id } });
+    const repo = this.getRepo(table);
+    await repo.delete(id);
   }
 
-  /** Returns the list of available admin tables with metadata */
+  /** Available admin tables with metadata. */
   static tables() {
-    return Object.keys(TABLE_MAP).map((slug) => ({
+    return Object.keys(ENTITY_MAP).map((slug) => ({
       slug,
-      model: TABLE_MAP[slug],
+      model: ENTITY_MAP[slug].name,
     }));
   }
 
   // ── CSV helpers ────────────────────────────────────────────────
 
   private static escapeCsvCell(value: unknown): string {
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const str = value == null ? '' : String(value);
     if (str.includes('"') || str.includes(',') || str.includes('\n')) {
       return `"${str.replaceAll('"', '""')}"`;
@@ -316,10 +292,8 @@ export class AdminService {
     const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
     if (lines.length < 2) return [];
 
-    // Regex-based CSV parser — handles quoted fields and escaped double-quotes
     const parseRow = (line: string): string[] => {
       const cells: string[] = [];
-      // Match each field: optionally quoted (with "" escape) or plain (no comma)
       const fieldPattern = /(?:^|,)("(?:[^"]|"")*"|[^,]*)/g;
       let match: RegExpExecArray | null;
       let lastIndex = 0;
@@ -331,7 +305,6 @@ export class AdminService {
         }
         cells.push(value);
       }
-      // If the line ends with a comma, fieldPattern won't capture the trailing empty field
       if (lastIndex === line.length && line.endsWith(',')) {
         cells.push('');
       }
@@ -347,47 +320,39 @@ export class AdminService {
     });
   }
 
-  /** Export all records of a table as CSV string */
+  /** Export all records of a table as a CSV string. */
   async exportCsv(table: string, region?: string): Promise<string> {
-    const delegate = this.getDelegate(table);
-    const where = region ? getRegionWhere(table, region) : {};
-    const orderBy = getOrderBy(table);
-    const rows = await delegate.findMany({
+    const repo = this.getRepo(table);
+    const where = region ? this.regionWhere(table, region) : {};
+    const rows = await repo.find({
       where,
-      orderBy,
+      order: this.orderBy(table),
       take: 10000,
     });
-    return AdminService.rowsToCsv(rows);
+    return AdminService.rowsToCsv(rows as Record<string, unknown>[]);
   }
 
-  /** Import records from CSV text, skipping system columns */
+  /** Import records from CSV text, skipping system columns. */
   async importCsv(
     table: string,
     csvText: string,
   ): Promise<{ imported: number; skipped: number; errors: string[] }> {
-    const delegate = this.getDelegate(table);
+    const repo = this.getRepo(table);
+    const categories = fieldCategoryMap(this.getMeta(table));
     const rows = AdminService.parseCsvToRows(csvText);
-    const fieldTypes = getModelFieldTypes(table);
-    // Build a normalizer that maps both UPPER_SNAKE_CASE (external CSVs) and
-    // camelCase (self-exported CSVs) headers to the Prisma field names.
-    const normalizeKey = buildKeyNormalizer(fieldTypes);
+    const normalizeKey = buildKeyNormalizer(categories.keys());
+    const validFields = Array.from(categories.keys());
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
 
-    // Get valid field names for detailed error reporting
-    const validFields = Array.from(fieldTypes.keys());
-
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
       try {
-        // Normalise keys first so UPPER_SNAKE_CASE headers from external CSVs
-        // are mapped to the camelCase field names expected by Prisma.
         const normalizedRow = Object.fromEntries(
           Object.entries(row).map(([k, v]) => [normalizeKey(k), v]),
         );
 
-        // Track unknown fields for better error messages
         const unknownFields = Object.keys(normalizedRow).filter(
           (k) =>
             k !== 'id' &&
@@ -397,38 +362,33 @@ export class AdminService {
         );
 
         if (unknownFields.length > 0) {
-          const msg = `Row ${rowIndex + 1}: Unknown fields [${unknownFields.join(', ')}]. Valid fields: ${validFields.join(', ')}`;
+          errors.push(
+            `Row ${rowIndex + 1}: Unknown fields [${unknownFields.join(', ')}]. Valid fields: ${validFields.join(', ')}`,
+          );
           skipped++;
-          errors.push(msg);
           continue;
         }
 
-        // Strip system / read-only columns so the DB generates them
         const {
           id: _id,
           createdAt: _ca,
           updatedAt: _ua,
           ...data
         } = normalizedRow;
-        // Coerce each field to its correct Prisma type (CSV values are all
-        // strings; without coercion Prisma rejects Int, Float and Boolean fields).
-        // Fields not found in the DMMF are passed through as-is; Prisma will
-        // then validate them (unknown columns are rejected at the DB layer).
         const cleaned = AdminService.normalizeRegion(
           Object.fromEntries(
             Object.entries(data).map(([k, v]) => {
               if (v === '' || v === null || v === undefined) return [k, null];
-              const prismaType = fieldTypes.get(k);
-              return [k, prismaType ? coerceCsvValue(v, prismaType) : v];
+              const category = categories.get(k);
+              return [k, category ? coerceCsvValue(v, category) : v];
             }),
           ),
         );
-        await delegate.create({ data: cleaned });
+        await repo.save(repo.create(cleaned));
         imported++;
       } catch (err: unknown) {
         skipped++;
         const errorMsg = err instanceof Error ? err.message : String(err);
-        // Enhanced error message with row context
         errors.push(`Row ${rowIndex + 1}: ${errorMsg}`);
       }
     }

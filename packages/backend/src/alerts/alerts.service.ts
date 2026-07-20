@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AlertSeverity } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
+import { AlertLog } from '../database/entities/alert-log.entity';
+import { AlertSeverity, AlertType } from '../database/enums';
 import { GatewayService } from '../gateway/gateway.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateAlertDto {
-  alertType: import('@prisma/client').AlertType;
-  severity: import('@prisma/client').AlertSeverity;
+  alertType: AlertType;
+  severity: AlertSeverity;
   title: string;
   message: string;
   relatedEntityId?: string;
@@ -24,7 +26,8 @@ export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(AlertLog)
+    private readonly alertLog: Repository<AlertLog>,
     private readonly gateway: GatewayService,
   ) {}
 
@@ -32,12 +35,12 @@ export class AlertsService {
     // Deduplicate: skip creation if an identical unresolved alert already
     // exists for the same alertType + relatedEntityId within the dedup window.
     const dedupSince = new Date(Date.now() - DEDUP_WINDOW_MS);
-    const existing = await this.prisma.alertLog.findFirst({
+    const existing = await this.alertLog.findOne({
       where: {
         alertType: dto.alertType,
         isResolved: false,
         relatedEntityId: dto.relatedEntityId,
-        createdAt: { gte: dedupSince },
+        createdAt: MoreThanOrEqual(dedupSince),
       },
       select: { id: true },
     });
@@ -49,7 +52,16 @@ export class AlertsService {
       return existing;
     }
 
-    const alert = await this.prisma.alertLog.create({ data: dto });
+    const alert = await this.alertLog.save(
+      this.alertLog.create({
+        alertType: dto.alertType,
+        severity: dto.severity,
+        title: dto.title,
+        message: dto.message,
+        relatedEntityId: dto.relatedEntityId ?? null,
+        relatedEntityType: dto.relatedEntityType ?? null,
+      }),
+    );
     this.logger.warn(`[ALERT ${dto.severity}] ${dto.title}: ${dto.message}`);
     this.gateway.emitAlert({
       type: dto.alertType,
@@ -64,22 +76,24 @@ export class AlertsService {
     isResolved?: boolean;
     limit?: number;
   }) {
-    return this.prisma.alertLog.findMany({
+    return this.alertLog.find({
       where: {
         ...(params?.severity ? { severity: params.severity } : {}),
         ...(params?.isResolved !== undefined
           ? { isResolved: params.isResolved }
           : {}),
       },
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       take: params?.limit || 50,
     });
   }
 
   async resolveAlert(id: string, resolvedBy: string) {
-    return this.prisma.alertLog.update({
-      where: { id },
-      data: { isResolved: true, resolvedAt: new Date(), resolvedBy },
+    await this.alertLog.update(id, {
+      isResolved: true,
+      resolvedAt: new Date(),
+      resolvedBy,
     });
+    return this.alertLog.findOne({ where: { id } });
   }
 }

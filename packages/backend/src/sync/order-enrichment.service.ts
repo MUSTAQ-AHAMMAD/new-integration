@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
 import { ApplyReceiptRequest } from '../clients/oracle/oracle-soap.client';
 import { toSafeNumber } from '../common/utils/bigint-utils';
@@ -59,7 +64,14 @@ export class OrderEnrichmentService {
   private readonly logger = new Logger(OrderEnrichmentService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOrders: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupOdooOrderLine)
+    private readonly backupLines: Repository<BackupOdooOrderLine>,
+    @InjectRepository(BackupOdooOrderPayment)
+    private readonly backupPayments: Repository<BackupOdooOrderPayment>,
     private readonly fusionMetadataService: FusionMetadataService,
   ) {}
 
@@ -80,7 +92,7 @@ export class OrderEnrichmentService {
     this.logger.log(`Enriching order ${orderSyncQueueId}...`);
 
     // 1. Get order from OrderSyncQueue
-    const order = await this.prisma.orderSyncQueue.findUnique({
+    const order = await this.orders.findOne({
       where: { id: orderSyncQueueId },
     });
 
@@ -91,15 +103,15 @@ export class OrderEnrichmentService {
     this.logger.log(`Processing order ${order.odooOrderNumber}...`);
 
     // 2. Try to get data from backup tables
-    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+    const backupOrder = await this.backupOrders.findOne({
       where: { orderName: order.odooOrderNumber },
     });
 
     if (backupOrder) {
-      const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+      const backupLines = await this.backupLines.find({
         where: { orderId: backupOrder.orderId },
       });
-      const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+      const backupPayments = await this.backupPayments.find({
         where: { orderId: backupOrder.orderId },
       });
 

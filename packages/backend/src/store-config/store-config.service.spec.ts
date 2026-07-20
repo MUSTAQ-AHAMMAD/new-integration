@@ -1,12 +1,13 @@
 import { NotFoundException } from '@nestjs/common';
-import {
-  AlertSeverity,
-  AlertType,
-  ValidationStatus,
-  Prisma,
-} from '@prisma/client';
+import { Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { AlertSeverity, AlertType, ValidationStatus } from '../database/enums';
 import { StoreConfigService } from './store-config.service';
 
 // ---------------------------------------------------------------------------
@@ -15,30 +16,44 @@ import { StoreConfigService } from './store-config.service';
 
 function makeStoreConfig(overrides: Record<string, unknown> = {}) {
   return {
+    id: 'cfg-1',
     branchCode: 'CCNTRBHR',
     branchName: 'Central Branch',
     isActive: true,
     validationStatus: ValidationStatus.VALIDATED,
-    validationErrors: Prisma.JsonNull,
+    validationErrors: null,
     billToSiteName: 'Acme Corp',
     bankAccountName: 'Main Bank',
     cashAccountName: 'Main Cash',
     paymentTermsName: '30 Net',
     oracleBusinessUnit: 'BU-AE',
+    bankAccountId: 1,
+    cashAccountId: 2,
+    region: 'AE',
+    version: 1,
     ...overrides,
   };
 }
 
-function makePrisma() {
+function makeStoresRepo() {
   return {
-    storeConfiguration: {
-      findUnique: jest.fn().mockResolvedValue(makeStoreConfig()),
-      findMany: jest.fn().mockResolvedValue([makeStoreConfig()]),
-      create: jest.fn().mockResolvedValue(makeStoreConfig()),
-      update: jest.fn().mockResolvedValue(makeStoreConfig()),
-      delete: jest.fn().mockResolvedValue({}),
-      upsert: jest.fn().mockResolvedValue(makeStoreConfig()),
-    },
+    findOne: jest.fn().mockResolvedValue(makeStoreConfig()),
+    find: jest.fn().mockResolvedValue([makeStoreConfig()]),
+    create: jest.fn().mockImplementation((x) => x),
+    save: jest.fn().mockImplementation((x) => Promise.resolve(x)),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    createQueryBuilder: jest.fn(),
+  };
+}
+
+function makeRepo() {
+  return {
+    findOne: jest.fn().mockResolvedValue(null),
+    find: jest.fn().mockResolvedValue([]),
+    create: jest.fn().mockImplementation((x) => x),
+    save: jest.fn().mockImplementation((x) => Promise.resolve(x)),
+    createQueryBuilder: jest.fn(),
   };
 }
 
@@ -52,14 +67,29 @@ function makeAlerts() {
 
 describe('StoreConfigService', () => {
   let service: StoreConfigService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let stores: ReturnType<typeof makeStoresRepo>;
+  let salesMetadata: ReturnType<typeof makeRepo>;
+  let businessUnitMaps: ReturnType<typeof makeRepo>;
+  let registers: ReturnType<typeof makeRepo>;
+  let odooOrders: ReturnType<typeof makeRepo>;
+  let ibqOrders: ReturnType<typeof makeRepo>;
   let alerts: ReturnType<typeof makeAlerts>;
 
   beforeEach(() => {
-    prisma = makePrisma();
+    stores = makeStoresRepo();
+    salesMetadata = makeRepo();
+    businessUnitMaps = makeRepo();
+    registers = makeRepo();
+    odooOrders = makeRepo();
+    ibqOrders = makeRepo();
     alerts = makeAlerts();
     service = new StoreConfigService(
-      prisma as unknown as PrismaService,
+      stores as unknown as Repository<StoreConfiguration>,
+      salesMetadata as unknown as Repository<FusionSalesMetadata>,
+      businessUnitMaps as unknown as Repository<FusionBusinessUnitMap>,
+      registers as unknown as Repository<VendHqRegister>,
+      odooOrders as unknown as Repository<BackupOdooOrder>,
+      ibqOrders as unknown as Repository<BackupIbqOrder>,
       alerts as unknown as AlertsService,
     );
     jest.clearAllMocks();
@@ -74,7 +104,7 @@ describe('StoreConfigService', () => {
     });
 
     it('throws NotFoundException when not found', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(null);
+      stores.findOne.mockResolvedValueOnce(null);
       await expect(service.getRawConfig('MISSING')).rejects.toThrow(
         NotFoundException,
       );
@@ -90,7 +120,7 @@ describe('StoreConfigService', () => {
     });
 
     it('throws when store is inactive', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      stores.findOne.mockResolvedValueOnce(
         makeStoreConfig({ isActive: false }),
       );
       await expect(service.getValidatedConfig('CCNTRBHR')).rejects.toThrow(
@@ -99,7 +129,7 @@ describe('StoreConfigService', () => {
     });
 
     it('throws when validation status is INVALID', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      stores.findOne.mockResolvedValueOnce(
         makeStoreConfig({ validationStatus: ValidationStatus.INVALID }),
       );
       await expect(service.getValidatedConfig('CCNTRBHR')).rejects.toThrow(
@@ -113,17 +143,15 @@ describe('StoreConfigService', () => {
   describe('deleteStore', () => {
     it('deletes the store when found', async () => {
       await service.deleteStore('CCNTRBHR');
-      expect(prisma.storeConfiguration.delete).toHaveBeenCalledWith({
-        where: { branchCode: 'CCNTRBHR' },
-      });
+      expect(stores.delete).toHaveBeenCalledWith({ branchCode: 'CCNTRBHR' });
     });
 
     it('throws NotFoundException when store is not found', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(null);
+      stores.findOne.mockResolvedValueOnce(null);
       await expect(service.deleteStore('MISSING')).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.storeConfiguration.delete).not.toHaveBeenCalled();
+      expect(stores.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -137,7 +165,7 @@ describe('StoreConfigService', () => {
     });
 
     it('returns isValid=false and lists missing fields', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      stores.findOne.mockResolvedValueOnce(
         makeStoreConfig({
           billToSiteName: null,
           bankAccountName: null,
@@ -152,14 +180,14 @@ describe('StoreConfigService', () => {
     });
 
     it('returns isValid=false when store not found', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(null);
+      stores.findOne.mockResolvedValueOnce(null);
       const result = await service.validateConfig('MISSING');
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Store config not found');
     });
 
     it('fires an alert when validation fails', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      stores.findOne.mockResolvedValueOnce(
         makeStoreConfig({ billToSiteName: null }),
       );
       await service.validateConfig('CCNTRBHR');
@@ -178,25 +206,23 @@ describe('StoreConfigService', () => {
 
     it('updates validationStatus to VALIDATED in DB on success', async () => {
       await service.validateConfig('CCNTRBHR');
-      expect(prisma.storeConfiguration.update).toHaveBeenCalledWith(
+      expect(stores.update).toHaveBeenCalledWith(
+        { branchCode: 'CCNTRBHR' },
         expect.objectContaining({
-          data: expect.objectContaining({
-            validationStatus: ValidationStatus.VALIDATED,
-          }),
+          validationStatus: ValidationStatus.VALIDATED,
         }),
       );
     });
 
     it('updates validationStatus to INVALID in DB on failure', async () => {
-      prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+      stores.findOne.mockResolvedValueOnce(
         makeStoreConfig({ billToSiteName: null }),
       );
       await service.validateConfig('CCNTRBHR');
-      expect(prisma.storeConfiguration.update).toHaveBeenCalledWith(
+      expect(stores.update).toHaveBeenCalledWith(
+        { branchCode: 'CCNTRBHR' },
         expect.objectContaining({
-          data: expect.objectContaining({
-            validationStatus: ValidationStatus.INVALID,
-          }),
+          validationStatus: ValidationStatus.INVALID,
         }),
       );
     });
@@ -207,14 +233,14 @@ describe('StoreConfigService', () => {
   describe('listStores', () => {
     it('returns all stores when activeOnly is false', async () => {
       await service.listStores(false);
-      expect(prisma.storeConfiguration.findMany).toHaveBeenCalledWith(
+      expect(stores.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: undefined }),
       );
     });
 
     it('filters to active only when activeOnly is true', async () => {
       await service.listStores(true);
-      expect(prisma.storeConfiguration.findMany).toHaveBeenCalledWith(
+      expect(stores.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { isActive: true } }),
       );
     });
@@ -223,121 +249,126 @@ describe('StoreConfigService', () => {
   // ── upsertStore ──────────────────────────────────────────────────────────
 
   describe('upsertStore', () => {
-    it('calls prisma upsert with the correct branchCode', async () => {
-      await service.upsertStore({
-        branchCode: 'CCNTRBHR',
-        branchName: 'Central',
-        odooBranchId: 3,
-        oracleOperatingUnitId: 101,
-        oracleBusinessUnit: 'BU-AE',
-        billToSiteName: 'Acme Corp',
-        bankAccountName: 'Main Bank',
-        cashAccountName: 'Main Cash',
-        paymentTermsName: '30 Net',
-        createdBy: 'admin',
-      });
-      expect(prisma.storeConfiguration.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { branchCode: 'CCNTRBHR' } }),
+    const input = {
+      branchCode: 'CCNTRBHR',
+      branchName: 'Central',
+      odooBranchId: 3,
+      oracleOperatingUnitId: 101,
+      oracleBusinessUnit: 'BU-AE',
+      billToSiteName: 'Acme Corp',
+      bankAccountName: 'Main Bank',
+      cashAccountName: 'Main Cash',
+      paymentTermsName: '30 Net',
+      createdBy: 'admin',
+    };
+
+    it('updates and bumps version when the store exists', async () => {
+      stores.findOne.mockResolvedValueOnce(
+        makeStoreConfig({ branchCode: 'CCNTRBHR', version: 4 }),
       );
+      const result = (await service.upsertStore(input)) as { version: number };
+      expect(stores.save).toHaveBeenCalled();
+      expect(result.version).toBe(5);
+    });
+
+    it('creates a new store when none exists', async () => {
+      stores.findOne.mockResolvedValueOnce(null);
+      await service.upsertStore(input);
+      expect(stores.create).toHaveBeenCalledWith(
+        expect.objectContaining({ branchCode: 'CCNTRBHR' }),
+      );
+      expect(stores.save).toHaveBeenCalled();
     });
   });
 
   // ── populateAllBranches ──────────────────────────────────────────────────
 
   describe('populateAllBranches', () => {
+    function makeQb(rows: unknown[]) {
+      const qb: Record<string, jest.Mock> = {};
+      for (const m of [
+        'select',
+        'addSelect',
+        'where',
+        'groupBy',
+        'orderBy',
+        'addOrderBy',
+      ]) {
+        qb[m] = jest.fn().mockReturnValue(qb);
+      }
+      qb.getRawMany = jest.fn().mockResolvedValue(rows);
+      return qb;
+    }
+
     beforeEach(() => {
-      // Mock $queryRaw for branch queries
-      (prisma as unknown as Record<string, jest.Mock>).$queryRaw = jest
-        .fn()
-        .mockResolvedValueOnce([
-          // BackupOdooOrder branches
-          {
-            branchId: 3,
-            branchName: 'Branch 3',
-            region: 'AE',
-            orderCount: 100,
-          },
-          {
-            branchId: 5,
-            branchName: 'Branch 5',
-            region: 'KW',
-            orderCount: 50,
-          },
-        ])
-        .mockResolvedValueOnce([
-          // BackupIbqOrder branches
+      odooOrders.createQueryBuilder = jest.fn().mockReturnValue(
+        makeQb([
+          { branchId: 3, branchName: 'Branch 3', region: 'AE', orderCount: 100 },
+          { branchId: 5, branchName: 'Branch 5', region: 'KW', orderCount: 50 },
+        ]),
+      );
+      ibqOrders.createQueryBuilder = jest.fn().mockReturnValue(
+        makeQb([
           {
             branchId: 3,
             branchName: 'Branch 3 IBQ',
             region: 'AE',
             orderCount: 25,
           },
-          {
-            branchId: 7,
-            branchName: 'Branch 7',
-            region: 'OM',
-            orderCount: 30,
-          },
-        ])
-        .mockResolvedValueOnce([
-          // VendHqRegister account IDs by region (Step 4.5)
-          {
-            region: 'AE',
-            bankAccountId: BigInt(2001),
-            cashAccountId: BigInt(2002),
-          },
-        ]);
-
-      // Mock fusionSalesMetadata
-      (
-        prisma as unknown as Record<string, { findMany: jest.Mock }>
-      ).fusionSalesMetadata = {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            id: '1',
-            billToName: 'AE Store',
-            customerType: 'NORMAL',
-            billToAccount: BigInt(101),
-            businessUnit: 'BU-AE',
-            txnSource: 'Manual',
-            txnType: 'SALE',
-            region: 'AE',
-            siteNumber: 'SITE-AE',
-          },
-          {
-            id: '2',
-            billToName: 'KW Store',
-            customerType: 'NORMAL',
-            billToAccount: BigInt(102),
-            businessUnit: 'BU-KW',
-            txnSource: 'Manual',
-            txnType: 'SALE',
-            region: 'KW',
-            siteNumber: 'SITE-KW',
-          },
-          {
-            id: '3',
-            billToName: 'OM Store',
-            customerType: 'NORMAL',
-            billToAccount: BigInt(103),
-            businessUnit: 'BU-OM',
-            txnSource: 'Manual',
-            txnType: 'SALE',
-            region: 'OM',
-            siteNumber: 'SITE-OM',
-          },
+          { branchId: 7, branchName: 'Branch 7', region: 'OM', orderCount: 30 },
         ]),
-      };
+      );
 
-      // Mock storeConfiguration.create
-      (
-        prisma as unknown as Record<string, { create: jest.Mock }>
-      ).storeConfiguration.create = jest.fn().mockResolvedValue({});
+      salesMetadata.find.mockResolvedValue([
+        {
+          id: '1',
+          billToName: 'AE Store',
+          customerType: 'NORMAL',
+          billToAccount: BigInt(101),
+          businessUnit: 'BU-AE',
+          txnSource: 'Manual',
+          txnType: 'SALE',
+          region: 'AE',
+          siteNumber: 'SITE-AE',
+        },
+        {
+          id: '2',
+          billToName: 'KW Store',
+          customerType: 'NORMAL',
+          billToAccount: BigInt(102),
+          businessUnit: 'BU-KW',
+          txnSource: 'Manual',
+          txnType: 'SALE',
+          region: 'KW',
+          siteNumber: 'SITE-KW',
+        },
+        {
+          id: '3',
+          billToName: 'OM Store',
+          customerType: 'NORMAL',
+          billToAccount: BigInt(103),
+          businessUnit: 'BU-OM',
+          txnSource: 'Manual',
+          txnType: 'SALE',
+          region: 'OM',
+          siteNumber: 'SITE-OM',
+        },
+      ]);
 
-      // By default no branch has an existing configuration, so each is
-      // treated as new. Individual tests override this to simulate existing
-      // configs (e.g. the "skips branches that already have configurations").
-      prisma.storeConfiguration.findUnique.mockReset().mockResolvedValue(null);
+      // VendHqRegister account IDs by region (buildRegionAccountMap)
+      registers.find.mockResolvedValue([
+        {
+          region: 'AE',
+          bankAccountId: BigInt(2001),
+          cashAccountId: BigInt(2002),
+          createdAt: new Date(),
+        },
+      ]);
+
+      // By default no branch has an existing configuration.
+      stores.findOne.mockReset().mockResolvedValue(null);
+      stores.save.mockReset().mockResolvedValue({});
+      stores.create.mockImplementation((x) => x);
     });
 
     it('creates configurations for all unique branches', async () => {
@@ -350,8 +381,7 @@ describe('StoreConfigService', () => {
     });
 
     it('skips branches that already have configurations', async () => {
-      // First branch already exists
-      prisma.storeConfiguration.findUnique
+      stores.findOne
         .mockResolvedValueOnce(makeStoreConfig({ branchCode: '3' }))
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null);
@@ -363,9 +393,7 @@ describe('StoreConfigService', () => {
     });
 
     it('throws error when no FusionSalesMetadata exists', async () => {
-      (
-        prisma as unknown as Record<string, { findMany: jest.Mock }>
-      ).fusionSalesMetadata.findMany = jest.fn().mockResolvedValue([]);
+      salesMetadata.find.mockResolvedValue([]);
 
       await expect(service.populateAllBranches()).rejects.toThrow(
         'No FusionSalesMetadata records found',
@@ -375,27 +403,23 @@ describe('StoreConfigService', () => {
     it('matches branches to FusionSalesMetadata by region', async () => {
       await service.populateAllBranches();
 
-      const createCalls = prisma.storeConfiguration.create.mock.calls;
+      const createCalls = stores.create.mock.calls;
 
       // Branch 3 (AE) should use AE metadata
-      expect(createCalls[0][0].data.billToSiteName).toBe('AE Store');
-
+      expect(createCalls[0][0].billToSiteName).toBe('AE Store');
       // Branch 5 (KW) should use KW metadata
-      expect(createCalls[1][0].data.billToSiteName).toBe('KW Store');
-
+      expect(createCalls[1][0].billToSiteName).toBe('KW Store');
       // Branch 7 (OM) uses its own OM metadata — no silent fallback to AE.
-      expect(createCalls[2][0].data.billToSiteName).toBe('OM Store');
+      expect(createCalls[2][0].billToSiteName).toBe('OM Store');
     });
 
     it('deduplicates branches across Odoo and IBQ sources', async () => {
       const result = await service.populateAllBranches();
-
-      // Branch 3 appears in both Odoo and IBQ — should only create once
       expect(result.totalBranches).toBe(3); // 3, 5, 7
     });
 
     it('handles create errors gracefully', async () => {
-      prisma.storeConfiguration.create
+      stores.save
         .mockRejectedValueOnce(new Error('Database error'))
         .mockResolvedValueOnce({})
         .mockResolvedValueOnce({});

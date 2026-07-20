@@ -13,9 +13,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { ObjectLiteral, Repository } from 'typeorm';
 import { Response } from 'express';
 import { StoreConfigService } from './store-config.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -26,7 +30,12 @@ import { RolesGuard } from '../auth/roles.guard';
 export class StoreConfigController {
   constructor(
     private readonly service: StoreConfigService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(StoreConfiguration)
+    private readonly stores: Repository<StoreConfiguration>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly odooOrders: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupIbqOrder)
+    private readonly ibqOrders: Repository<BackupIbqOrder>,
   ) {}
 
   @Get()
@@ -38,8 +47,8 @@ export class StoreConfigController {
   @Get('export')
   @ApiOperation({ summary: 'Export store configurations as CSV' })
   async exportCsv(@Res() res: Response) {
-    const rows = await this.prisma.storeConfiguration.findMany({
-      orderBy: { branchCode: 'asc' },
+    const rows = await this.stores.find({
+      order: { branchCode: 'ASC' },
     });
     const escape = (v: unknown) => {
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
@@ -52,7 +61,9 @@ export class StoreConfigController {
     const csv = [
       headers.map(escape).join(','),
       ...rows.map((r) =>
-        headers.map((h) => escape((r as Record<string, unknown>)[h])).join(','),
+        headers
+          .map((h) => escape((r as unknown as Record<string, unknown>)[h]))
+          .join(','),
       ),
     ].join('\n');
     res.setHeader('Content-Type', 'text/csv');
@@ -179,25 +190,25 @@ export class StoreConfigController {
   })
   async checkStoreConfigs() {
     // Get all unique branches from backup tables
-    const odooBranches = await this.prisma.$queryRaw<
-      Array<{ branchId: number; branchName: string | null }>
-    >`
-      SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
-      FROM "BackupOdooOrder"
-      WHERE "branchId" IS NOT NULL
-      GROUP BY "branchId"
-      ORDER BY "branchId"
-    `;
+    const aggregate = async (
+      repo: Repository<ObjectLiteral>,
+    ): Promise<Array<{ branchId: number; branchName: string | null }>> => {
+      const rows = await repo
+        .createQueryBuilder('o')
+        .select('o.branchId', 'branchId')
+        .addSelect('MAX(o.branchName)', 'branchName')
+        .where('o.branchId IS NOT NULL')
+        .groupBy('o.branchId')
+        .orderBy('o.branchId', 'ASC')
+        .getRawMany<{ branchId: number | string; branchName: string | null }>();
+      return rows.map((r) => ({
+        branchId: Number(r.branchId),
+        branchName: r.branchName,
+      }));
+    };
 
-    const ibqBranches = await this.prisma.$queryRaw<
-      Array<{ branchId: number; branchName: string | null }>
-    >`
-      SELECT DISTINCT "branchId"::int as "branchId", MAX("branchName") as "branchName"
-      FROM "BackupIbqOrder"
-      WHERE "branchId" IS NOT NULL
-      GROUP BY "branchId"
-      ORDER BY "branchId"
-    `;
+    const odooBranches = await aggregate(this.odooOrders);
+    const ibqBranches = await aggregate(this.ibqOrders);
 
     // Merge and deduplicate
     const branchMap = new Map<

@@ -1,6 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Decimal } from 'decimal.js';
+import { InventorySyncTracker } from '../database/entities/inventory-sync-tracker.entity';
 
 export interface ListNegativeInventoryParams {
   branchCode?: string;
@@ -12,7 +14,7 @@ export interface InventoryRecord {
   productSku: string;
   productName?: string | null;
   branchCode: string;
-  quantityChange: Prisma.Decimal | number | string;
+  quantityChange: Decimal | number | string;
   isNegativeInventory: boolean;
   negativeInventoryAlertSent: boolean;
   reviewedAt?: Date | null;
@@ -38,82 +40,103 @@ export interface InventoryBranchStatsRow {
 export class InventoryService {
   private readonly logger = new Logger(InventoryService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(InventorySyncTracker)
+    private readonly trackers: Repository<InventorySyncTracker>,
+  ) {}
 
   async listNegativeInventory(params?: ListNegativeInventoryParams) {
-    const conditions: Prisma.Sql[] = [Prisma.sql`"isNegativeInventory" = TRUE`];
+    const qb = this.trackers
+      .createQueryBuilder('t')
+      .where('t.isNegativeInventory = :neg', { neg: true });
 
     if (params?.branchCode) {
-      conditions.push(Prisma.sql`"branchCode" = ${params.branchCode}`);
+      qb.andWhere('t.branchCode = :branchCode', {
+        branchCode: params.branchCode,
+      });
     }
 
-    const take = params?.limit ?? 50;
-
-    return this.prisma.$queryRaw<InventoryRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "InventorySyncTracker"
-      WHERE ${Prisma.join(conditions, ' AND ')}
-      ORDER BY "createdAt" DESC
-      LIMIT ${take}
-    `);
+    return qb
+      .orderBy('t.createdAt', 'DESC')
+      .take(params?.limit ?? 50)
+      .getMany();
   }
 
   async markAsReviewed(id: string, reviewedBy: string, reviewNote?: string) {
-    const [record] = await this.prisma.$queryRaw<InventoryRecord[]>(Prisma.sql`
-      UPDATE "InventorySyncTracker"
-      SET
-        "reviewedAt" = NOW(),
-        "reviewedBy" = ${reviewedBy},
-        "reviewNote" = ${reviewNote ?? null}
-      WHERE "id" = ${id}
-      RETURNING *
-    `);
-
+    const record = await this.trackers.findOne({ where: { id } });
     if (!record) {
       throw new NotFoundException(`Inventory tracker ${id} not found`);
     }
 
+    record.reviewedAt = new Date();
+    record.reviewedBy = reviewedBy;
+    record.reviewNote = reviewNote ?? null;
+    const saved = await this.trackers.save(record);
+
     this.logger.log(`Inventory tracker ${id} reviewed by ${reviewedBy}`);
-    return record;
+    return saved;
   }
 
   async getInventoryStats() {
-    const [summary, byBranch] = await Promise.all([
-      this.prisma.$queryRaw<InventoryStatsRow[]>(Prisma.sql`
-        SELECT
-          COUNT(*)::int AS "totalNegative",
-          COALESCE(SUM(CASE WHEN "reviewedAt" IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS "reviewed",
-          COALESCE(SUM(CASE WHEN "reviewedAt" IS NULL THEN 1 ELSE 0 END), 0)::int AS "unreviewed"
-        FROM "InventorySyncTracker"
-        WHERE "isNegativeInventory" = TRUE
-      `),
-      this.prisma.$queryRaw<InventoryBranchStatsRow[]>(Prisma.sql`
-        SELECT
-          "branchCode",
-          COUNT(*)::int AS "total",
-          COALESCE(SUM(CASE WHEN "reviewedAt" IS NOT NULL THEN 1 ELSE 0 END), 0)::int AS "reviewed",
-          COALESCE(SUM(CASE WHEN "reviewedAt" IS NULL THEN 1 ELSE 0 END), 0)::int AS "unreviewed"
-        FROM "InventorySyncTracker"
-        WHERE "isNegativeInventory" = TRUE
-        GROUP BY "branchCode"
-        ORDER BY "branchCode" ASC
-      `),
-    ]);
+    const summary = await this.trackers
+      .createQueryBuilder('t')
+      .select('COUNT(*)', 'totalNegative')
+      .addSelect(
+        'COALESCE(SUM(CASE WHEN t.reviewedAt IS NOT NULL THEN 1 ELSE 0 END), 0)',
+        'reviewed',
+      )
+      .addSelect(
+        'COALESCE(SUM(CASE WHEN t.reviewedAt IS NULL THEN 1 ELSE 0 END), 0)',
+        'unreviewed',
+      )
+      .where('t.isNegativeInventory = :neg', { neg: true })
+      .getRawOne<{
+        totalNegative: string | number;
+        reviewed: string | number;
+        unreviewed: string | number;
+      }>();
+
+    const byBranchRaw = await this.trackers
+      .createQueryBuilder('t')
+      .select('t.branchCode', 'branchCode')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect(
+        'COALESCE(SUM(CASE WHEN t.reviewedAt IS NOT NULL THEN 1 ELSE 0 END), 0)',
+        'reviewed',
+      )
+      .addSelect(
+        'COALESCE(SUM(CASE WHEN t.reviewedAt IS NULL THEN 1 ELSE 0 END), 0)',
+        'unreviewed',
+      )
+      .where('t.isNegativeInventory = :neg', { neg: true })
+      .groupBy('t.branchCode')
+      .orderBy('t.branchCode', 'ASC')
+      .getRawMany<{
+        branchCode: string;
+        total: string | number;
+        reviewed: string | number;
+        unreviewed: string | number;
+      }>();
+
+    const byBranch: InventoryBranchStatsRow[] = byBranchRaw.map((r) => ({
+      branchCode: r.branchCode,
+      total: Number(r.total),
+      reviewed: Number(r.reviewed),
+      unreviewed: Number(r.unreviewed),
+    }));
 
     return {
-      totalNegative: summary[0]?.totalNegative ?? 0,
-      reviewed: summary[0]?.reviewed ?? 0,
-      unreviewed: summary[0]?.unreviewed ?? 0,
+      totalNegative: Number(summary?.totalNegative ?? 0),
+      reviewed: Number(summary?.reviewed ?? 0),
+      unreviewed: Number(summary?.unreviewed ?? 0),
       byBranch,
     };
   }
 
   async getAlertHistory(limit = 50) {
-    return this.prisma.$queryRaw<InventoryRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "InventorySyncTracker"
-      ORDER BY "createdAt" DESC
-      LIMIT ${limit}
-    `);
+    return this.trackers.find({
+      order: { createdAt: 'DESC' },
+      take: limit,
+    });
   }
 }

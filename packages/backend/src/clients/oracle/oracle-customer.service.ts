@@ -8,7 +8,6 @@
  * - Customer ID is required for standard receipt processing
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { OracleSoapClient, CustomerProfile } from './oracle-soap.client';
 
 @Injectable()
@@ -17,10 +16,7 @@ export class OracleCustomerService {
   private readonly customerCache = new Map<string, number>();
   private readonly profileCache = new Map<string, CustomerProfile>();
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly soapClient: OracleSoapClient,
-  ) {}
+  constructor(private readonly soapClient: OracleSoapClient) {}
 
   /**
    * Get customer ID from account number by querying Oracle Fusion.

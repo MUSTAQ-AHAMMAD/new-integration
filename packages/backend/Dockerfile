@@ -23,7 +23,6 @@ COPY package.json pnpm-workspace.yaml ./
 COPY packages/backend/ ./packages/backend/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/packages/backend
-RUN pnpm exec prisma generate
 RUN pnpm run build
 
 # ─────────────────────────────────────────
@@ -60,7 +59,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/backend/node_modules ./packages/backend/node_modules
 COPY --from=builder /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=builder /app/packages/backend/dist ./packages/backend/dist
-COPY --from=builder /app/packages/backend/prisma ./packages/backend/prisma
 COPY packages/backend/package.json ./packages/backend/
 # data/ is volume-mounted at runtime; create the directory so the mount point exists
 RUN mkdir -p /app/packages/backend/data
@@ -75,7 +73,7 @@ WORKDIR /app/packages/backend
 # If the migration fails the container will exit, preventing a running API against
 # a stale schema.  For zero-downtime deployments run the migration as a separate
 # init step before routing traffic to this container.
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/main"]
+CMD ["node", "dist/main"]
 
 # ─────────────────────────────────────────
 # Stage 4: Development (hot-reload)
@@ -116,10 +114,9 @@ RUN pnpm install --no-frozen-lockfile
 COPY packages/backend/ ./packages/backend/
 COPY packages/shared/ ./packages/shared/
 WORKDIR /app/packages/backend
-RUN pnpm exec prisma generate
 # data/ is volume-mounted at runtime; create the directory so the mount point exists
 RUN mkdir -p /app/packages/backend/data
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "set -e && pnpm exec prisma db push --skip-generate --accept-data-loss && pnpm dev"]
+CMD ["sh", "-c", "pnpm dev"]

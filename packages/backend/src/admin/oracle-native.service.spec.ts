@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ObjectLiteral, Repository } from 'typeorm';
 import { OracleNativeService } from './oracle-native.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -24,22 +24,34 @@ function makeConfig(
   } as unknown as ConfigService;
 }
 
-function makePrisma() {
+function makeRepo(name = 'X'): Repository<ObjectLiteral> {
   return {
-    outletIntegrationConfig: { upsert: jest.fn().mockResolvedValue({}) },
-    fusionBusinessUnitMap: { upsert: jest.fn().mockResolvedValue({}) },
-    fusionReceiptMethod: { upsert: jest.fn().mockResolvedValue({}) },
-    fusionSalesMetadata: { upsert: jest.fn().mockResolvedValue({}) },
-    serviceProviderJournalMeta: { upsert: jest.fn().mockResolvedValue({}) },
-    fusionCredential: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqCredential: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqOutlet: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqRegister: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqServiceProvider: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqDiscountItem: { upsert: jest.fn().mockResolvedValue({}) },
-    vendHqTaxMeta: { upsert: jest.fn().mockResolvedValue({}) },
-    salesIntegrationStatus: { upsert: jest.fn().mockResolvedValue({}) },
-  };
+    upsert: jest.fn().mockResolvedValue({}),
+    metadata: { name },
+  } as unknown as Repository<ObjectLiteral>;
+}
+
+function makeService(config: ConfigService): OracleNativeService {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r = (): any => makeRepo();
+  return new OracleNativeService(
+    config,
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+    r(),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -50,10 +62,7 @@ describe('OracleNativeService', () => {
   let service: OracleNativeService;
 
   beforeEach(() => {
-    service = new OracleNativeService(
-      makeConfig(),
-      makePrisma() as unknown as PrismaService,
-    );
+    service = makeService(makeConfig());
     jest.clearAllMocks();
   });
 
@@ -70,34 +79,22 @@ describe('OracleNativeService', () => {
     });
 
     it('throws BadRequestException when ORACLE_DB_HOST is missing', () => {
-      const svc = new OracleNativeService(
-        makeConfig({ ORACLE_DB_HOST: undefined }),
-        makePrisma() as unknown as PrismaService,
-      );
+      const svc = makeService(makeConfig({ ORACLE_DB_HOST: undefined }));
       expect(() => svc['getConnectionConfig']()).toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when ORACLE_DB_SERVICE is missing', () => {
-      const svc = new OracleNativeService(
-        makeConfig({ ORACLE_DB_SERVICE: undefined }),
-        makePrisma() as unknown as PrismaService,
-      );
+      const svc = makeService(makeConfig({ ORACLE_DB_SERVICE: undefined }));
       expect(() => svc['getConnectionConfig']()).toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when ORACLE_DB_USERNAME is missing', () => {
-      const svc = new OracleNativeService(
-        makeConfig({ ORACLE_DB_USERNAME: undefined }),
-        makePrisma() as unknown as PrismaService,
-      );
+      const svc = makeService(makeConfig({ ORACLE_DB_USERNAME: undefined }));
       expect(() => svc['getConnectionConfig']()).toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when ORACLE_DB_PASSWORD is missing', () => {
-      const svc = new OracleNativeService(
-        makeConfig({ ORACLE_DB_PASSWORD: undefined }),
-        makePrisma() as unknown as PrismaService,
-      );
+      const svc = makeService(makeConfig({ ORACLE_DB_PASSWORD: undefined }));
       expect(() => svc['getConnectionConfig']()).toThrow(BadRequestException);
     });
   });
@@ -108,9 +105,8 @@ describe('OracleNativeService', () => {
     it('throws BadRequestException for a schema name with invalid characters', async () => {
       // Mock oracledb module to simulate a connection being established
       // so that schema validation is reached
-      const svc = new OracleNativeService(
+      const svc = makeService(
         makeConfig({ ORACLE_DB_SCHEMA: 'DROP TABLE; --' }),
-        makePrisma() as unknown as PrismaService,
       );
 
       // We mock the oracledb require to return a fake that can connect
@@ -153,10 +149,7 @@ describe('OracleNativeService', () => {
     it('throws BadRequestException when oracledb.getConnection fails', async () => {
       // We test this by mocking the entire import at the module level
       // Since oracledb is a native module, we mock the require() call
-      const svcWithMockOracle = new OracleNativeService(
-        makeConfig(),
-        makePrisma() as unknown as PrismaService,
-      );
+      const svcWithMockOracle = makeService(makeConfig());
 
       // Spy on the service and inject mock behaviour for the require call
       jest

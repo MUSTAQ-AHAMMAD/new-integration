@@ -1,8 +1,9 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
-import { SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { Repository } from 'typeorm';
+import { SyncStatus } from '../database/enums';
+import { WebhookEvent } from '../database/entities/webhook-event.entity';
 import { OrderSyncService } from '../sync/order-sync.service';
 import { WebhookService } from './webhook.service';
 
@@ -12,16 +13,23 @@ function makeSignature(body: Buffer, secret: string): string {
   return createHmac('sha256', secret).update(body).digest('hex');
 }
 
+type MockRepo = {
+  find: jest.Mock;
+  create: jest.Mock;
+  save: jest.Mock;
+  update: jest.Mock;
+};
+
 function makeService(secret: string | null = WEBHOOK_SECRET): {
   service: WebhookService;
-  mockPrisma: jest.Mocked<Partial<PrismaService>>;
+  mockRepo: MockRepo;
   mockOrderSync: jest.Mocked<Partial<OrderSyncService>>;
 } {
-  const mockPrisma = {
-    webhookEvent: {
-      create: jest.fn().mockResolvedValue({ id: 'evt-001' }),
-      update: jest.fn().mockResolvedValue({}),
-    } as unknown as PrismaService['webhookEvent'],
+  const mockRepo: MockRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    create: jest.fn().mockImplementation((x) => x),
+    save: jest.fn().mockResolvedValue({ id: 'evt-001' }),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
 
   const mockOrderSync = {
@@ -35,15 +43,15 @@ function makeService(secret: string | null = WEBHOOK_SECRET): {
   } as unknown as ConfigService;
 
   const service = new WebhookService(
-    mockPrisma as unknown as PrismaService,
+    mockRepo as unknown as Repository<WebhookEvent>,
     mockOrderSync as unknown as OrderSyncService,
     config,
   );
 
   return {
     service,
-    mockPrisma: mockPrisma,
-    mockOrderSync: mockOrderSync,
+    mockRepo,
+    mockOrderSync,
   };
 }
 
@@ -140,41 +148,39 @@ describe('WebhookService — HMAC signature verification', () => {
 
 describe('WebhookService — event persistence', () => {
   it('persists a WebhookEvent record for every incoming event', async () => {
-    const { service, mockPrisma } = makeService(null);
+    const { service, mockRepo } = makeService(null);
     const payload = makePaidOrderPayload();
     const raw = Buffer.from(JSON.stringify(payload));
 
     await service.processOdooEvent(payload, raw);
 
-    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
+    expect(mockRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          eventType: 'order.paid',
-          sourceSystem: 'ODOO',
-          processingStatus: SyncStatus.PENDING,
-        }),
+        eventType: 'order.paid',
+        sourceSystem: 'ODOO',
+        processingStatus: SyncStatus.PENDING,
       }),
     );
+    expect(mockRepo.save).toHaveBeenCalled();
   });
 
   it('marks the event as SYNCED after successful processing', async () => {
-    const { service, mockPrisma } = makeService(null);
+    const { service, mockRepo } = makeService(null);
     const payload = makePaidOrderPayload();
     const raw = Buffer.from(JSON.stringify(payload));
 
     await service.processOdooEvent(payload, raw);
 
-    expect(mockPrisma.webhookEvent!.update as jest.Mock).toHaveBeenCalledWith(
+    expect(mockRepo.update).toHaveBeenCalledWith(
+      'evt-001',
       expect.objectContaining({
-        data: expect.objectContaining({
-          processingStatus: SyncStatus.SYNCED,
-        }),
+        processingStatus: SyncStatus.SYNCED,
       }),
     );
   });
 
   it('marks the event as FAILED when processing throws', async () => {
-    const { service, mockPrisma, mockOrderSync } = makeService(null);
+    const { service, mockRepo, mockOrderSync } = makeService(null);
     (mockOrderSync.ingestOrder as jest.Mock).mockRejectedValue(
       new Error('downstream error'),
     );
@@ -187,17 +193,16 @@ describe('WebhookService — event persistence', () => {
       received: true,
       processingError: expect.any(String),
     });
-    expect(mockPrisma.webhookEvent!.update as jest.Mock).toHaveBeenCalledWith(
+    expect(mockRepo.update).toHaveBeenCalledWith(
+      'evt-001',
       expect.objectContaining({
-        data: expect.objectContaining({
-          processingStatus: SyncStatus.FAILED,
-        }),
+        processingStatus: SyncStatus.FAILED,
       }),
     );
   });
 
   it('stores the event_type from the payload', async () => {
-    const { service, mockPrisma } = makeService(null);
+    const { service, mockRepo } = makeService(null);
     const payload = {
       event_type: 'order.refund',
       order: { id: 'R-001', state: 'posted', amount_total: -50 },
@@ -206,24 +211,20 @@ describe('WebhookService — event persistence', () => {
 
     await service.processOdooEvent(payload, raw);
 
-    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ eventType: 'order.refund' }),
-      }),
+    expect(mockRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'order.refund' }),
     );
   });
 
   it('stores "unknown" as eventType when event_type is absent', async () => {
-    const { service, mockPrisma } = makeService(null);
+    const { service, mockRepo } = makeService(null);
     const payload: Record<string, unknown> = {};
     const raw = Buffer.from(JSON.stringify(payload));
 
     await service.processOdooEvent(payload, raw);
 
-    expect(mockPrisma.webhookEvent!.create as jest.Mock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ eventType: 'unknown' }),
-      }),
+    expect(mockRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'unknown' }),
     );
   });
 });

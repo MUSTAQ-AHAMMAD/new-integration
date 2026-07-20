@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import {
   OracleClient,
   OracleCashBankAccount,
@@ -71,7 +73,8 @@ export class RegisterAccountsService {
   private readonly logger = new Logger(RegisterAccountsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(VendHqRegister)
+    private readonly registers: Repository<VendHqRegister>,
     private readonly oracle: OracleClient,
   ) {}
 
@@ -129,9 +132,9 @@ export class RegisterAccountsService {
     const cashAccounts = accounts.filter((a) => this.isCashAccount(a));
     const bankAccounts = accounts.filter((a) => !this.isCashAccount(a));
 
-    const registers = await this.prisma.vendHqRegister.findMany({
+    const registers = await this.registers.find({
       where: region ? { region } : {},
-      orderBy: [{ region: 'asc' }, { registerName: 'asc' }],
+      order: { region: 'ASC', registerName: 'ASC' },
     });
 
     let autoMatched = 0;
@@ -196,10 +199,7 @@ export class RegisterAccountsService {
         skipped += 1;
         continue;
       }
-      await this.prisma.vendHqRegister.update({
-        where: { id: a.registerId },
-        data,
-      });
+      await this.registers.update({ id: a.registerId }, data);
       updated += 1;
     }
     this.logger.log(

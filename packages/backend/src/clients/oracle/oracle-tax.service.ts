@@ -8,7 +8,10 @@
  * - Determines tax applicability for invoice lines
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Not, IsNull, Repository } from 'typeorm';
+import { FusionInvoiceLine } from '../../database/entities/fusion-invoice-line.entity';
+import { StoreConfiguration } from '../../database/entities/store-configuration.entity';
 import { OracleSoapClient } from './oracle-soap.client';
 
 @Injectable()
@@ -17,7 +20,10 @@ export class OracleTaxService {
   private readonly taxCache = new Map<string, string>();
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(StoreConfiguration)
+    private readonly storeConfigs: Repository<StoreConfiguration>,
+    @InjectRepository(FusionInvoiceLine)
+    private readonly invoiceLines: Repository<FusionInvoiceLine>,
     private readonly soapClient: OracleSoapClient,
   ) {}
 
@@ -92,7 +98,7 @@ export class OracleTaxService {
   ): Promise<string | null> {
     try {
       // Try to find from StoreConfiguration first
-      const storeConfig = await this.prisma.storeConfiguration.findFirst({
+      const storeConfig = await this.storeConfigs.findOne({
         where: { region },
         select: { taxClassificationCode: true },
       });
@@ -102,14 +108,14 @@ export class OracleTaxService {
       }
 
       // Fall back to searching recent FusionInvoiceLine records
-      const invoiceLine = await this.prisma.fusionInvoiceLine.findFirst({
+      const invoiceLine = await this.invoiceLines.findOne({
         where: {
           itemNumber,
           region,
-          taxCode: { not: null },
+          taxCode: Not(IsNull()),
         },
         select: { taxCode: true },
-        orderBy: { createdAt: 'desc' },
+        order: { createdAt: 'DESC' },
       });
 
       return invoiceLine?.taxCode ?? null;

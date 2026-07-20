@@ -1,8 +1,16 @@
+import { Repository } from 'typeorm';
 import { FusionTransformationService } from './fusion-transformation.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { OracleUomService } from '../clients/oracle/oracle-uom.service';
 import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
 import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
 
 // ---------------------------------------------------------------------------
 // Minimal fake DB records
@@ -103,7 +111,12 @@ function makeReceiptMethod(
 }
 
 // ---------------------------------------------------------------------------
-// Mock PrismaService
+// Mock repositories
+//
+// Kept keyed by the former Prisma model names (with findUnique/findFirst/
+// findMany method names) so the existing test bodies read unchanged. Each
+// entry is a jest.fn() that is wired into the matching TypeORM repository
+// method (findUnique/findFirst → findOne, findMany → find) below.
 // ---------------------------------------------------------------------------
 
 function buildMockPrisma(overrides: Record<string, unknown> = {}) {
@@ -134,6 +147,14 @@ function buildMockPrisma(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
+}
+
+// Wrap a single jest.fn() as a minimal TypeORM Repository stub.
+function repoFrom<T extends object>(
+  method: 'findOne' | 'find',
+  fn: jest.Mock,
+): Repository<T> {
+  return { [method]: fn } as unknown as Repository<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +207,32 @@ describe('FusionTransformationService', () => {
     } as unknown as jest.Mocked<OracleCustomerService>;
 
     service = new FusionTransformationService(
-      mockPrisma as unknown as PrismaService,
+      repoFrom<BackupVendHqSale>(
+        'findOne',
+        mockPrisma.backupVendHqSale.findUnique,
+      ),
+      repoFrom<VendHqOutlet>('findOne', mockPrisma.vendHqOutlet.findFirst),
+      repoFrom<FusionSalesMetadata>(
+        'findOne',
+        mockPrisma.fusionSalesMetadata.findFirst,
+      ),
+      repoFrom<FusionBusinessUnitMap>(
+        'findOne',
+        mockPrisma.fusionBusinessUnitMap.findFirst,
+      ),
+      repoFrom<ServiceProviderJournalMeta>(
+        'findOne',
+        mockPrisma.serviceProviderJournalMeta.findFirst,
+      ),
+      repoFrom<VendHqCredential>(
+        'findOne',
+        mockPrisma.vendHqCredential.findFirst,
+      ),
+      repoFrom<VendHqRegister>('find', mockPrisma.vendHqRegister.findMany),
+      repoFrom<FusionReceiptMethod>(
+        'findOne',
+        mockPrisma.fusionReceiptMethod.findFirst,
+      ),
       mockUomService,
       mockTaxService,
       mockCustomerService,

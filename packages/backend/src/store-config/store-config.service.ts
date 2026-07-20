@@ -1,13 +1,15 @@
 import { numberToBigInt } from '../common/utils/bigint-utils';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import {
-  AlertSeverity,
-  AlertType,
-  ValidationStatus,
-  StoreConfiguration,
-} from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { IsNull, Not, ObjectLiteral, Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { AlertSeverity, AlertType, ValidationStatus } from '../database/enums';
 
 interface BranchInfo {
   branchId: number;
@@ -33,7 +35,18 @@ export class StoreConfigService {
   private readonly CACHE_TTL = 5 * 60 * 1000;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(StoreConfiguration)
+    private readonly stores: Repository<StoreConfiguration>,
+    @InjectRepository(FusionSalesMetadata)
+    private readonly salesMetadata: Repository<FusionSalesMetadata>,
+    @InjectRepository(FusionBusinessUnitMap)
+    private readonly businessUnitMaps: Repository<FusionBusinessUnitMap>,
+    @InjectRepository(VendHqRegister)
+    private readonly registers: Repository<VendHqRegister>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly odooOrders: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupIbqOrder)
+    private readonly ibqOrders: Repository<BackupIbqOrder>,
     private readonly alertsService: AlertsService,
   ) {}
 
@@ -108,14 +121,12 @@ export class StoreConfigService {
     branchName: string | null | undefined,
     hintedRegion: string | null | undefined,
   ): Promise<{
-    metadata: Awaited<
-      ReturnType<PrismaService['fusionSalesMetadata']['findFirst']>
-    > | null;
+    metadata: FusionSalesMetadata | null;
     region: string | null;
     nameMatched: boolean;
   }> {
     const target = this.normalizeName(branchName);
-    const normals = await this.prisma.fusionSalesMetadata.findMany({
+    const normals = await this.salesMetadata.find({
       where: { customerType: 'NORMAL' },
     });
 
@@ -168,7 +179,7 @@ export class StoreConfigService {
     }
 
     // 2. Try to get from database
-    let config = await this.prisma.storeConfiguration.findUnique({
+    let config = await this.stores.findOne({
       where: { branchCode },
     });
 
@@ -208,13 +219,13 @@ export class StoreConfigService {
     }
 
     // Get branch info from Odoo backup
-    const odooOrder = await this.prisma.backupOdooOrder.findFirst({
+    const odooOrder = await this.odooOrders.findOne({
       where: { branchId },
       select: { branchName: true, region: true },
     });
 
     // Get branch info from IBQ backup
-    const ibqOrder = await this.prisma.backupIbqOrder.findFirst({
+    const ibqOrder = await this.ibqOrders.findOne({
       where: { branchId },
       select: { branchName: true, region: true },
     });
@@ -245,19 +256,19 @@ export class StoreConfigService {
     }
 
     // Try to get bank/cash account IDs from FusionBusinessUnitMap or other sources
-    const businessUnitMap = await this.prisma.fusionBusinessUnitMap.findFirst({
+    const businessUnitMap = await this.businessUnitMaps.findOne({
       where: { region },
     });
 
     // Try to get bank/cash account IDs from VendHqRegister for this region
-    const register = await this.prisma.vendHqRegister.findFirst({
+    const register = await this.registers.findOne({
       where: {
         region,
-        bankAccountId: { not: null },
-        cashAccountId: { not: null },
-        deletedAt: null,
+        bankAccountId: Not(IsNull()),
+        cashAccountId: Not(IsNull()),
+        deletedAt: IsNull(),
       },
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
     });
 
     const bankAccountId = register?.bankAccountId
@@ -283,46 +294,52 @@ export class StoreConfigService {
       );
     }
 
-    // Create the configuration. Use upsert (not create) so that concurrent
-    // order-sync workers processing several orders for the same new branch do
-    // not collide on the branchCode unique constraint — the losers of the race
-    // would otherwise throw and fall back to an INVALID config, skipping the
-    // order. On a race, keep the row the winner created (update: {}).
-    const config = await this.prisma.storeConfiguration.upsert({
-      where: { branchCode },
-      update: {},
-      create: {
-        branchCode,
-        branchName,
-        odooBranchId: numberToBigInt(branchId),
-        oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
-        oracleBusinessUnit:
-          fusionMetadata?.businessUnit ||
-          businessUnitMap?.businessUnitName ||
-          'DEFAULT_BU',
-        billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
-        billToLocation: fusionMetadata?.siteNumber || undefined,
-        bankAccountName: register?.bankAccount || `BANK_${region}`,
-        cashAccountName: register?.cashAccount || `CASH_${region}`,
-        // Populate account IDs from register if available
-        bankAccountId,
-        cashAccountId,
-        paymentTermsName: 'IMMEDIATE',
-        taxClassificationCode: undefined,
-        transactionSource: fusionMetadata?.txnSource || 'Manual',
-        transactionType: fusionMetadata?.txnType || 'PASA CONSULTING SALE',
-        invoiceCurrencyCode: this.currencyForRegion(region),
-        region,
-        isActive: true,
-        validationStatus:
-          bankAccountId && cashAccountId
-            ? ValidationStatus.PENDING
-            : ValidationStatus.PARTIAL,
-        validationErrors:
-          validationErrors.length > 0 ? validationErrors : undefined,
-        createdBy: 'SYSTEM_AUTO_CREATE',
-      },
-    });
+    // Create the configuration. Concurrent order-sync workers processing several
+    // orders for the same new branch may collide on the branchCode unique
+    // constraint — the losers of the race would otherwise throw and fall back to
+    // an INVALID config, skipping the order. On a race, keep the row the winner
+    // created by re-reading it after a save conflict.
+    let config: StoreConfiguration;
+    try {
+      config = await this.stores.save(
+        this.stores.create({
+          branchCode,
+          branchName,
+          odooBranchId: numberToBigInt(branchId),
+          oracleOperatingUnitId: fusionMetadata?.billToAccount || BigInt(0),
+          oracleBusinessUnit:
+            fusionMetadata?.businessUnit ||
+            businessUnitMap?.businessUnitName ||
+            'DEFAULT_BU',
+          billToSiteName: fusionMetadata?.billToName || `BILL_TO_${region}`,
+          billToLocation: fusionMetadata?.siteNumber || null,
+          bankAccountName: register?.bankAccount || `BANK_${region}`,
+          cashAccountName: register?.cashAccount || `CASH_${region}`,
+          // Populate account IDs from register if available
+          bankAccountId: bankAccountId ?? null,
+          cashAccountId: cashAccountId ?? null,
+          paymentTermsName: 'IMMEDIATE',
+          taxClassificationCode: null,
+          transactionSource: fusionMetadata?.txnSource || 'Manual',
+          transactionType: fusionMetadata?.txnType || 'PASA CONSULTING SALE',
+          invoiceCurrencyCode: this.currencyForRegion(region),
+          region,
+          isActive: true,
+          validationStatus:
+            bankAccountId && cashAccountId
+              ? ValidationStatus.PENDING
+              : ValidationStatus.PARTIAL,
+          validationErrors:
+            validationErrors.length > 0 ? validationErrors : null,
+          createdBy: 'SYSTEM_AUTO_CREATE',
+        }),
+      );
+    } catch (err) {
+      // Lost the branchCode race — reuse the row the winner created.
+      const existing = await this.stores.findOne({ where: { branchCode } });
+      if (!existing) throw err;
+      config = existing;
+    }
 
     // Fire alert for manual review
     await this.alertsService.createAlert({
@@ -360,6 +377,7 @@ export class StoreConfigService {
       taxClassificationCode: null,
       transactionSource: 'Manual',
       transactionType: 'PASA CONSULTING SALE',
+      creditMemoTransactionType: null,
       invoiceCurrencyCode: 'AED',
       region: 'AE',
       bankAccountId: null,
@@ -376,11 +394,11 @@ export class StoreConfigService {
       createdBy: 'SYSTEM_FALLBACK',
       createdAt: now,
       updatedAt: now,
-    };
+    } as StoreConfiguration;
   }
 
   async getRawConfig(branchCode: string) {
-    const config = await this.prisma.storeConfiguration.findUnique({
+    const config = await this.stores.findOne({
       where: { branchCode },
     });
 
@@ -410,7 +428,7 @@ export class StoreConfigService {
   }
 
   async deleteStore(branchCode: string): Promise<void> {
-    const config = await this.prisma.storeConfiguration.findUnique({
+    const config = await this.stores.findOne({
       where: { branchCode },
     });
 
@@ -420,14 +438,14 @@ export class StoreConfigService {
       );
     }
 
-    await this.prisma.storeConfiguration.delete({ where: { branchCode } });
+    await this.stores.delete({ branchCode });
     this.logger.log(`Store configuration deleted: ${branchCode}`);
   }
 
   async validateConfig(
     branchCode: string,
   ): Promise<{ isValid: boolean; errors: string[]; warnings: string[] }> {
-    const config = await this.prisma.storeConfiguration.findUnique({
+    const config = await this.stores.findOne({
       where: { branchCode },
     });
     if (!config)
@@ -472,14 +490,14 @@ export class StoreConfigService {
       errors.length === 0
         ? ValidationStatus.VALIDATED
         : ValidationStatus.INVALID;
-    await this.prisma.storeConfiguration.update({
-      where: { branchCode },
-      data: {
+    await this.stores.update(
+      { branchCode },
+      {
         validationStatus: status,
-        validationErrors: errors.length ? errors : undefined,
+        validationErrors: (errors.length ? errors : null) as unknown as object,
         lastValidatedAt: new Date(),
       },
-    });
+    );
 
     if (errors.length) {
       await this.alertsService.createAlert({
@@ -496,9 +514,9 @@ export class StoreConfigService {
   }
 
   async listStores(activeOnly = false) {
-    return this.prisma.storeConfiguration.findMany({
+    return this.stores.find({
       where: activeOnly ? { isActive: true } : undefined,
-      orderBy: { branchCode: 'asc' },
+      order: { branchCode: 'ASC' },
     });
   }
 
@@ -521,7 +539,7 @@ export class StoreConfigService {
     createdBy: string;
   }) {
     const { branchCode, odooBranchId, oracleOperatingUnitId, ...rest } = data;
-    const prismaData = {
+    const mapped = {
       ...rest,
       odooBranchId:
         odooBranchId != null ? BigInt(odooBranchId) : numberToBigInt(0),
@@ -530,11 +548,14 @@ export class StoreConfigService {
           ? BigInt(oracleOperatingUnitId)
           : numberToBigInt(0),
     };
-    return this.prisma.storeConfiguration.upsert({
-      where: { branchCode },
-      create: { branchCode, ...prismaData },
-      update: { ...prismaData, version: { increment: 1 } },
-    });
+
+    const existing = await this.stores.findOne({ where: { branchCode } });
+    if (existing) {
+      Object.assign(existing, mapped);
+      existing.version = (existing.version ?? 0) + 1;
+      return this.stores.save(existing);
+    }
+    return this.stores.save(this.stores.create({ branchCode, ...mapped }));
   }
 
   /**
@@ -558,56 +579,22 @@ export class StoreConfigService {
     let skipped = 0;
 
     // Get all store configurations that need account IDs
-    const stores = await this.prisma.storeConfiguration.findMany({
-      where: {
-        OR: [{ bankAccountId: null }, { cashAccountId: null }],
-      },
-      orderBy: { branchCode: 'asc' },
+    const stores = await this.stores.find({
+      where: [{ bankAccountId: IsNull() }, { cashAccountId: IsNull() }],
+      order: { branchCode: 'ASC' },
     });
 
     this.logger.log(`Found ${stores.length} stores with missing account IDs`);
 
-    // Get VendHqRegister data by region to use as reference
-    const registersByRegion = await this.prisma.$queryRaw<
-      Array<{
-        region: string;
-        bankAccountId: bigint | null;
-        cashAccountId: bigint | null;
-        sampleRegisterName: string;
-      }>
-    >`
-      SELECT DISTINCT ON (region)
-        region,
-        "bankAccountId",
-        "cashAccountId",
-        "registerName" as "sampleRegisterName"
-      FROM "VendHqRegister"
-      WHERE "bankAccountId" IS NOT NULL
-        AND "cashAccountId" IS NOT NULL
-        AND "deletedAt" IS NULL
-      ORDER BY region, "createdAt" DESC
-    `;
+    // Get VendHqRegister data by region to use as reference. Fetch all
+    // registers with account IDs ordered newest-first, then keep the first
+    // (most recent) row seen per region — the Oracle-portable equivalent of
+    // Postgres's DISTINCT ON (region) ... ORDER BY region, createdAt DESC.
+    const regionAccountMap = await this.buildRegionAccountMap(true);
 
     this.logger.log(
-      `Found ${registersByRegion.length} regions with account IDs`,
+      `Found account IDs for ${regionAccountMap.size} regions from VendHqRegister`,
     );
-
-    // Create a map of region -> account IDs
-    const regionAccountMap = new Map<
-      string,
-      { bankAccountId: number; cashAccountId: number }
-    >();
-    for (const reg of registersByRegion) {
-      if (reg.bankAccountId && reg.cashAccountId) {
-        regionAccountMap.set(reg.region, {
-          bankAccountId: Number(reg.bankAccountId),
-          cashAccountId: Number(reg.cashAccountId),
-        });
-        this.logger.log(
-          `Region ${reg.region}: bank=${reg.bankAccountId}, cash=${reg.cashAccountId} (from ${reg.sampleRegisterName})`,
-        );
-      }
-    }
 
     // Update each store configuration
     for (const store of stores) {
@@ -632,7 +619,7 @@ export class StoreConfigService {
           continue;
         }
 
-        const updateData: any = {};
+        const updateData: Partial<StoreConfiguration> = {};
         if (store.bankAccountId === null) {
           updateData.bankAccountId = accountIds.bankAccountId;
         }
@@ -641,14 +628,14 @@ export class StoreConfigService {
         }
 
         if (Object.keys(updateData).length > 0) {
-          await this.prisma.storeConfiguration.update({
-            where: { id: store.id },
-            data: {
-              ...updateData,
+          await this.stores.update(
+            { id: store.id },
+            {
+              bankAccountId: updateData.bankAccountId,
+              cashAccountId: updateData.cashAccountId,
               validationStatus: ValidationStatus.PENDING,
-              updatedAt: new Date(),
             },
-          });
+          );
 
           this.logger.log(
             `Updated store ${store.branchCode}: ` +
@@ -702,34 +689,14 @@ export class StoreConfigService {
     const errors: string[] = [];
 
     // ── Step 1: Get unique branches from BackupOdooOrder ────────────────────
-    const odooBranches = await this.prisma.$queryRaw<BranchInfo[]>`
-      SELECT 
-        "branchId"::int as "branchId",
-        MAX("branchName") as "branchName",
-        MAX(region) as region,
-        COUNT(*)::int as "orderCount"
-      FROM "BackupOdooOrder"
-      WHERE "branchId" IS NOT NULL
-      GROUP BY "branchId"
-      ORDER BY "orderCount" DESC, "branchId"
-    `;
+    const odooBranches = await this.aggregateBranches(this.odooOrders);
 
     this.logger.log(
       `Found ${odooBranches.length} unique branches in BackupOdooOrder`,
     );
 
     // ── Step 2: Get unique branches from BackupIbqOrder ─────────────────────
-    const ibqBranches = await this.prisma.$queryRaw<BranchInfo[]>`
-      SELECT 
-        "branchId"::int as "branchId",
-        MAX("branchName") as "branchName",
-        MAX(region) as region,
-        COUNT(*)::int as "orderCount"
-      FROM "BackupIbqOrder"
-      WHERE "branchId" IS NOT NULL
-      GROUP BY "branchId"
-      ORDER BY "orderCount" DESC, "branchId"
-    `;
+    const ibqBranches = await this.aggregateBranches(this.ibqOrders);
 
     this.logger.log(
       `Found ${ibqBranches.length} unique branches in BackupIbqOrder`,
@@ -760,8 +727,8 @@ export class StoreConfigService {
     this.logger.log(`Total unique branches: ${allBranches.length}`);
 
     // ── Step 4: Get FusionSalesMetadata records ─────────────────────────────
-    const fusionMetadata = await this.prisma.fusionSalesMetadata.findMany({
-      orderBy: { billToName: 'asc' },
+    const fusionMetadata = await this.salesMetadata.find({
+      order: { billToName: 'ASC' },
     });
 
     if (fusionMetadata.length === 0) {
@@ -777,36 +744,7 @@ export class StoreConfigService {
     );
 
     // ── Step 4.5: Get VendHqRegister data by region for account IDs ─────────
-    const registersByRegion = await this.prisma.$queryRaw<
-      Array<{
-        region: string;
-        bankAccountId: bigint | null;
-        cashAccountId: bigint | null;
-      }>
-    >`
-      SELECT DISTINCT ON (region)
-        region,
-        "bankAccountId",
-        "cashAccountId"
-      FROM "VendHqRegister"
-      WHERE "bankAccountId" IS NOT NULL
-        AND "cashAccountId" IS NOT NULL
-        AND "deletedAt" IS NULL
-      ORDER BY region, "createdAt" DESC
-    `;
-
-    const regionAccountMap = new Map<
-      string,
-      { bankAccountId: number; cashAccountId: number }
-    >();
-    for (const reg of registersByRegion) {
-      if (reg.bankAccountId && reg.cashAccountId) {
-        regionAccountMap.set(reg.region, {
-          bankAccountId: Number(reg.bankAccountId),
-          cashAccountId: Number(reg.cashAccountId),
-        });
-      }
-    }
+    const regionAccountMap = await this.buildRegionAccountMap(false);
 
     this.logger.log(
       `Found account IDs for ${regionAccountMap.size} regions from VendHqRegister`,
@@ -821,7 +759,7 @@ export class StoreConfigService {
 
       try {
         // Check if config already exists
-        const existing = await this.prisma.storeConfiguration.findUnique({
+        const existing = await this.stores.findOne({
           where: { branchCode },
         });
 
@@ -868,21 +806,21 @@ export class StoreConfigService {
         const accountIds = regionAccountMap.get(region);
 
         // Create StoreConfiguration
-        await this.prisma.storeConfiguration.create({
-          data: {
+        await this.stores.save(
+          this.stores.create({
             branchCode,
             branchName: branch.branchName || `Branch ${branchCode}`,
             odooBranchId: numberToBigInt(branch.branchId),
             oracleOperatingUnitId: metadata.billToAccount,
             oracleBusinessUnit: metadata.businessUnit,
             billToSiteName: metadata.billToName,
-            billToLocation: metadata.siteNumber || undefined,
+            billToLocation: metadata.siteNumber || null,
             bankAccountName: `BANK_${metadata.region}`,
             cashAccountName: `CASH_${metadata.region}`,
-            bankAccountId: accountIds?.bankAccountId,
-            cashAccountId: accountIds?.cashAccountId,
+            bankAccountId: accountIds?.bankAccountId ?? null,
+            cashAccountId: accountIds?.cashAccountId ?? null,
             paymentTermsName: 'IMMEDIATE',
-            taxClassificationCode: undefined,
+            taxClassificationCode: null,
             transactionSource: metadata.txnSource,
             transactionType: metadata.txnType,
             invoiceCurrencyCode: this.currencyForRegion(region),
@@ -893,8 +831,8 @@ export class StoreConfigService {
                 ? ValidationStatus.PENDING
                 : ValidationStatus.PARTIAL,
             createdBy: 'SYSTEM_POPULATE_API',
-          },
-        });
+          }),
+        );
 
         this.logger.log(
           `Created StoreConfiguration for branch ${branchCode} (${branch.branchName || 'N/A'})` +
@@ -921,5 +859,74 @@ export class StoreConfigService {
       skipped,
       errors,
     };
+  }
+
+  /**
+   * Aggregates unique branches from a backup-order repository (Odoo or IBQ),
+   * grouping by branchId with a representative branchName/region and order count.
+   * Replaces the former Postgres `$queryRaw` GROUP BY with a portable TypeORM
+   * query builder that works against Oracle.
+   */
+  private async aggregateBranches(
+    repo: Repository<ObjectLiteral>,
+  ): Promise<BranchInfo[]> {
+    const rows = await repo
+      .createQueryBuilder('o')
+      .select('o.branchId', 'branchId')
+      .addSelect('MAX(o.branchName)', 'branchName')
+      .addSelect('MAX(o.region)', 'region')
+      .addSelect('COUNT(*)', 'orderCount')
+      .where('o.branchId IS NOT NULL')
+      .groupBy('o.branchId')
+      .orderBy('COUNT(*)', 'DESC')
+      .addOrderBy('o.branchId', 'ASC')
+      .getRawMany<{
+        branchId: number | string;
+        branchName: string | null;
+        region: string | null;
+        orderCount: number | string;
+      }>();
+
+    return rows.map((r) => ({
+      branchId: Number(r.branchId),
+      branchName: r.branchName,
+      region: r.region,
+      orderCount: Number(r.orderCount),
+    }));
+  }
+
+  /**
+   * Builds a region → { bankAccountId, cashAccountId } map from VendHqRegister,
+   * keeping the most-recent (by createdAt) register per region. Replaces the
+   * former Postgres `DISTINCT ON (region)` query with a portable fetch-then-dedupe
+   * that works against Oracle. When `activeOnly` is true, deleted registers are
+   * excluded (mirrors the former `deletedAt IS NULL` filter).
+   */
+  private async buildRegionAccountMap(
+    excludeDeleted: boolean,
+  ): Promise<Map<string, { bankAccountId: number; cashAccountId: number }>> {
+    const registers = await this.registers.find({
+      where: {
+        bankAccountId: Not(IsNull()),
+        cashAccountId: Not(IsNull()),
+        ...(excludeDeleted ? { deletedAt: IsNull() } : {}),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    const map = new Map<
+      string,
+      { bankAccountId: number; cashAccountId: number }
+    >();
+    for (const reg of registers) {
+      if (!reg.region || map.has(reg.region)) continue;
+      if (reg.bankAccountId && reg.cashAccountId) {
+        map.set(reg.region, {
+          bankAccountId: Number(reg.bankAccountId),
+          cashAccountId: Number(reg.cashAccountId),
+        });
+      }
+    }
+    return map;
   }
 }

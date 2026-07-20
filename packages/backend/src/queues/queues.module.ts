@@ -1,6 +1,21 @@
 import { BullModule } from '@nestjs/bull';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
+import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
+import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
+import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
+import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
+import { FusionJournalHeader } from '../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../database/entities/fusion-journal-line.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { RefundTracking } from '../database/entities/refund-tracking.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { InventorySyncTracker } from '../database/entities/inventory-sync-tracker.entity';
 import { AlertsModule } from '../alerts/alerts.module';
 import { ClientsModule } from '../clients/clients.module';
 import { GatewayModule } from '../gateway/gateway.module';
@@ -20,6 +35,24 @@ export { QUEUE_NAMES };
 @Module({
   imports: [
     ConfigModule,
+    // Oracle repositories (TypeORM) for the entities the queue processors and
+    // the dead-letter service touch.
+    TypeOrmModule.forFeature([
+      OrderSyncQueue,
+      FailedTransaction,
+      FusionInvoiceHeader,
+      FusionInvoiceLine,
+      FusionInvTxn,
+      FusionStandardReceipt,
+      FusionMiscReceipt,
+      FusionApplyReceipt,
+      FusionJournalHeader,
+      FusionJournalLine,
+      SyncJob,
+      RefundTracking,
+      BackupOdooOrder,
+      InventorySyncTracker,
+    ]),
     GatewayModule,
     AlertsModule,
     StoreConfigModule,

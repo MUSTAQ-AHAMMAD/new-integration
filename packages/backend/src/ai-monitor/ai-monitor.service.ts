@@ -1,8 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { LessThan, MoreThanOrEqual, Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
+import { AlertLog } from '../database/entities/alert-log.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { FusionCredential } from '../database/entities/fusion-credential.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
+import { IntegrationHealthCheck } from '../database/entities/integration-health-check.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncControl } from '../database/entities/sync-control.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import {
+  AlertSeverity,
+  AlertType,
+  JobStatus,
+  SyncStatus,
+} from '../database/enums';
 import { LlmSummaryClient } from './llm-summary.client';
 import {
   analyzeSignals,
@@ -30,7 +48,28 @@ export class AiMonitorService {
   private readonly RECENT_WINDOW_HOURS = 24;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(FusionCredential)
+    private readonly fusionCredentials: Repository<FusionCredential>,
+    @InjectRepository(OdooCredential)
+    private readonly odooCredentials: Repository<OdooCredential>,
+    @InjectRepository(VendHqCredential)
+    private readonly vendhqCredentials: Repository<VendHqCredential>,
+    @InjectRepository(IbqCredential)
+    private readonly ibqCredentials: Repository<IbqCredential>,
+    @InjectRepository(SyncControl)
+    private readonly syncControlsRepo: Repository<SyncControl>,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(SyncJob)
+    private readonly jobs: Repository<SyncJob>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
+    @InjectRepository(AlertLog)
+    private readonly alertsRepo: Repository<AlertLog>,
+    @InjectRepository(IntegrationHealthCheck)
+    private readonly health: Repository<IntegrationHealthCheck>,
+    @InjectRepository(VendHqItemMeta)
+    private readonly vendhqItems: Repository<VendHqItemMeta>,
     private readonly alerts: AlertsService,
     private readonly llm: LlmSummaryClient,
     private readonly config: ConfigService,
@@ -69,89 +108,83 @@ export class AiMonitorService {
       health,
       itemSyncErrors,
     ] = await Promise.all([
-      this.safe(() => this.prisma.fusionCredential.count(), 0),
+      this.safe(() => this.fusionCredentials.count(), 0),
       this.safe(
-        () => this.prisma.fusionCredential.count({ where: { active: true } }),
+        () => this.fusionCredentials.count({ where: { active: true } }),
         0,
       ),
-      this.safe(() => this.prisma.odooCredential.count(), 0),
+      this.safe(() => this.odooCredentials.count(), 0),
       this.safe(
-        () => this.prisma.odooCredential.count({ where: { active: true } }),
+        () => this.odooCredentials.count({ where: { active: true } }),
         0,
       ),
-      this.safe(() => this.prisma.vendHqCredential.count(), 0),
+      this.safe(() => this.vendhqCredentials.count(), 0),
       this.safe(
-        () => this.prisma.vendHqCredential.count({ where: { active: true } }),
+        () => this.vendhqCredentials.count({ where: { active: true } }),
         0,
       ),
-      this.safe(() => this.prisma.ibqCredential.count(), 0),
+      this.safe(() => this.ibqCredentials.count(), 0),
       this.safe(
-        () => this.prisma.ibqCredential.count({ where: { active: true } }),
+        () => this.ibqCredentials.count({ where: { active: true } }),
         0,
       ),
-      this.safe(() => this.prisma.syncControl.findMany(), []),
+      this.safe(() => this.syncControlsRepo.find(), []),
       this.safe(
-        () =>
-          this.prisma.orderSyncQueue.count({ where: { status: 'PENDING' } }),
-        0,
-      ),
-      this.safe(
-        () =>
-          this.prisma.orderSyncQueue.count({
-            where: { status: 'PROCESSING' },
-          }),
+        () => this.orders.count({ where: { status: SyncStatus.PENDING } }),
         0,
       ),
       this.safe(
-        () =>
-          this.prisma.orderSyncQueue.count({ where: { status: 'SKIPPED' } }),
+        () => this.orders.count({ where: { status: SyncStatus.PROCESSING } }),
         0,
       ),
       this.safe(
-        () => this.prisma.orderSyncQueue.count({ where: { status: 'FAILED' } }),
+        () => this.orders.count({ where: { status: SyncStatus.SKIPPED } }),
         0,
       ),
       this.safe(
-        () => this.prisma.orderSyncQueue.count({ where: { status: 'SYNCED' } }),
+        () => this.orders.count({ where: { status: SyncStatus.FAILED } }),
+        0,
+      ),
+      this.safe(
+        () => this.orders.count({ where: { status: SyncStatus.SYNCED } }),
         0,
       ),
       this.safe(
         () =>
-          this.prisma.syncJob.findMany({
-            where: { createdAt: { gte: windowStart } },
+          this.jobs.find({
+            where: { createdAt: MoreThanOrEqual(windowStart) },
             select: { status: true },
           }),
         [] as Array<{ status: string }>,
       ),
       this.safe(
         () =>
-          this.prisma.syncJob.count({
+          this.jobs.count({
             where: {
-              status: 'PROCESSING',
-              startedAt: { lt: staleBefore },
+              status: JobStatus.PROCESSING,
+              startedAt: LessThan(staleBefore),
             },
           }),
         0,
       ),
       this.safe(
         () =>
-          this.prisma.failedTransaction.groupBy({
-            by: ['errorType'],
-            where: { isResolved: false },
-            _count: { _all: true },
-          }),
-        [] as Array<{ errorType: string; _count: { _all: number } }>,
+          this.failedTransactions
+            .createQueryBuilder('f')
+            .select('f.errorType', 'errorType')
+            .addSelect('COUNT(*)', 'count')
+            .where('f.isResolved = :resolved', { resolved: false })
+            .groupBy('f.errorType')
+            .getRawMany<{ errorType: string; count: string | number }>(),
+        [] as Array<{ errorType: string; count: string | number }>,
       ),
       this.safe(
-        () =>
-          this.prisma.failedTransaction.count({
-            where: { isResolved: false },
-          }),
+        () => this.failedTransactions.count({ where: { isResolved: false } }),
         0,
       ),
       this.safe(
         () =>
-          this.prisma.alertLog.findMany({
+          this.alertsRepo.find({
             where: { isResolved: false },
             select: { severity: true, alertType: true, title: true },
             take: 100,
@@ -160,14 +193,14 @@ export class AiMonitorService {
       ),
       this.safe(() => this.getLatestHealthPerService(), []),
       this.safe(
-        () => this.prisma.vendHqItemMeta.count({ where: { status: 'ERROR' } }),
+        () => this.vendhqItems.count({ where: { status: 'ERROR' } }),
         0,
       ),
     ]);
 
     const byType: Record<string, number> = {};
     for (const row of failedTx) {
-      byType[row.errorType] = row._count._all;
+      byType[row.errorType] = Number(row.count);
     }
 
     return {
@@ -247,8 +280,8 @@ export class AiMonitorService {
       const critical = result.findings.filter((f) => f.severity === 'CRITICAL');
       for (const finding of critical) {
         await this.alerts.createAlert({
-          alertType: 'SYNC_FAILURE',
-          severity: 'CRITICAL',
+          alertType: AlertType.SYNC_FAILURE,
+          severity: AlertSeverity.CRITICAL,
           title: `AI Monitor: ${finding.title}`,
           message: `${finding.detail} Recommended fix: ${finding.recommendation}`,
           relatedEntityType: 'AI_MONITOR',
@@ -271,8 +304,8 @@ export class AiMonitorService {
   private async getLatestHealthPerService(): Promise<
     DiagnosticSignals['health']
   > {
-    const records = await this.prisma.integrationHealthCheck.findMany({
-      orderBy: { createdAt: 'desc' },
+    const records = await this.health.find({
+      order: { createdAt: 'DESC' },
       take: 200,
       select: {
         serviceName: true,

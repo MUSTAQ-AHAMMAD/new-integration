@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
-import { NotificationRole } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { Repository } from 'typeorm';
+import { NotificationRole } from '../database/enums';
+import { NotificationRecipient } from '../database/entities/notification-recipient.entity';
 import { NotificationsService } from './notifications.service';
 
 // ---------------------------------------------------------------------------
@@ -26,15 +27,14 @@ function makeRecipient(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma() {
+function makeRepo() {
   return {
-    notificationRecipient: {
-      findMany: jest.fn().mockResolvedValue([makeRecipient()]),
-      findUnique: jest.fn().mockResolvedValue(makeRecipient()),
-      create: jest.fn().mockResolvedValue(makeRecipient()),
-      update: jest.fn().mockResolvedValue(makeRecipient()),
-      delete: jest.fn().mockResolvedValue(makeRecipient()),
-    },
+    find: jest.fn().mockResolvedValue([makeRecipient()]),
+    findOne: jest.fn().mockResolvedValue(makeRecipient()),
+    create: jest.fn().mockImplementation((x) => x),
+    save: jest.fn().mockResolvedValue(makeRecipient()),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
   };
 }
 
@@ -52,12 +52,12 @@ function makeConfig(env: Record<string, string | number> = {}) {
 
 describe('NotificationsService', () => {
   let service: NotificationsService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let repo: ReturnType<typeof makeRepo>;
 
   function makeService(env: Record<string, string | number> = {}) {
-    prisma = makePrisma();
+    repo = makeRepo();
     const svc = new NotificationsService(
-      prisma as unknown as PrismaService,
+      repo as unknown as Repository<NotificationRecipient>,
       makeConfig(env) as unknown as ConfigService,
     );
     return svc;
@@ -125,14 +125,14 @@ describe('NotificationsService', () => {
     it('returns all recipients when activeOnly is false', async () => {
       const result = await service.listRecipients(false);
       expect(result).toHaveLength(1);
-      expect(prisma.notificationRecipient.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: undefined }),
       );
     });
 
     it('filters to active only when activeOnly is true', async () => {
       await service.listRecipients(true);
-      expect(prisma.notificationRecipient.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { isActive: true } }),
       );
     });
@@ -147,7 +147,7 @@ describe('NotificationsService', () => {
     });
 
     it('returns null when not found', async () => {
-      prisma.notificationRecipient.findUnique.mockResolvedValueOnce(null);
+      repo.findOne.mockResolvedValueOnce(null);
       const result = await service.getRecipient('missing');
       expect(result).toBeNull();
     });
@@ -162,11 +162,10 @@ describe('NotificationsService', () => {
         name: 'Bob',
         role: NotificationRole.IT_SUPPORT,
       });
-      expect(prisma.notificationRecipient.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ email: 'bob@example.com' }),
-        }),
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'bob@example.com' }),
       );
+      expect(repo.save).toHaveBeenCalled();
       expect(result.name).toBe('Alice'); // from mock
     });
   });
@@ -178,11 +177,9 @@ describe('NotificationsService', () => {
       const result = await service.updateRecipient('recip-001', {
         isActive: false,
       });
-      expect(prisma.notificationRecipient.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'recip-001' },
-          data: expect.objectContaining({ isActive: false }),
-        }),
+      expect(repo.update).toHaveBeenCalledWith(
+        'recip-001',
+        expect.objectContaining({ isActive: false }),
       );
       expect(result).toBeDefined();
     });
@@ -193,9 +190,7 @@ describe('NotificationsService', () => {
   describe('deleteRecipient', () => {
     it('deletes the recipient', async () => {
       await service.deleteRecipient('recip-001');
-      expect(prisma.notificationRecipient.delete).toHaveBeenCalledWith({
-        where: { id: 'recip-001' },
-      });
+      expect(repo.delete).toHaveBeenCalledWith('recip-001');
     });
   });
 
@@ -203,7 +198,7 @@ describe('NotificationsService', () => {
 
   describe('getErrorAlertRecipients', () => {
     it('returns email addresses of active recipients with receiveErrorAlerts=true', async () => {
-      prisma.notificationRecipient.findMany.mockResolvedValueOnce([
+      repo.find.mockResolvedValueOnce([
         { email: 'alice@example.com' },
         { email: 'bob@example.com' },
       ]);
@@ -212,15 +207,15 @@ describe('NotificationsService', () => {
     });
 
     it('returns empty array when no recipients match', async () => {
-      prisma.notificationRecipient.findMany.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       const result = await service.getErrorAlertRecipients();
       expect(result).toEqual([]);
     });
 
     it('queries only active recipients with receiveErrorAlerts', async () => {
-      prisma.notificationRecipient.findMany.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       await service.getErrorAlertRecipients();
-      expect(prisma.notificationRecipient.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { isActive: true, receiveErrorAlerts: true },
         }),
@@ -232,9 +227,9 @@ describe('NotificationsService', () => {
 
   describe('getInventoryAlertRecipients', () => {
     it('queries only active recipients with receiveInventoryAlerts', async () => {
-      prisma.notificationRecipient.findMany.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       await service.getInventoryAlertRecipients();
-      expect(prisma.notificationRecipient.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { isActive: true, receiveInventoryAlerts: true },
         }),
@@ -246,9 +241,9 @@ describe('NotificationsService', () => {
 
   describe('getDailyReportRecipients', () => {
     it('queries only active recipients with receiveDailyReports', async () => {
-      prisma.notificationRecipient.findMany.mockResolvedValueOnce([]);
+      repo.find.mockResolvedValueOnce([]);
       await service.getDailyReportRecipients();
-      expect(prisma.notificationRecipient.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { isActive: true, receiveDailyReports: true },
         }),

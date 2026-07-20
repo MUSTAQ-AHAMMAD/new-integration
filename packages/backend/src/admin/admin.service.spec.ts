@@ -1,191 +1,145 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { AdminService } from './admin.service';
-import { PrismaService } from '../prisma/prisma.service';
 
-// ---------------------------------------------------------------------------
-// Mock factories
-// ---------------------------------------------------------------------------
+// Fake entity metadata: the columns the tests exercise on 'fusion-receipt-methods'.
+const fakeMeta = {
+  columns: [
+    { propertyName: 'id', type: 'varchar2' },
+    { propertyName: 'receiptMethodName', type: 'varchar2' },
+    { propertyName: 'region', type: 'varchar2' },
+    { propertyName: 'createdAt', type: 'timestamp', isCreateDate: true },
+  ],
+  relations: [],
+};
 
-function makeDelegate(rows: Record<string, unknown>[] = []) {
+function makeRepo() {
   return {
-    findMany: jest.fn().mockResolvedValue(rows),
-    count: jest.fn().mockResolvedValue(rows.length),
-    findUnique: jest.fn().mockResolvedValue(rows[0] ?? null),
-    create: jest
-      .fn()
-      .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'new-id', ...data }),
-      ),
-    update: jest
-      .fn()
-      .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'existing-id', ...data }),
-      ),
-    delete: jest.fn().mockResolvedValue({}),
+    findAndCount: jest.fn().mockResolvedValue([[], 0]),
+    findOne: jest.fn().mockResolvedValue(null),
+    // create returns its input so tests can inspect the shaped data
+    create: jest.fn().mockImplementation((x: Record<string, unknown>) => x),
+    save: jest.fn().mockImplementation((x: Record<string, unknown>) =>
+      Promise.resolve({ id: 'new-id', ...x }),
+    ),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    find: jest.fn().mockResolvedValue([]),
   };
 }
 
-function makePrisma(
-  delegates: Record<string, ReturnType<typeof makeDelegate>> = {},
-) {
-  // Attach the provided delegates; fall back to an empty delegate for unknown names
-  return new Proxy(
-    {
-      fusionReceiptMethod: makeDelegate(),
-      ...delegates,
-    },
-    {
-      get(target, prop: string) {
-        return target[prop as keyof typeof target] ?? makeDelegate();
-      },
-    },
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('AdminService', () => {
   let service: AdminService;
-  let delegate: ReturnType<typeof makeDelegate>;
+  let repo: ReturnType<typeof makeRepo>;
 
   beforeEach(() => {
-    delegate = makeDelegate([
-      { id: 'rec-001', name: 'Test', createdAt: new Date() },
-    ]);
-    const prisma = makePrisma({ fusionReceiptMethod: delegate });
-    service = new AdminService(prisma as unknown as PrismaService);
-    jest.clearAllMocks();
+    repo = makeRepo();
+    const dataSource = {
+      getMetadata: () => fakeMeta,
+      getRepository: () => repo,
+    } as unknown as DataSource;
+    service = new AdminService(dataSource);
   });
 
-  // ── getDelegate ──────────────────────────────────────────────────────────
-
-  describe('getDelegate', () => {
-    it('returns a delegate for a valid table slug', () => {
-      const d = service.getDelegate('fusion-receipt-methods');
-      expect(d).toBeDefined();
-    });
-
-    it('throws BadRequestException for an unknown table slug', () => {
-      expect(() => service.getDelegate('non-existent-table')).toThrow(
+  describe('unknown table', () => {
+    it('throws BadRequestException for an unknown slug', async () => {
+      await expect(service.list('non-existent-table', {})).rejects.toThrow(
         BadRequestException,
       );
     });
   });
 
-  // ── list ─────────────────────────────────────────────────────────────────
-
   describe('list', () => {
-    it('returns data array and total', async () => {
-      const result = await service.list('fusion-receipt-methods', {});
+    it('returns data and total, passing skip/take/order', async () => {
+      repo.findAndCount.mockResolvedValue([[{ id: 'rec-001' }], 1]);
+      const result = await service.list('fusion-receipt-methods', {
+        skip: 10,
+        take: 5,
+      });
       expect(result.data).toHaveLength(1);
       expect(result.total).toBe(1);
-    });
-
-    it('passes skip and take options', async () => {
-      await service.list('fusion-receipt-methods', { skip: 10, take: 5 });
-      expect(delegate.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 10, take: 5 }),
+      expect(repo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 10, take: 5, order: { createdAt: 'DESC' } }),
       );
     });
 
-    it('adds where clause when region is provided', async () => {
+    it('adds region where when region is provided', async () => {
       await service.list('fusion-receipt-methods', { region: 'AE' });
-      expect(delegate.findMany).toHaveBeenCalledWith(
+      expect(repo.findAndCount).toHaveBeenCalledWith(
         expect.objectContaining({ where: { region: 'AE' } }),
-      );
-    });
-
-    it('uses empty where when region is absent', async () => {
-      await service.list('fusion-receipt-methods', {});
-      expect(delegate.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: {} }),
       );
     });
   });
 
-  // ── getOne ────────────────────────────────────────────────────────────────
-
   describe('getOne', () => {
     it('returns the record when found', async () => {
-      delegate.findUnique.mockResolvedValueOnce({
+      repo.findOne.mockResolvedValueOnce({ id: 'rec-001' });
+      expect(await service.getOne('fusion-receipt-methods', 'rec-001')).toMatchObject({
         id: 'rec-001',
-        name: 'Found',
       });
-      const record = await service.getOne('fusion-receipt-methods', 'rec-001');
-      expect(record).toMatchObject({ id: 'rec-001' });
     });
 
     it('throws NotFoundException when not found', async () => {
-      delegate.findUnique.mockResolvedValueOnce(null);
+      repo.findOne.mockResolvedValueOnce(null);
       await expect(
         service.getOne('fusion-receipt-methods', 'missing'),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
-  // ── create ────────────────────────────────────────────────────────────────
-
   describe('create', () => {
-    it('strips id, createdAt, updatedAt before calling create', async () => {
+    it('strips id/createdAt/updatedAt and normalises region', async () => {
       await service.create('fusion-receipt-methods', {
-        id: 'should-be-stripped',
+        id: 'strip-me',
         createdAt: new Date(),
         updatedAt: new Date(),
-        name: 'My Method',
+        receiptMethodName: 'Cash',
+        region: 'ae',
       });
-      const [callArgs] = delegate.create.mock.calls;
-      expect(callArgs[0].data.id).toBeUndefined();
-      expect(callArgs[0].data.createdAt).toBeUndefined();
-      expect(callArgs[0].data.name).toBe('My Method');
+      const data = repo.create.mock.calls[0][0];
+      expect(data.id).toBeUndefined();
+      expect(data.createdAt).toBeUndefined();
+      expect(data.receiptMethodName).toBe('Cash');
+      expect(data.region).toBe('AE'); // upper-cased
+      expect(repo.save).toHaveBeenCalled();
     });
   });
 
-  // ── update ────────────────────────────────────────────────────────────────
-
   describe('update', () => {
     it('updates the record when found', async () => {
-      delegate.findUnique.mockResolvedValueOnce({ id: 'rec-001' });
-      await service.update('fusion-receipt-methods', 'rec-001', {
-        name: 'Updated',
-      });
-      expect(delegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'rec-001' } }),
+      repo.findOne.mockResolvedValue({ id: 'rec-001' });
+      await service.update('fusion-receipt-methods', 'rec-001', { receiptMethodName: 'X' });
+      expect(repo.update).toHaveBeenCalledWith(
+        'rec-001',
+        expect.objectContaining({ receiptMethodName: 'X' }),
       );
     });
 
-    it('throws NotFoundException when record does not exist', async () => {
-      delegate.findUnique.mockResolvedValueOnce(null);
+    it('throws NotFoundException when the record does not exist', async () => {
+      repo.findOne.mockResolvedValue(null);
       await expect(
-        service.update('fusion-receipt-methods', 'missing', { name: 'x' }),
+        service.update('fusion-receipt-methods', 'missing', { receiptMethodName: 'X' }),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
-  // ── remove ────────────────────────────────────────────────────────────────
-
   describe('remove', () => {
-    it('deletes the record when found', async () => {
-      delegate.findUnique.mockResolvedValueOnce({ id: 'rec-001' });
+    it('deletes when found', async () => {
+      repo.findOne.mockResolvedValueOnce({ id: 'rec-001' });
       await service.remove('fusion-receipt-methods', 'rec-001');
-      expect(delegate.delete).toHaveBeenCalledWith({
-        where: { id: 'rec-001' },
-      });
+      expect(repo.delete).toHaveBeenCalledWith('rec-001');
     });
 
-    it('throws NotFoundException when record does not exist', async () => {
-      delegate.findUnique.mockResolvedValueOnce(null);
+    it('throws NotFoundException when missing', async () => {
+      repo.findOne.mockResolvedValueOnce(null);
       await expect(
         service.remove('fusion-receipt-methods', 'missing'),
       ).rejects.toThrow(NotFoundException);
     });
   });
 
-  // ── tables ────────────────────────────────────────────────────────────────
-
   describe('tables', () => {
-    it('returns an array of table descriptors', () => {
+    it('returns slug/model descriptors', () => {
       const tables = AdminService.tables();
       expect(tables.length).toBeGreaterThan(0);
       expect(tables[0]).toHaveProperty('slug');
@@ -193,114 +147,71 @@ describe('AdminService', () => {
     });
   });
 
-  // ── exportCsv ─────────────────────────────────────────────────────────────
-
   describe('exportCsv', () => {
-    it('returns empty string when no rows exist', async () => {
-      delegate.findMany.mockResolvedValueOnce([]);
-      const csv = await service.exportCsv('fusion-receipt-methods');
-      expect(csv).toBe('');
+    it('returns empty string with no rows', async () => {
+      repo.find.mockResolvedValueOnce([]);
+      expect(await service.exportCsv('fusion-receipt-methods')).toBe('');
     });
 
-    it('returns CSV with header row and data rows', async () => {
-      delegate.findMany.mockResolvedValueOnce([
-        { id: 'rec-001', name: 'Cash', region: 'AE' },
-        { id: 'rec-002', name: 'Visa', region: 'AE' },
+    it('returns CSV header + data rows and escapes commas/quotes', async () => {
+      repo.find.mockResolvedValueOnce([
+        { id: 'r1', receiptMethodName: 'Cash, Rounded', region: 'AE' },
+        { id: 'r2', receiptMethodName: 'Say "Hi"', region: 'AE' },
       ]);
       const csv = await service.exportCsv('fusion-receipt-methods');
       const lines = csv.split('\n');
-      expect(lines[0]).toBe('id,name,region');
-      expect(lines[1]).toContain('rec-001');
-      expect(lines[2]).toContain('rec-002');
-    });
-
-    it('escapes values containing commas', async () => {
-      delegate.findMany.mockResolvedValueOnce([
-        { id: 'r1', name: 'Comma, Value' },
-      ]);
-      const csv = await service.exportCsv('fusion-receipt-methods');
-      expect(csv).toContain('"Comma, Value"');
-    });
-
-    it('escapes values containing double-quotes', async () => {
-      delegate.findMany.mockResolvedValueOnce([{ id: 'r1', name: 'Say "Hi"' }]);
-      const csv = await service.exportCsv('fusion-receipt-methods');
+      expect(lines[0]).toBe('id,receiptMethodName,region');
+      expect(csv).toContain('"Cash, Rounded"');
       expect(csv).toContain('"Say ""Hi"""');
     });
 
-    it('passes region filter to findMany when provided', async () => {
-      delegate.findMany.mockResolvedValueOnce([]);
+    it('passes region filter to find', async () => {
       await service.exportCsv('fusion-receipt-methods', 'KW');
-      expect(delegate.findMany).toHaveBeenCalledWith(
+      expect(repo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { region: 'KW' } }),
       );
     });
   });
 
-  // ── importCsv ─────────────────────────────────────────────────────────────
-
   describe('importCsv', () => {
-    it('returns 0 imported and 0 skipped for empty CSV', async () => {
-      const result = await service.importCsv(
+    it('returns zero for an empty CSV', async () => {
+      const r = await service.importCsv('fusion-receipt-methods', 'header1\n');
+      expect(r).toEqual({ imported: 0, skipped: 0, errors: [] });
+    });
+
+    it('imports valid rows', async () => {
+      const csv = 'receiptMethodName,region\nCash,AE\nVisa,AE';
+      const r = await service.importCsv('fusion-receipt-methods', csv);
+      expect(r.imported).toBe(2);
+      expect(r.skipped).toBe(0);
+    });
+
+    it('normalises UPPER_SNAKE_CASE headers and strips system columns', async () => {
+      const csv = 'ID,RECEIPT_METHOD_NAME,REGION\nold,Cash,ae';
+      await service.importCsv('fusion-receipt-methods', csv);
+      const data = repo.create.mock.calls[0][0];
+      expect(data.id).toBeUndefined();
+      expect(data.receiptMethodName).toBe('Cash');
+      expect(data.region).toBe('AE');
+    });
+
+    it('counts failing rows as skipped with error messages', async () => {
+      repo.save.mockRejectedValue(new Error('Unique constraint failed'));
+      const r = await service.importCsv(
         'fusion-receipt-methods',
-        'header1\n',
+        'receiptMethodName,region\nCash,AE',
       );
-      expect(result.imported).toBe(0);
-      expect(result.skipped).toBe(0);
+      expect(r.imported).toBe(0);
+      expect(r.skipped).toBe(1);
+      expect(r.errors[0]).toContain('Unique constraint failed');
     });
 
-    it('imports valid rows and returns count', async () => {
-      delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'receiptMethodName,region\nCash,AE\nVisa,AE';
-      const result = await service.importCsv('fusion-receipt-methods', csv);
-      expect(result.imported).toBe(2);
-      expect(result.skipped).toBe(0);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    it('counts rows that fail create as skipped with error messages', async () => {
-      delegate.create.mockRejectedValue(new Error('Unique constraint failed'));
-      const csv = 'receiptMethodName,region\nCash,AE';
-      const result = await service.importCsv('fusion-receipt-methods', csv);
-      expect(result.imported).toBe(0);
-      expect(result.skipped).toBe(1);
-      expect(result.errors[0]).toContain('Unique constraint failed');
-    });
-
-    it('handles partially failing rows independently', async () => {
-      delegate.create
-        .mockResolvedValueOnce({ id: 'ok' })
-        .mockRejectedValueOnce(new Error('oops'));
-      const csv = 'receiptMethodName,region\nCash,AE\nVisa,AE';
-      const result = await service.importCsv('fusion-receipt-methods', csv);
-      expect(result.imported).toBe(1);
-      expect(result.skipped).toBe(1);
-    });
-
-    it('normalises UPPER_SNAKE_CASE headers to camelCase', async () => {
-      delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'RECEIPT_METHOD_NAME,REGION\nCash,AE';
-      await service.importCsv('fusion-receipt-methods', csv);
-      const [callArgs] = delegate.create.mock.calls;
-      // Should not pass RECEIPT_METHOD_NAME as a raw key
-      expect(callArgs[0].data['RECEIPT_METHOD_NAME']).toBeUndefined();
-    });
-
-    it('strips id, createdAt, updatedAt from imported rows', async () => {
-      delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'id,createdAt,receiptMethodName\nold-id,2024-01-01,Cash';
-      await service.importCsv('fusion-receipt-methods', csv);
-      const [callArgs] = delegate.create.mock.calls;
-      expect(callArgs[0].data.id).toBeUndefined();
-      expect(callArgs[0].data.createdAt).toBeUndefined();
-    });
-
-    it('handles quoted CSV fields correctly', async () => {
-      delegate.create.mockResolvedValue({ id: 'new-id' });
-      const csv = 'receiptMethodName,region\n"Cash, Rounded",AE';
-      await service.importCsv('fusion-receipt-methods', csv);
-      const [callArgs] = delegate.create.mock.calls;
-      expect(callArgs[0].data.receiptMethodName).toBe('Cash, Rounded');
+    it('rejects rows with unknown fields', async () => {
+      const csv = 'receiptMethodName,bogusField\nCash,x';
+      const r = await service.importCsv('fusion-receipt-methods', csv);
+      expect(r.imported).toBe(0);
+      expect(r.skipped).toBe(1);
+      expect(r.errors[0]).toContain('Unknown fields');
     });
   });
 });

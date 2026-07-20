@@ -8,7 +8,10 @@
  * - Caches results in HashMap for performance
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { BackupOdooOrderLine } from '../../database/entities/backup-odoo-order-line.entity';
+import { VendHqItemMeta } from '../../database/entities/vend-hq-item-meta.entity';
 import { OracleSoapClient } from './oracle-soap.client';
 
 @Injectable()
@@ -17,7 +20,10 @@ export class OracleUomService {
   private readonly uomCache = new Map<string, string>();
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(VendHqItemMeta)
+    private readonly itemMeta: Repository<VendHqItemMeta>,
+    @InjectRepository(BackupOdooOrderLine)
+    private readonly backupOrderLines: Repository<BackupOdooOrderLine>,
     private readonly soapClient: OracleSoapClient,
   ) {}
 
@@ -96,7 +102,7 @@ export class OracleUomService {
   ): Promise<string | null> {
     try {
       // Try to get from vendHqItemMeta first
-      const itemMeta = await this.prisma.vendHqItemMeta.findFirst({
+      const itemMeta = await this.itemMeta.findOne({
         where: {
           itemId: itemNumber,
           region: region,
@@ -113,7 +119,7 @@ export class OracleUomService {
       // Fallback: try backupOdooOrderLine (only if itemNumber is numeric)
       const parsedProductId = parseInt(itemNumber, 10);
       if (!isNaN(parsedProductId)) {
-        const backupLine = await this.prisma.backupOdooOrderLine.findFirst({
+        const backupLine = await this.backupOrderLines.findOne({
           where: {
             productId: parsedProductId,
           },

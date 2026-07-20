@@ -13,12 +13,17 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   OracleClient,
   OracleOnHandQuantity,
 } from '../clients/oracle/oracle.client';
 import { VendHqClient } from '../clients/vendhq/vendhq.client';
-import { PrismaService } from '../prisma/prisma.service';
+import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
 import { SyncControlService } from '../sync/sync-control.service';
 
 export interface InventoryPushResult {
@@ -34,7 +39,14 @@ export class FusionInvToVendHqService {
   private readonly logger = new Logger(FusionInvToVendHqService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(VendHqCredential)
+    private readonly credentials: Repository<VendHqCredential>,
+    @InjectRepository(VendHqOutlet)
+    private readonly outlets: Repository<VendHqOutlet>,
+    @InjectRepository(VendHqItemMeta)
+    private readonly itemMeta: Repository<VendHqItemMeta>,
+    @InjectRepository(FusionInvTxn)
+    private readonly invTxns: Repository<FusionInvTxn>,
     private readonly oracleClient: OracleClient,
     private readonly vendHqClient: VendHqClient,
     private readonly syncControl: SyncControlService,
@@ -55,7 +67,7 @@ export class FusionInvToVendHqService {
 
     await this.syncControl.markRunning('fusion-inv-to-vendhq');
     try {
-      const credentials = await this.prisma.vendHqCredential.findMany({
+      const credentials = await this.credentials.find({
         where: { active: true },
       });
 
@@ -107,7 +119,7 @@ export class FusionInvToVendHqService {
     };
 
     // ── 1. Resolve Oracle organization from VendHQ outlet config ─────────────
-    const outlet = await this.prisma.vendHqOutlet.findFirst({
+    const outlet = await this.outlets.findOne({
       where: { region },
     });
     const organizationCode = outlet?.outletName ?? region;
@@ -153,7 +165,7 @@ export class FusionInvToVendHqService {
 
       try {
         // Resolve VendHQ product by SKU (item number)
-        const vendHqItem = await this.prisma.vendHqItemMeta.findFirst({
+        const vendHqItem = await this.itemMeta.findOne({
           where: { sku: onHand.ItemNumber, region },
           select: { itemId: true },
         });
@@ -172,8 +184,8 @@ export class FusionInvToVendHqService {
         });
 
         // Record in FusionInvTxn for audit trail
-        await this.prisma.fusionInvTxn.create({
-          data: {
+        await this.invTxns.save(
+          this.invTxns.create({
             status: 'SUCCESS',
             requestDate: new Date(),
             organizationName: organizationCode,
@@ -185,8 +197,8 @@ export class FusionInvToVendHqService {
             txnQty: quantity,
             region,
             integMode: `${region}-INV-SYNC`,
-          },
-        });
+          }),
+        );
 
         result.synced++;
       } catch (err) {
@@ -199,8 +211,8 @@ export class FusionInvToVendHqService {
 
         // Record failure in FusionInvTxn for observability
         try {
-          await this.prisma.fusionInvTxn.create({
-            data: {
+          await this.invTxns.save(
+            this.invTxns.create({
               status: 'ERROR',
               message: msg,
               requestDate: new Date(),
@@ -213,8 +225,8 @@ export class FusionInvToVendHqService {
               txnQty: quantity,
               region,
               integMode: `${region}-INV-SYNC`,
-            },
-          });
+            }),
+          );
         } catch {
           // best-effort
         }
@@ -228,9 +240,9 @@ export class FusionInvToVendHqService {
    * Fetch latest inventory transaction records for the given region.
    */
   async getInventoryTransactions(region?: string, limit = 100) {
-    return this.prisma.fusionInvTxn.findMany({
+    return this.invTxns.find({
       where: region ? { region } : undefined,
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       take: limit,
     });
   }

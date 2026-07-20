@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AlertSeverity, AlertType, Prisma, SyncStatus } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Decimal } from 'decimal.js';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { RefundTracking } from '../database/entities/refund-tracking.entity';
+import { AlertSeverity, AlertType, SyncStatus } from '../database/enums';
 import { QueuesService } from '../queues/queues.service';
 import { TimezoneService } from './timezone.service';
 
@@ -64,7 +68,10 @@ export class OrderSyncService {
   private readonly logger = new Logger(OrderSyncService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(RefundTracking)
+    private readonly refundTrackingRepo: Repository<RefundTracking>,
     private readonly queues: QueuesService,
     private readonly timezoneService: TimezoneService,
     private readonly alertsService: AlertsService,
@@ -86,12 +93,22 @@ export class OrderSyncService {
       });
     }
 
+    // An order is invoiced only when it is paid, not cancelled AND not a refund.
+    // Cancels and refunds must never reach Oracle as invoices: cancels are simply
+    // skipped, refunds are recorded in RefundTracking and pushed as credit memos.
+    const isInvoiceable =
+      processedData.isPaid &&
+      !(processedData.isCancelled ?? false) &&
+      !(processedData.isRefund ?? false);
+
     // Log order ingestion status for debugging
     const statusReason = !processedData.isPaid
       ? 'unpaid'
       : processedData.isCancelled
         ? 'cancelled'
-        : 'will-sync';
+        : processedData.isRefund
+          ? 'refund (credit memo)'
+          : 'will-sync';
     this.logger.debug(
       `Ingesting order ${processedData.odooOrderNumber}: isPaid=${processedData.isPaid}, ` +
         `isCancelled=${processedData.isCancelled}, status=${statusReason}`,
@@ -104,86 +121,72 @@ export class OrderSyncService {
     const hasNegativeInventory =
       (processedData.negativeInventoryItems?.length ?? 0) > 0;
 
-    const order = await this.prisma.orderSyncQueue.upsert({
+    // Upsert on the (odooOrderId, branchCode) unique key: find-then-save.
+    const existing = await this.orderSyncQueueRepo.findOne({
       where: {
-        odooOrderId_branchCode: {
-          odooOrderId: processedData.odooOrderId,
-          branchCode: processedData.branchCode,
-        },
-      },
-      create: {
         odooOrderId: processedData.odooOrderId,
-        odooOrderNumber: processedData.odooOrderNumber,
         branchCode: processedData.branchCode,
-        branchName: processedData.branchName,
-        orderDate: processedData.orderDate,
-        orderDateUtc,
-        originalTimezone: processedData.originalTimezone,
-        customerName: processedData.customerName,
-        customerEmail: processedData.customerEmail,
-        totalAmount: new Prisma.Decimal(processedData.totalAmount),
-        currency: processedData.currency || 'AED',
-        isPaid: processedData.isPaid,
-        isCancelled: processedData.isCancelled ?? false,
-        isRefund: processedData.isRefund ?? false,
-        refundReferenceId: processedData.refundReferenceId,
-        negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: processedData.negativeInventoryItems
-          ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
-          : undefined,
-        status:
-          processedData.isPaid && !(processedData.isCancelled ?? false)
-            ? SyncStatus.PENDING
-            : SyncStatus.SKIPPED,
-      },
-      update: {
-        odooOrderNumber: processedData.odooOrderNumber,
-        branchName: processedData.branchName,
-        orderDate: processedData.orderDate,
-        orderDateUtc,
-        originalTimezone: processedData.originalTimezone,
-        customerName: processedData.customerName,
-        customerEmail: processedData.customerEmail,
-        totalAmount: new Prisma.Decimal(processedData.totalAmount),
-        currency: processedData.currency || 'AED',
-        isPaid: processedData.isPaid,
-        isCancelled: processedData.isCancelled ?? false,
-        isRefund: processedData.isRefund ?? false,
-        refundReferenceId: processedData.refundReferenceId,
-        negativeInventoryFlag: hasNegativeInventory,
-        negativeInventoryItems: processedData.negativeInventoryItems
-          ? (processedData.negativeInventoryItems as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
-        status:
-          processedData.isPaid && !(processedData.isCancelled ?? false)
-            ? SyncStatus.PENDING
-            : SyncStatus.SKIPPED,
       },
     });
 
-    if (processedData.isRefund && processedData.refundReferenceId) {
-      await this.prisma.refundTracking.upsert({
+    const order = await this.orderSyncQueueRepo.save(
+      this.orderSyncQueueRepo.create({
+        ...(existing ?? {}),
+        odooOrderId: processedData.odooOrderId,
+        odooOrderNumber: processedData.odooOrderNumber,
+        branchCode: processedData.branchCode,
+        branchName: processedData.branchName ?? null,
+        orderDate: processedData.orderDate,
+        orderDateUtc,
+        originalTimezone: processedData.originalTimezone,
+        customerName: processedData.customerName ?? null,
+        customerEmail: processedData.customerEmail ?? null,
+        totalAmount: new Decimal(processedData.totalAmount),
+        currency: processedData.currency || 'AED',
+        isPaid: processedData.isPaid,
+        isCancelled: processedData.isCancelled ?? false,
+        isRefund: processedData.isRefund ?? false,
+        refundReferenceId: processedData.refundReferenceId ?? null,
+        negativeInventoryFlag: hasNegativeInventory,
+        negativeInventoryItems: processedData.negativeInventoryItems ?? null,
+        status: isInvoiceable ? SyncStatus.PENDING : SyncStatus.SKIPPED,
+      }),
+    );
+
+    // Every refund is tracked so the credit-memo pipeline can push it, even when
+    // no original-order reference is supplied (falls back to the refund's own id
+    // — the credit memo is then created on-account). branchCode lets the builder
+    // resolve store config without re-joining OrderSyncQueue.
+    if (processedData.isRefund) {
+      const originalRef =
+        processedData.refundReferenceId ?? processedData.odooOrderId;
+      const existingRefund = await this.refundTrackingRepo.findOne({
         where: { refundOrderId: processedData.odooOrderId },
-        create: {
-          originalOrderId: processedData.refundReferenceId,
-          originalOrderNumber: processedData.refundReferenceId,
-          refundOrderId: processedData.odooOrderId,
-          refundOrderNumber: processedData.odooOrderNumber,
-          refundAmount: new Prisma.Decimal(Math.abs(processedData.totalAmount)),
-          refundReason: 'Webhook refund event',
-          refundDate: orderDateUtc,
-          oracleCreditMemoNumber: '',
-          creditMemoStatus: SyncStatus.PENDING,
-        },
-        update: {
-          refundAmount: new Prisma.Decimal(Math.abs(processedData.totalAmount)),
-          refundDate: orderDateUtc,
-          creditMemoStatus: SyncStatus.PENDING,
-        },
       });
+
+      await this.refundTrackingRepo.save(
+        this.refundTrackingRepo.create({
+          ...(existingRefund ?? {}),
+          originalOrderId: existingRefund?.originalOrderId ?? originalRef,
+          originalOrderNumber: existingRefund?.originalOrderNumber ?? originalRef,
+          refundOrderId: processedData.odooOrderId,
+          refundOrderNumber:
+            existingRefund?.refundOrderNumber ?? processedData.odooOrderNumber,
+          branchCode: processedData.branchCode,
+          refundAmount: new Decimal(Math.abs(processedData.totalAmount)),
+          refundReason: existingRefund?.refundReason ?? 'Webhook refund event',
+          refundDate: orderDateUtc,
+          // Oracle: never write '' into a column — use null so the sentinel
+          // stays NULL rather than tripping a NOT NULL / empty-string rule.
+          oracleCreditMemoNumber: existingRefund?.oracleCreditMemoNumber ?? null,
+          creditMemoStatus: SyncStatus.PENDING,
+        }),
+      );
     }
 
-    if (processedData.isPaid && !(processedData.isCancelled ?? false)) {
+    // Only invoiceable orders are enqueued for the Oracle invoice pipeline.
+    // Refunds are handled by the credit-memo pipeline; cancels/unpaid are skipped.
+    if (isInvoiceable) {
       await this.queues.enqueueOrderSync({
         orderSyncQueueId: order.id,
         odooOrderId: processedData.odooOrderId,
@@ -197,7 +200,7 @@ export class OrderSyncService {
   }
 
   async retryFailedOrders(branchCode?: string) {
-    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+    const failedOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.FAILED,
         ...(branchCode ? { branchCode } : {}),
@@ -230,7 +233,7 @@ export class OrderSyncService {
    * has corrected the stock. Optionally scoped to a single branch.
    */
   async retryNegativeInventoryOrders(branchCode?: string) {
-    const heldOrders = await this.prisma.orderSyncQueue.findMany({
+    const heldOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         ...(branchCode ? { branchCode } : {}),
