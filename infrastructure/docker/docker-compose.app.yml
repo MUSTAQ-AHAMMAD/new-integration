@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production-shaped stack for the Odoo → Oracle middleware.
+#
+# Runs Redis + the NestJS backend (and an OPTIONAL queue worker) built from
+# packages/backend/Dockerfile. Unlike the legacy root docker-compose.yml (which is
+# the pre-migration Postgres stack and passes NO APP_DB_* vars), this compose
+# passes the Oracle app-DB config the app actually needs and runs no Postgres.
+#
+# Config comes entirely from packages/backend/.env — copy packages/backend/.env.example
+# and fill in APP_DB_* (the TypeORM app store), ORACLE_DB_* (Oracle Fusion source),
+# ODOO_*, JWT_SECRET and ADMIN_*. Do NOT hardcode secrets in this file.
+#
+# The backend image bundles the Oracle Instant Client at /opt/instantclient, so keep
+# APP_DB_INSTANT_CLIENT_DIR=/opt/instantclient and APP_DB_THICK_MODE=true in .env.
+#
+# Usage (run from the repo root):
+#   docker compose -f infrastructure/docker/docker-compose.app.yml up -d --build
+#   docker compose -f infrastructure/docker/docker-compose.app.yml logs -f backend
+#   docker compose -f infrastructure/docker/docker-compose.app.yml --profile worker up -d
+#   docker compose -f infrastructure/docker/docker-compose.app.yml down
+#
+# Prerequisite: the NEW_INTEGRATION Oracle schema must already exist. Bootstrap a
+# brand-new DB once with packages/backend/src/database/bootstrap-schema.ts
+# (SYS_PASSWORD + NEW_INTEGRATION_PWD). Booting does NOT create the schema.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: integration_redis
+    restart: unless-stopped
+    # For a hardened deployment, add `--requirepass <secret>` here and set the
+    # matching REDIS_PASSWORD in packages/backend/.env.
+    command: >
+      redis-server
+        --maxmemory 1gb
+        --maxmemory-policy allkeys-lru
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [integration_net]
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: packages/backend/Dockerfile
+      target: production
+    image: integration-backend:latest
+    container_name: integration_backend
+    restart: unless-stopped
+    env_file:
+      - ../../packages/backend/.env
+    environment:
+      # Point the app at the Redis sidecar regardless of REDIS_HOST in .env.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - '3001:3001'
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3001/api/v1/health || exit 1']
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    networks: [integration_net]
+
+  # Optional dedicated BullMQ worker (processes order-sync/retry queues out of the
+  # API process). Enable with `--profile worker`.
+  worker:
+    build:
+      context: ../..
+      dockerfile: packages/backend/Dockerfile
+      target: production
+    image: integration-backend:latest
+    container_name: integration_worker
+    restart: unless-stopped
+    command: ['node', 'dist/worker']
+    env_file:
+      - ../../packages/backend/.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [integration_net]
+    profiles: [worker]
+
+volumes:
+  redis_data:
+
+networks:
+  integration_net:
+    driver: bridge
