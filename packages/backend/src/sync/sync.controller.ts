@@ -10,13 +10,19 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Prisma, SyncStatus } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { LessThan, Repository } from 'typeorm';
+import { SyncStatus } from '../database/enums';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
 import { normalizeOrderForIngestion } from '../common/odoo-utils';
 import { parseLimit } from '../common/parse-limit';
 import { toSafeNumber } from '../common/utils/bigint-utils';
 import { IbqBackupService } from '../ibq-backup/ibq-backup.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { QueuesService } from '../queues/queues.service';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 import { FusionMetadataService } from '../fusion/fusion-metadata.service';
@@ -41,7 +47,16 @@ export class SyncController {
     private readonly orderSyncService: OrderSyncService,
     private readonly odooBackupService: OdooBackupService,
     private readonly ibqBackupService: IbqBackupService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(OdooCredential)
+    private readonly odooCredentialRepo: Repository<OdooCredential>,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOdooOrderRepo: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupOdooOrderLine)
+    private readonly backupOdooOrderLineRepo: Repository<BackupOdooOrderLine>,
+    @InjectRepository(BackupOdooOrderPayment)
+    private readonly backupOdooOrderPaymentRepo: Repository<BackupOdooOrderPayment>,
     private readonly diagnosticsService: OrderDiagnosticsService,
     private readonly autoFixService: AutoFixService,
     private readonly queuesService: QueuesService,
@@ -141,12 +156,17 @@ export class SyncController {
     @Query('branchCode') branchCode?: string,
     @Query('search') search?: string,
     @Query('limit') limit?: string,
+    @Query('isCancelled') isCancelled?: string,
+    @Query('isRefund') isRefund?: string,
   ) {
     return this.syncService.listOrderQueue({
       status,
       branchCode,
       search,
       limit: parseLimit(limit, 200),
+      isCancelled:
+        isCancelled === undefined ? undefined : isCancelled === 'true',
+      isRefund: isRefund === undefined ? undefined : isRefund === 'true',
     });
   }
 
@@ -209,7 +229,7 @@ export class SyncController {
 
     if (body.credentialId) {
       // Per-region credential path: use the stored baseUrl/apiKey.
-      const cred = await this.prisma.odooCredential.findUnique({
+      const cred = await this.odooCredentialRepo.findOne({
         where: { id: body.credentialId },
       });
       if (!cred) {
@@ -433,13 +453,13 @@ export class SyncController {
 
     // Fetch orders
     const [orders, total] = await Promise.all([
-      this.prisma.orderSyncQueue.findMany({
+      this.orderSyncQueueRepo.find({
         where,
         skip: skipNum,
         take: takeNum,
-        orderBy: { orderDate: 'desc' },
+        order: { orderDate: 'DESC' },
       }),
-      this.prisma.orderSyncQueue.count({ where }),
+      this.orderSyncQueueRepo.count({ where }),
     ]);
 
     // Return with proper date formatting via DTO
@@ -461,10 +481,10 @@ export class SyncController {
     this.logger.log('🔧 FIXING ALL FAILED ORDERS...');
 
     // Get all failed orders
-    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+    const failedOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.FAILED,
-        syncAttempts: { lt: 5 },
+        syncAttempts: LessThan(5),
       },
     });
 
@@ -481,14 +501,11 @@ export class SyncController {
     for (const order of failedOrders) {
       try {
         // Reset order status to PENDING
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: {
-            status: SyncStatus.PENDING,
-            syncAttempts: 0,
-            validationErrors: Prisma.JsonNull,
-            lastSyncAt: null,
-          },
+        await this.orderSyncQueueRepo.update(order.id, {
+          status: SyncStatus.PENDING,
+          syncAttempts: 0,
+          validationErrors: null as unknown as object,
+          lastSyncAt: null,
         });
 
         results.reset++;
@@ -548,7 +565,7 @@ export class SyncController {
   async syncOrderDirect(@Param('orderId') orderId: string) {
     this.logger.log(`Direct sync for order: ${orderId}`);
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
+    const order = await this.orderSyncQueueRepo.findOne({
       where: { id: orderId },
     });
 
@@ -557,13 +574,10 @@ export class SyncController {
     }
 
     // Reset to PENDING
-    await this.prisma.orderSyncQueue.update({
-      where: { id: orderId },
-      data: {
-        status: SyncStatus.PENDING,
-        syncAttempts: 0,
-        validationErrors: Prisma.JsonNull, // ✅ Fixed
-      },
+    await this.orderSyncQueueRepo.update(orderId, {
+      status: SyncStatus.PENDING,
+      syncAttempts: 0,
+      validationErrors: null as unknown as object, // ✅ Fixed
     });
 
     // Enqueue for sync
@@ -593,7 +607,7 @@ export class SyncController {
   async getOrderData(@Param('orderSyncQueueId') orderSyncQueueId: string) {
     this.logger.log(`Getting order data for: ${orderSyncQueueId}`);
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
+    const order = await this.orderSyncQueueRepo.findOne({
       where: { id: orderSyncQueueId },
     });
 
@@ -602,19 +616,19 @@ export class SyncController {
     }
 
     // Get backup order
-    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+    const backupOrder = await this.backupOdooOrderRepo.findOne({
       where: {
         orderName: order.odooOrderNumber,
       },
     });
 
     // Get backup lines - use numeric orderId
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+    const backupLines = await this.backupOdooOrderLineRepo.find({
       where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     // Get backup payments - use numeric orderId
-    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+    const backupPayments = await this.backupOdooOrderPaymentRepo.find({
       where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
@@ -658,7 +672,7 @@ export class SyncController {
   ): Promise<any> {
     this.logger.log(`Testing enrichment for order: ${orderSyncQueueId}`);
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
+    const order = await this.orderSyncQueueRepo.findOne({
       where: { id: orderSyncQueueId },
     });
 
@@ -667,19 +681,19 @@ export class SyncController {
     }
 
     // Get backup order
-    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+    const backupOrder = await this.backupOdooOrderRepo.findOne({
       where: {
         orderName: order.odooOrderNumber,
       },
     });
 
     // Get backup lines - use numeric orderId
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+    const backupLines = await this.backupOdooOrderLineRepo.find({
       where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
     // Get backup payments - use numeric orderId
-    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+    const backupPayments = await this.backupOdooOrderPaymentRepo.find({
       where: backupOrder ? { orderId: backupOrder.orderId } : { orderId: 0 },
     });
 
@@ -722,7 +736,7 @@ export class SyncController {
     this.logger.log(`Debugging backup for order: ${orderNumber}`);
 
     // 1. Find the order in OrderSyncQueue
-    const order = await this.prisma.orderSyncQueue.findFirst({
+    const order = await this.orderSyncQueueRepo.findOne({
       where: {
         odooOrderNumber: orderNumber,
       },
@@ -730,20 +744,20 @@ export class SyncController {
 
     // 2. Find backup lines - use the numeric order ID
     // First, find the backup order
-    const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+    const backupOrder = await this.backupOdooOrderRepo.findOne({
       where: {
         orderName: orderNumber,
       },
     });
 
-    const backupLines = await this.prisma.backupOdooOrderLine.findMany({
+    const backupLines = await this.backupOdooOrderLineRepo.find({
       where: backupOrder
         ? { orderId: backupOrder.orderId } // ✅ Use numeric orderId
         : { orderId: 0 }, // No match
     });
 
     // 3. Find backup payments
-    const backupPayments = await this.prisma.backupOdooOrderPayment.findMany({
+    const backupPayments = await this.backupOdooOrderPaymentRepo.find({
       where: backupOrder
         ? { orderId: backupOrder.orderId } // ✅ Use numeric orderId
         : { orderId: 0 }, // No match

@@ -1,13 +1,40 @@
 import { Controller, Get, Query, Param } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
+import { FusionCredential } from '../database/entities/fusion-credential.entity';
+import { IbqCredential } from '../database/entities/ibq-credential.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncControl } from '../database/entities/sync-control.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { JobStatus, SyncStatus } from '../database/enums';
 import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('admin')
 @Controller('admin/diagnostics')
 @Roles('ADMIN')
 export class AdminDiagnosticsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(VendHqItemMeta)
+    private readonly items: Repository<VendHqItemMeta>,
+    @InjectRepository(FusionCredential)
+    private readonly fusionCreds: Repository<FusionCredential>,
+    @InjectRepository(VendHqCredential)
+    private readonly vendhqCreds: Repository<VendHqCredential>,
+    @InjectRepository(OdooCredential)
+    private readonly odooCreds: Repository<OdooCredential>,
+    @InjectRepository(IbqCredential)
+    private readonly ibqCreds: Repository<IbqCredential>,
+    @InjectRepository(SyncJob)
+    private readonly syncJobs: Repository<SyncJob>,
+    @InjectRepository(SyncControl)
+    private readonly syncControls: Repository<SyncControl>,
+  ) {}
 
   @Get('sync/skipped-orders')
   @ApiOperation({
@@ -20,19 +47,16 @@ export class AdminDiagnosticsController {
     @Query('region') region?: string,
   ) {
     const take = limit ? parseInt(limit, 10) : 50;
-    const where: Record<string, unknown> = {
-      status: 'SKIPPED',
-    };
 
     if (region) {
       // OrderSyncQueue doesn't have a direct region field, so we need to filter differently
       // For now, just return all skipped orders
     }
 
-    const skippedOrders = await this.prisma.orderSyncQueue.findMany({
-      where,
+    const skippedOrders = await this.orders.find({
+      where: { status: SyncStatus.SKIPPED },
       take,
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'DESC' },
       select: {
         id: true,
         odooOrderId: true,
@@ -96,7 +120,7 @@ export class AdminDiagnosticsController {
   @Get('sync/order-status/:orderId')
   @ApiOperation({ summary: 'Get detailed status for a specific order' })
   async getOrderStatus(@Param('orderId') orderId: string) {
-    const orderQueue = await this.prisma.orderSyncQueue.findFirst({
+    const orderQueue = await this.orders.findOne({
       where: { odooOrderId: orderId },
     });
 
@@ -137,7 +161,8 @@ export class AdminDiagnosticsController {
       skipReasons:
         reasons.length > 0 ? reasons : ['Order should be eligible for sync'],
       recommendations,
-      canRetry: orderQueue.status === 'SKIPPED' && !orderQueue.isCancelled,
+      canRetry:
+        orderQueue.status === SyncStatus.SKIPPED && !orderQueue.isCancelled,
     };
   }
 
@@ -148,17 +173,17 @@ export class AdminDiagnosticsController {
     const where = region ? { region } : {};
 
     const [total, successCount, errorCount, recentItems] = await Promise.all([
-      this.prisma.vendHqItemMeta.count({ where }),
-      this.prisma.vendHqItemMeta.count({
+      this.items.count({ where }),
+      this.items.count({
         where: { ...where, status: 'SUCCESS' },
       }),
-      this.prisma.vendHqItemMeta.count({
+      this.items.count({
         where: { ...where, status: 'ERROR' },
       }),
-      this.prisma.vendHqItemMeta.findMany({
+      this.items.find({
         where,
         take: 20,
-        orderBy: { lastUpdateDate: 'desc' },
+        order: { lastUpdateDate: 'DESC' },
         select: {
           itemId: true,
           sku: true,
@@ -203,7 +228,7 @@ export class AdminDiagnosticsController {
   @ApiOperation({ summary: 'Check status of all credentials' })
   async getCredentialsStatus() {
     const [fusionCreds, vendhqCreds, odooCreds, ibqCreds] = await Promise.all([
-      this.prisma.fusionCredential.findMany({
+      this.fusionCreds.find({
         select: {
           id: true,
           hostName: true,
@@ -213,7 +238,7 @@ export class AdminDiagnosticsController {
           createdAt: true,
         },
       }),
-      this.prisma.vendHqCredential.findMany({
+      this.vendhqCreds.find({
         select: {
           id: true,
           region: true,
@@ -223,7 +248,7 @@ export class AdminDiagnosticsController {
           createdAt: true,
         },
       }),
-      this.prisma.odooCredential.findMany({
+      this.odooCreds.find({
         select: {
           id: true,
           baseUrl: true,
@@ -232,7 +257,7 @@ export class AdminDiagnosticsController {
           createdAt: true,
         },
       }),
-      this.prisma.ibqCredential.findMany({
+      this.ibqCreds.find({
         select: {
           id: true,
           baseUrl: true,
@@ -299,19 +324,19 @@ export class AdminDiagnosticsController {
       skippedOrdersCount,
       itemSyncErrors,
     ] = await Promise.all([
-      this.prisma.syncJob.findMany({
+      this.syncJobs.find({
         where: {
-          createdAt: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
-          },
+          createdAt: MoreThanOrEqual(
+            new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+          ),
         },
-        orderBy: { createdAt: 'desc' },
+        order: { createdAt: 'DESC' },
         take: 10,
       }),
-      this.prisma.syncControl.findMany(),
-      this.prisma.orderSyncQueue.count({ where: { status: 'PENDING' } }),
-      this.prisma.orderSyncQueue.count({ where: { status: 'SKIPPED' } }),
-      this.prisma.vendHqItemMeta.count({ where: { status: 'ERROR' } }),
+      this.syncControls.find(),
+      this.orders.count({ where: { status: SyncStatus.PENDING } }),
+      this.orders.count({ where: { status: SyncStatus.SKIPPED } }),
+      this.items.count({ where: { status: 'ERROR' } }),
     ]);
 
     const issues: string[] = [];
@@ -338,7 +363,9 @@ export class AdminDiagnosticsController {
     }
 
     // Check for failed jobs
-    const recentFailedJobs = syncJobs.filter((j) => j.status === 'FAILED');
+    const recentFailedJobs = syncJobs.filter(
+      (j) => j.status === JobStatus.FAILED,
+    );
     if (recentFailedJobs.length > 0) {
       issues.push(
         `${recentFailedJobs.length} sync jobs failed in the last 24 hours`,

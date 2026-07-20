@@ -1,17 +1,33 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { ObjectLiteral, Repository } from 'typeorm';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionCredential } from '../database/entities/fusion-credential.entity';
+import { FusionCustomerAccount } from '../database/entities/fusion-customer-account.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
+import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqDiscountItem } from '../database/entities/vend-hq-discount-item.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { VendHqServiceProvider } from '../database/entities/vend-hq-service-provider.entity';
+import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
 
 // Oracle-to-middleware table + column mapping
 // Keys are Oracle table names in the ODOO_INTEGRATION schema (uppercase).
-// Each entry declares how Oracle rows map to Prisma create-data objects.
+// Each entry declares how Oracle rows map to entity data and which unique
+// columns identify a row for upsert-on-conflict.
 interface OracleTableMapping {
   oracleTable: string;
-  prismaDelegate: (prisma: PrismaService) => {
-    upsert: (args: Record<string, unknown>) => Promise<unknown>;
-  };
+  repo: (svc: OracleNativeService) => Repository<ObjectLiteral>;
   mapRow: (row: Record<string, unknown>) => Record<string, unknown>;
-  upsertWhere: (row: Record<string, unknown>) => Record<string, unknown>;
+  /** Unique column(s) used as the upsert conflict target. */
+  conflictColumns: string[];
 }
 
 function col(row: Record<string, unknown>, name: string): unknown {
@@ -126,34 +142,29 @@ const MAPPINGS: OracleTableMapping[] = [
   // OUTLETS_INTEGRATION_CONFIG → OutletIntegrationConfig
   {
     oracleTable: 'OUTLETS_INTEGRATION_CONFIG',
-    prismaDelegate: (p) => p.outletIntegrationConfig,
+    repo: (s) => s.outletIntegrationConfigRepo,
     mapRow: (r) => ({
       outletName: str(r, 'OUTLET_NAME'),
       integMode: str(r, 'INTEG_MODE'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({ outletName: str(r, 'OUTLET_NAME') }),
+    conflictColumns: ['outletName'],
   },
   // FUSION_BUSINESS_UNIT_ID_MAP → FusionBusinessUnitMap
   {
     oracleTable: 'FUSION_BUSINESS_UNIT_ID_MAP',
-    prismaDelegate: (p) => p.fusionBusinessUnitMap,
+    repo: (s) => s.fusionBusinessUnitMapRepo,
     mapRow: (r) => ({
       businessUnitId: bigint(r, 'BUSINESS_UNIT_ID'),
       businessUnitName: str(r, 'BUSINESS_UNIT_NAME'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      businessUnitId_region: {
-        businessUnitId: bigint(r, 'BUSINESS_UNIT_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['businessUnitId', 'region'],
   },
   // FUSION_RECEIPT_METHOD → FusionReceiptMethod
   {
     oracleTable: 'FUSION_RECEIPT_METHOD',
-    prismaDelegate: (p) => p.fusionReceiptMethod,
+    repo: (s) => s.fusionReceiptMethodRepo,
     mapRow: (r) => ({
       receiptMethodId: bigint(r, 'RECEIPT_METHOD_ID'),
       receiptMethodName: str(r, 'RECEIPT_METHOD_NAME'),
@@ -162,17 +173,12 @@ const MAPPINGS: OracleTableMapping[] = [
       receiptMethodTax: num(r, 'RECEIPT_METHOD_TAX'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      receiptMethodName_region: {
-        receiptMethodName: str(r, 'RECEIPT_METHOD_NAME'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['receiptMethodName', 'region'],
   },
   // FUSION_SALES_METADATA → FusionSalesMetadata
   {
     oracleTable: 'FUSION_SALES_METADATA',
-    prismaDelegate: (p) => p.fusionSalesMetadata,
+    repo: (s) => s.fusionSalesMetadataRepo,
     mapRow: (r) => ({
       billToName: str(r, 'BILL_TO_NAME'),
       billToAccount: bigint(r, 'BILL_TO_ACCOUNT'),
@@ -190,18 +196,12 @@ const MAPPINGS: OracleTableMapping[] = [
       region: str(r, 'REGION'),
       customerType: str(r, 'CUSTOMER_TYPE'),
     }),
-    upsertWhere: (r) => ({
-      billToName_region_customerType: {
-        billToName: str(r, 'BILL_TO_NAME'),
-        region: str(r, 'REGION'),
-        customerType: str(r, 'CUSTOMER_TYPE'),
-      },
-    }),
+    conflictColumns: ['billToName', 'region', 'customerType'],
   },
   // SERVICE_PROVIDER_JOURNAL_META → ServiceProviderJournalMeta
   {
     oracleTable: 'SERVICE_PROVIDER_JOURNAL_META',
-    prismaDelegate: (p) => p.serviceProviderJournalMeta,
+    repo: (s) => s.serviceProviderJournalMetaRepo,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       ledgerId: bigint(r, 'LEDGER_ID'),
@@ -229,19 +229,12 @@ const MAPPINGS: OracleTableMapping[] = [
     }),
     // Compound key: each provider has paired CREDIT/DEBIT (× cash) rows — keying
     // on serviceProvider alone collapses them and loses the offsetting account.
-    upsertWhere: (r) => ({
-      serviceProvider_region_creditDebit_isCash: {
-        serviceProvider: str(r, 'SERVICE_PROVIDER'),
-        region: str(r, 'REGION'),
-        creditDebit: optStr(r, 'CREDIT_DEBIT') ?? '',
-        isCash: bool(r, 'IS_CASH'),
-      },
-    }),
+    conflictColumns: ['serviceProvider', 'region', 'creditDebit', 'isCash'],
   },
   // FUSION_CREDENTIALS → FusionCredential
   {
     oracleTable: 'FUSION_CREDENTIALS',
-    prismaDelegate: (p) => p.fusionCredential,
+    repo: (s) => s.fusionCredentialRepo,
     mapRow: (r) => ({
       hostName: str(r, 'HOST_NAME'),
       server: str(r, 'SERVER'),
@@ -249,12 +242,12 @@ const MAPPINGS: OracleTableMapping[] = [
       password: str(r, 'PASSWORD'),
       active: bool(r, 'ACTIVE'),
     }),
-    upsertWhere: (r) => ({ hostName: str(r, 'HOST_NAME') }),
+    conflictColumns: ['hostName'],
   },
   // VENDHQ_CREDENTIALS → VendHqCredential
   {
     oracleTable: 'VENDHQ_CREDENTIALS',
-    prismaDelegate: (p) => p.vendHqCredential,
+    repo: (s) => s.vendHqCredentialRepo,
     mapRow: (r) => ({
       domainName: str(r, 'DOMAIN_NAME'),
       personalToken: str(r, 'PERSONAL_TOKEN'),
@@ -265,12 +258,12 @@ const MAPPINGS: OracleTableMapping[] = [
       fusionTaxCode: optStr(r, 'FUSION_TAX_CODE'),
       currency: optStr(r, 'CURRENCY') ?? 'AED',
     }),
-    upsertWhere: (r) => ({ domainName: str(r, 'DOMAIN_NAME') }),
+    conflictColumns: ['domainName'],
   },
   // VENDHQ_OUTLETS → VendHqOutlet
   {
     oracleTable: 'VENDHQ_OUTLETS',
-    prismaDelegate: (p) => p.vendHqOutlet,
+    repo: (s) => s.vendHqOutletRepo,
     mapRow: (r) => ({
       outletId: str(r, 'OUTLET_ID'),
       outletName: str(r, 'OUTLET_NAME'),
@@ -278,17 +271,12 @@ const MAPPINGS: OracleTableMapping[] = [
       version: bigint(r, 'VERSION'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      outletId_region: {
-        outletId: str(r, 'OUTLET_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['outletId', 'region'],
   },
   // VENDHQ_REGISTERS → VendHqRegister
   {
     oracleTable: 'VENDHQ_REGISTERS',
-    prismaDelegate: (p) => p.vendHqRegister,
+    repo: (s) => s.vendHqRegisterRepo,
     mapRow: (r) => ({
       registerId: str(r, 'REGISTER_ID'),
       outletId: str(r, 'OUTLET_ID'),
@@ -302,44 +290,34 @@ const MAPPINGS: OracleTableMapping[] = [
       version: bigint(r, 'VERSION'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      registerId_region: {
-        registerId: str(r, 'REGISTER_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['registerId', 'region'],
   },
   // VENDHQ_SERVICE_PROVIDERS → VendHqServiceProvider
   {
     oracleTable: 'VENDHQ_SERVICE_PROVIDERS',
-    prismaDelegate: (p) => p.vendHqServiceProvider,
+    repo: (s) => s.vendHqServiceProviderRepo,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       serviceProvider: str(r, 'SERVICE_PROVIDER'),
       vendHqCustomerId: optStr(r, 'VENDHQ_CUSTOMER_ID'),
       isCash: bool(r, 'IS_CASH'),
     }),
-    upsertWhere: (r) => ({ serviceProvider: str(r, 'SERVICE_PROVIDER') }),
+    conflictColumns: ['serviceProvider'],
   },
   // VENDHQ_DISCOUNT_ITEMS → VendHqDiscountItem
   {
     oracleTable: 'VENDHQ_DISCOUNT_ITEMS',
-    prismaDelegate: (p) => p.vendHqDiscountItem,
+    repo: (s) => s.vendHqDiscountItemRepo,
     mapRow: (r) => ({
       discountItemId: str(r, 'DISCOUNT_ITEM_ID'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      discountItemId_region: {
-        discountItemId: str(r, 'DISCOUNT_ITEM_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['discountItemId', 'region'],
   },
   // VENDHQ_TAX_META → VendHqTaxMeta
   {
     oracleTable: 'VENDHQ_TAX_META',
-    prismaDelegate: (p) => p.vendHqTaxMeta,
+    repo: (s) => s.vendHqTaxMetaRepo,
     mapRow: (r) => ({
       taxId: str(r, 'TAX_ID'),
       taxName: str(r, 'TAX_NAME'),
@@ -347,33 +325,23 @@ const MAPPINGS: OracleTableMapping[] = [
       fusionName: optStr(r, 'FUSION_NAME'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      taxId_region: {
-        taxId: str(r, 'TAX_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['taxId', 'region'],
   },
   // SALES_INTEGRATION_STATUS → SalesIntegrationStatus
   {
     oracleTable: 'SALES_INTEGRATION_STATUS',
-    prismaDelegate: (p) => p.salesIntegrationStatus,
+    repo: (s) => s.salesIntegrationStatusRepo,
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       integMode: str(r, 'INTEG_MODE'),
       status: str(r, 'STATUS'),
     }),
-    upsertWhere: (r) => ({
-      region_integMode: {
-        region: str(r, 'REGION'),
-        integMode: str(r, 'INTEG_MODE'),
-      },
-    }),
+    conflictColumns: ['region', 'integMode'],
   },
   // VENDHQ_ITEM_META → VendHqItemMeta
   {
     oracleTable: 'VENDHQ_ITEM_META',
-    prismaDelegate: (p) => p.vendHqItemMeta,
+    repo: (s) => s.vendHqItemMetaRepo,
     mapRow: (r) => ({
       requestId: optInt32(r, 'REQUEST_ID'),
       status: optStr(r, 'STATUS'),
@@ -398,12 +366,7 @@ const MAPPINGS: OracleTableMapping[] = [
       lastUpdateDate: optDate(r, 'LAST_UPDATE_DATE'),
       region: str(r, 'REGION'),
     }),
-    upsertWhere: (r) => ({
-      itemId_region: {
-        itemId: str(r, 'ITEM_ID'),
-        region: str(r, 'REGION'),
-      },
-    }),
+    conflictColumns: ['itemId', 'region'],
   },
 ];
 
@@ -429,7 +392,36 @@ export class OracleNativeService {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(OutletIntegrationConfig)
+    readonly outletIntegrationConfigRepo: Repository<OutletIntegrationConfig>,
+    @InjectRepository(FusionBusinessUnitMap)
+    readonly fusionBusinessUnitMapRepo: Repository<FusionBusinessUnitMap>,
+    @InjectRepository(FusionReceiptMethod)
+    readonly fusionReceiptMethodRepo: Repository<FusionReceiptMethod>,
+    @InjectRepository(FusionSalesMetadata)
+    readonly fusionSalesMetadataRepo: Repository<FusionSalesMetadata>,
+    @InjectRepository(ServiceProviderJournalMeta)
+    readonly serviceProviderJournalMetaRepo: Repository<ServiceProviderJournalMeta>,
+    @InjectRepository(FusionCredential)
+    readonly fusionCredentialRepo: Repository<FusionCredential>,
+    @InjectRepository(VendHqCredential)
+    readonly vendHqCredentialRepo: Repository<VendHqCredential>,
+    @InjectRepository(VendHqOutlet)
+    readonly vendHqOutletRepo: Repository<VendHqOutlet>,
+    @InjectRepository(VendHqRegister)
+    readonly vendHqRegisterRepo: Repository<VendHqRegister>,
+    @InjectRepository(VendHqServiceProvider)
+    readonly vendHqServiceProviderRepo: Repository<VendHqServiceProvider>,
+    @InjectRepository(VendHqDiscountItem)
+    readonly vendHqDiscountItemRepo: Repository<VendHqDiscountItem>,
+    @InjectRepository(VendHqTaxMeta)
+    readonly vendHqTaxMetaRepo: Repository<VendHqTaxMeta>,
+    @InjectRepository(SalesIntegrationStatus)
+    readonly salesIntegrationStatusRepo: Repository<SalesIntegrationStatus>,
+    @InjectRepository(VendHqItemMeta)
+    readonly vendHqItemMetaRepo: Repository<VendHqItemMeta>,
+    @InjectRepository(FusionCustomerAccount)
+    readonly fusionCustomerAccountRepo: Repository<FusionCustomerAccount>,
   ) {}
 
   /**
@@ -583,8 +575,9 @@ export class OracleNativeService {
     const results: OracleImportResult[] = [];
 
     for (const mapping of targetMappings) {
+      const repo = mapping.repo(this);
       const result: OracleImportResult = {
-        table: String(mapping.prismaDelegate.name || mapping.oracleTable),
+        table: repo.metadata.name || mapping.oracleTable,
         oracleTable: mapping.oracleTable,
         imported: 0,
         skipped: 0,
@@ -599,7 +592,6 @@ export class OracleNativeService {
         );
 
         const rows = queryResult.rows ?? [];
-        const delegate = mapping.prismaDelegate(this.prisma);
 
         // Upsert in concurrent chunks — row-by-row sequential upserts made a
         // full multi-table import exceed the request timeout.
@@ -608,11 +600,10 @@ export class OracleNativeService {
           const chunk = rows.slice(i, i + CHUNK);
           const outcomes = await Promise.allSettled(
             chunk.map((row) =>
-              // Resolve inside so mapRow/upsertWhere errors are captured too.
+              // Resolve inside so mapRow errors are captured too.
               Promise.resolve().then(() => {
                 const data = mapping.mapRow(row);
-                const where = mapping.upsertWhere(row);
-                return delegate.upsert({ where, update: data, create: data });
+                return repo.upsert(data, mapping.conflictColumns);
               }),
             ),
           );
@@ -797,16 +788,10 @@ export class OracleNativeService {
         customerName: entry.name,
       };
       try {
-        await this.prisma.fusionCustomerAccount.upsert({
-          where: {
-            accountNumber_region: {
-              accountNumber: entry.accountNumber,
-              region: entry.region,
-            },
-          },
-          update: data,
-          create: data,
-        });
+        await this.fusionCustomerAccountRepo.upsert(data, [
+          'accountNumber',
+          'region',
+        ]);
         imported++;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

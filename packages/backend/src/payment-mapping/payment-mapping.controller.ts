@@ -9,16 +9,19 @@ import {
   Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Response } from 'express';
 import { PaymentMappingService } from './payment-mapping.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
 
 @ApiTags('payment-mappings')
 @Controller('payment-mappings')
 export class PaymentMappingController {
   constructor(
     private readonly service: PaymentMappingService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(PaymentMethodMapping)
+    private readonly mappings: Repository<PaymentMethodMapping>,
   ) {}
 
   @Get()
@@ -30,8 +33,8 @@ export class PaymentMappingController {
   @Get('export')
   @ApiOperation({ summary: 'Export payment method mappings as CSV' })
   async exportCsv(@Res() res: Response) {
-    const rows = await this.prisma.paymentMethodMapping.findMany({
-      orderBy: { sourcePaymentName: 'asc' },
+    const rows = await this.mappings.find({
+      order: { sourcePaymentName: 'ASC' },
     });
     const escape = (v: unknown) => {
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
@@ -44,7 +47,9 @@ export class PaymentMappingController {
     const csv = [
       headers.map(escape).join(','),
       ...rows.map((r) =>
-        headers.map((h) => escape((r as Record<string, unknown>)[h])).join(','),
+        headers
+          .map((h) => escape((r as unknown as Record<string, unknown>)[h]))
+          .join(','),
       ),
     ].join('\n');
     res.setHeader('Content-Type', 'text/csv');

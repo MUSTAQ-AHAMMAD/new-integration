@@ -1,21 +1,36 @@
 import { Process, Processor } from '@nestjs/bull';
 import { Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
+import { Decimal } from 'decimal.js';
+import { Job } from 'bull';
 import {
+  AlertSeverity,
+  AlertType,
   AuditOperation,
   AuditStatus,
   ErrorType,
   JobStatus,
-  OrderSyncQueue,
-  Prisma,
   SyncStatus,
-} from '@prisma/client';
-import { Job } from 'bull';
+} from '../../database/enums';
+import { OrderSyncQueue } from '../../database/entities/order-sync-queue.entity';
+import { FailedTransaction } from '../../database/entities/failed-transaction.entity';
+import { FusionInvoiceHeader } from '../../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../../database/entities/fusion-invoice-line.entity';
+import { FusionInvTxn } from '../../database/entities/fusion-inv-txn.entity';
+import { FusionStandardReceipt } from '../../database/entities/fusion-standard-receipt.entity';
+import { FusionMiscReceipt } from '../../database/entities/fusion-misc-receipt.entity';
+import { FusionApplyReceipt } from '../../database/entities/fusion-apply-receipt.entity';
+import { FusionJournalHeader } from '../../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../../database/entities/fusion-journal-line.entity';
+import { SyncJob } from '../../database/entities/sync-job.entity';
+import { RefundTracking } from '../../database/entities/refund-tracking.entity';
+import { BackupOdooOrder } from '../../database/entities/backup-odoo-order.entity';
 import { AlertsService } from '../../alerts/alerts.service';
 import { OracleClient } from '../../clients/oracle/oracle.client';
 import { OracleSoapClient } from '../../clients/oracle/oracle-soap.client';
 import { GatewayService } from '../../gateway/gateway.service';
 import { PaymentMappingService } from '../../payment-mapping/payment-mapping.service';
-import { PrismaService } from '../../prisma/prisma.service';
 import { StoreConfigService } from '../../store-config/store-config.service';
 import { FusionTransformationService } from '../../sync/fusion-transformation.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
@@ -34,7 +49,32 @@ export class OrderSyncProcessor {
   private readonly logger = new Logger(OrderSyncProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
+    @InjectRepository(FusionInvoiceHeader)
+    private readonly invoiceHeaders: Repository<FusionInvoiceHeader>,
+    @InjectRepository(FusionInvoiceLine)
+    private readonly invoiceLines: Repository<FusionInvoiceLine>,
+    @InjectRepository(FusionInvTxn)
+    private readonly invTxns: Repository<FusionInvTxn>,
+    @InjectRepository(FusionStandardReceipt)
+    private readonly standardReceiptsRepo: Repository<FusionStandardReceipt>,
+    @InjectRepository(FusionMiscReceipt)
+    private readonly miscReceiptsRepo: Repository<FusionMiscReceipt>,
+    @InjectRepository(FusionApplyReceipt)
+    private readonly applyReceiptsRepo: Repository<FusionApplyReceipt>,
+    @InjectRepository(FusionJournalHeader)
+    private readonly journalHeadersRepo: Repository<FusionJournalHeader>,
+    @InjectRepository(FusionJournalLine)
+    private readonly journalLinesRepo: Repository<FusionJournalLine>,
+    @InjectRepository(SyncJob)
+    private readonly syncJobs: Repository<SyncJob>,
+    @InjectRepository(RefundTracking)
+    private readonly refundTracking: Repository<RefundTracking>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOdooOrders: Repository<BackupOdooOrder>,
     private readonly gateway: GatewayService,
     private readonly validationService: ValidationService,
     private readonly idempotencyService: IdempotencyService,
@@ -64,8 +104,8 @@ export class OrderSyncProcessor {
       `[${odooOrderId}] ========================================`,
     );
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
-      where: { odooOrderId_branchCode: { odooOrderId, branchCode } },
+    const order = await this.orders.findOne({
+      where: { odooOrderId, branchCode },
     });
 
     if (!order) {
@@ -111,12 +151,9 @@ export class OrderSyncProcessor {
           `[${odooOrderId}] ⏭️  SKIPPED: ${skipReasons.join(', ')}`,
         );
 
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: {
-            status: SyncStatus.SKIPPED,
-            validationErrors: { reasons: skipReasons },
-          },
+        await this.orders.update(order.id, {
+          status: SyncStatus.SKIPPED,
+          validationErrors: { reasons: skipReasons },
         });
         this.gateway.emitOrderStatus({
           orderId: odooOrderId,
@@ -145,24 +182,21 @@ export class OrderSyncProcessor {
             `  Warnings: ${JSON.stringify(validation.warnings, null, 2)}`,
         );
 
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: {
-            status: SyncStatus.SKIPPED,
-            validationErrors: {
-              errors: validation.errors,
-              warnings: validation.warnings,
-            },
+        await this.orders.update(order.id, {
+          status: SyncStatus.SKIPPED,
+          validationErrors: {
+            errors: validation.errors,
+            warnings: validation.warnings,
           },
         });
-        await this.prisma.failedTransaction.create({
-          data: {
+        await this.failedTransactions.save(
+          this.failedTransactions.create({
             orderSyncQueueId: order.id,
             originalPayload: order,
             errorType: ErrorType.VALIDATION_ERROR,
             errorMessage: validation.errors.join('; '),
-          },
-        });
+          }),
+        );
         this.gateway.emitOrderStatus({
           orderId: odooOrderId,
           status: SyncStatus.SKIPPED,
@@ -183,9 +217,8 @@ export class OrderSyncProcessor {
         this.logger.warn(
           `[${odooOrderId}] ⏸️  HELD: Negative inventory detected. Use retry-negative-inventory endpoint to re-process.`,
         );
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: { status: SyncStatus.NEGATIVE_INVENTORY_HOLD },
+        await this.orders.update(order.id, {
+          status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         });
         this.gateway.emitOrderStatus({
           orderId: odooOrderId,
@@ -221,38 +254,35 @@ export class OrderSyncProcessor {
         this.logger.error(
           `[${odooOrderId}] ❌ CONFIGURATION ERROR: ${configMsg}`,
         );
-        await this.prisma.orderSyncQueue
-          .update({
-            where: { id: order.id },
-            data: {
-              status: SyncStatus.FAILED,
-              validationErrors: { error: configMsg },
-            },
+        await this.orders
+          .update(order.id, {
+            status: SyncStatus.FAILED,
+            validationErrors: { error: configMsg },
           })
           .catch((dbErr) => {
             this.logger.error(
               `Failed to mark order ${odooOrderId} as FAILED after config error: ${(dbErr as Error).message}`,
             );
           });
-        await this.prisma.failedTransaction
-          .create({
-            data: {
+        await this.failedTransactions
+          .save(
+            this.failedTransactions.create({
               orderSyncQueueId: order.id,
               originalPayload: order,
               errorType: ErrorType.CONFIGURATION_ERROR,
               errorMessage: configMsg,
               errorStack:
-                configErr instanceof Error ? configErr.stack : undefined,
-            },
-          })
+                configErr instanceof Error ? (configErr.stack ?? null) : null,
+            }),
+          )
           .catch((dbErr) => {
             this.logger.error(
               `Failed to create FailedTransaction for order ${odooOrderId}: ${(dbErr as Error).message}`,
             );
           });
         await this.alertsService.createAlert({
-          alertType: 'STORE_CONFIG_INVALID',
-          severity: 'ERROR',
+          alertType: AlertType.STORE_CONFIG_INVALID,
+          severity: AlertSeverity.ERROR,
           title: `Store configuration error — ${branchCode}`,
           message: `Order ${odooOrderId} failed due to store configuration: ${configMsg}`,
           relatedEntityId: branchCode,
@@ -273,13 +303,10 @@ export class OrderSyncProcessor {
       this.logger.log(
         `[${odooOrderId}] Step 4/14: Marking order as PROCESSING...`,
       );
-      await this.prisma.orderSyncQueue.update({
-        where: { id: order.id },
-        data: {
-          status: SyncStatus.PROCESSING,
-          syncAttempts: { increment: 1 },
-          lastSyncAt: new Date(),
-        },
+      await this.orders.increment({ id: order.id }, 'syncAttempts', 1);
+      await this.orders.update(order.id, {
+        status: SyncStatus.PROCESSING,
+        lastSyncAt: new Date(),
       });
       this.gateway.emitOrderStatus({
         orderId: odooOrderId,
@@ -340,10 +367,7 @@ export class OrderSyncProcessor {
         this.logger.warn(
           `[${odooOrderId}] 🔁 DUPLICATE: Order already synced (idempotency check)`,
         );
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: { status: SyncStatus.SYNCED },
-        });
+        await this.orders.update(order.id, { status: SyncStatus.SYNCED });
         await this.idempotencyService.recordOperation({
           idempotencyKey,
           externalId: odooOrderId,
@@ -504,8 +528,8 @@ export class OrderSyncProcessor {
         if (missingFields.length > 0) {
           const errorMsg = `Invoice validation failed - missing required fields: ${missingFields.join(', ')}`;
           this.logger.error(`[${odooOrderId}] ❌ ${errorMsg}`);
-          await this.prisma.fusionInvoiceHeader.create({
-            data: {
+          await this.invoiceHeaders.save(
+            this.invoiceHeaders.create({
               status: 'ERROR',
               message: errorMsg,
               requestDate: new Date(),
@@ -523,8 +547,8 @@ export class OrderSyncProcessor {
               currencyCode: invoiceHeader.invoiceCurrencyCode || 'MISSING',
               totalAmount: order.totalAmount,
               region: effectiveRegion,
-            },
-          });
+            }),
+          );
           throw new Error(errorMsg);
         }
 
@@ -535,17 +559,17 @@ export class OrderSyncProcessor {
         // fall through to the receipt/journal steps (each has its own dup check).
         const salesOrderRef = invoiceHeader.invoiceLines[0]?.salesOrder ?? null;
         const existingInvoiceLine = salesOrderRef
-          ? await this.prisma.fusionInvoiceLine.findFirst({
+          ? await this.invoiceLines.findOne({
               where: {
                 salesOrder: salesOrderRef,
                 region: effectiveRegion,
                 // Accept both the normalised 'SUCCESS' and Oracle's raw 'S'
                 // (older rows) so an already-created invoice is reused instead
                 // of re-created (which would duplicate it in Oracle).
-                status: { in: ['SUCCESS', 'S'] },
-                invoiceNumber: { not: null },
+                status: In(['SUCCESS', 'S']),
+                invoiceNumber: Not(IsNull()),
               },
-              orderBy: { createdAt: 'desc' },
+              order: { createdAt: 'DESC' },
             })
           : null;
 
@@ -592,8 +616,8 @@ export class OrderSyncProcessor {
               )}`,
           );
           // Store failed invoice attempt
-          await this.prisma.fusionInvoiceHeader.create({
-            data: {
+          await this.invoiceHeaders.save(
+            this.invoiceHeaders.create({
               status: 'ERROR',
               message: errorMessage,
               requestDate: new Date(),
@@ -611,8 +635,8 @@ export class OrderSyncProcessor {
               currencyCode: invoiceHeader.invoiceCurrencyCode,
               totalAmount: order.totalAmount,
               region: effectiveRegion,
-            },
-          });
+            }),
+          );
           throw new Error(`Oracle invoice creation failed: ${errorMessage}`);
           }
         }
@@ -679,8 +703,8 @@ export class OrderSyncProcessor {
         // Persist the invoice audit rows + inventory txns only when we actually
         // created the invoice this run. On reuse (dup check A) they already exist.
         if (!existingInvoiceLine) {
-        const auditHeader = await this.prisma.fusionInvoiceHeader.create({
-          data: {
+        const auditHeader = await this.invoiceHeaders.save(
+          this.invoiceHeaders.create({
             status: normalizedInvoiceStatus,
             requestDate: new Date(),
             billToCustName: invoiceHeader.billToCustomerName,
@@ -700,27 +724,29 @@ export class OrderSyncProcessor {
             customerTxnId: toBigIntOrNull(invoiceResult.customerTrxId),
             totalAmount: order.totalAmount, // Store total amount for reference
             region: effectiveRegion,
-          },
-        });
+          }),
+        );
 
-        await this.prisma.fusionInvoiceLine.createMany({
-          data: invoiceHeader.invoiceLines.map((il) => ({
-            status: normalizedInvoiceStatus,
-            requestDate: new Date(),
-            invoiceNumber: txnNumber ? String(txnNumber) : null,
-            lineNumber: il.lineNumber,
-            itemNumber: il.itemNumber ?? null,
-            description: il.description,
-            uom: il.uomCode ?? null,
-            quantity: il.quantity,
-            currencyCode: invoiceHeader.invoiceCurrencyCode,
-            taxCode: il.taxClassificationCode ?? null,
-            salesOrder: il.salesOrder ?? null,
-            salesOrderLine: Number(il.salesOrderLine) || null,
-            region: effectiveRegion,
-            headerId: auditHeader.id,
-          })),
-        });
+        await this.invoiceLines.save(
+          invoiceHeader.invoiceLines.map((il) =>
+            this.invoiceLines.create({
+              status: normalizedInvoiceStatus,
+              requestDate: new Date(),
+              invoiceNumber: txnNumber ? String(txnNumber) : null,
+              lineNumber: il.lineNumber,
+              itemNumber: il.itemNumber ?? null,
+              description: il.description,
+              uom: il.uomCode ?? null,
+              quantity: il.quantity,
+              currencyCode: invoiceHeader.invoiceCurrencyCode,
+              taxCode: il.taxClassificationCode ?? null,
+              salesOrder: il.salesOrder ?? null,
+              salesOrderLine: Number(il.salesOrderLine) || null,
+              region: effectiveRegion,
+              headerId: auditHeader.id,
+            }),
+          ),
+        );
 
         // ── 8b. Create Inventory Transactions for Each Line ───────
         this.logger.log(
@@ -729,25 +755,25 @@ export class OrderSyncProcessor {
 
         const inventoryTxns = invoiceHeader.invoiceLines
           .filter((il) => il.itemNumber && il.quantity > 0) // Only create for valid items with quantity
-          .map((il) => ({
-            status: 'SUCCESS',
-            requestDate: new Date(),
-            organizationName: invoiceHeader.businessUnit,
-            itemNumber: il.itemNumber!,
-            txnSourceName: invoiceHeader.transactionSource,
-            subInventory: null, // Could be enriched from store config if needed
-            txnUom: il.uomCode || 'Ea',
-            txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
-            txnQty: il.quantity,
-            region: effectiveRegion,
-            integMode: `${effectiveRegion}-ORDER-SYNC`,
-          }));
+          .map((il) =>
+            this.invTxns.create({
+              status: 'SUCCESS',
+              requestDate: new Date(),
+              organizationName: invoiceHeader.businessUnit,
+              itemNumber: il.itemNumber!,
+              txnSourceName: invoiceHeader.transactionSource,
+              subInventory: null, // Could be enriched from store config if needed
+              txnUom: il.uomCode || 'Ea',
+              txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+              txnQty: il.quantity,
+              region: effectiveRegion,
+              integMode: `${effectiveRegion}-ORDER-SYNC`,
+            }),
+          );
 
         if (inventoryTxns.length > 0) {
           try {
-            await this.prisma.fusionInvTxn.createMany({
-              data: inventoryTxns,
-            });
+            await this.invTxns.save(inventoryTxns);
             this.logger.log(
               `[${odooOrderId}] ✅ Step 8b/14: Created ${inventoryTxns.length} inventory transaction(s)`,
             );
@@ -774,7 +800,7 @@ export class OrderSyncProcessor {
         );
         for (const sr of standardReceipts) {
           // ── Duplicate check B (Java: getFindStandardReceipt) ──
-          const existingSr = await this.prisma.fusionStandardReceipt.findFirst({
+          const existingSr = await this.standardReceiptsRepo.findOne({
             where: {
               receiptNumber: sr.receiptNumber,
               region: effectiveRegion,
@@ -789,8 +815,8 @@ export class OrderSyncProcessor {
           }
           try {
             const srResult = await this.soapClient.createStandardReceipt(sr);
-            await this.prisma.fusionStandardReceipt.create({
-              data: {
+            await this.standardReceiptsRepo.save(
+              this.standardReceiptsRepo.create({
                 status: 'SUCCESS',
                 requestDate: new Date(),
                 currencyCode: sr.currencyCode,
@@ -801,11 +827,11 @@ export class OrderSyncProcessor {
                 remittanceBankAccId: String(sr.remittanceBankAccountId),
                 customerId: toBigIntOrNull(sr.customerId),
                 accountValue: sr.accountValue,
-                receiptAmount: sr.receiptAmount,
+                receiptAmount: new Decimal(sr.receiptAmount),
                 orgId: toBigIntOrNull(sr.orgId),
                 region: effectiveRegion,
-              },
-            });
+              }),
+            );
             this.logger.log(
               `[${odooOrderId}]   ✅ Standard receipt created: ${srResult.receiptNumber}`,
             );
@@ -813,8 +839,8 @@ export class OrderSyncProcessor {
             this.logger.error(
               `[${odooOrderId}]   ❌ Standard receipt failed: ${receiptError instanceof Error ? receiptError.message : String(receiptError)}`,
             );
-            await this.prisma.fusionStandardReceipt.create({
-              data: {
+            await this.standardReceiptsRepo.save(
+              this.standardReceiptsRepo.create({
                 status: 'ERROR',
                 message:
                   receiptError instanceof Error
@@ -829,11 +855,11 @@ export class OrderSyncProcessor {
                 remittanceBankAccId: String(sr.remittanceBankAccountId),
                 customerId: toBigIntOrNull(sr.customerId),
                 accountValue: sr.accountValue,
-                receiptAmount: sr.receiptAmount,
+                receiptAmount: new Decimal(sr.receiptAmount),
                 orgId: toBigIntOrNull(sr.orgId),
                 region: effectiveRegion,
-              },
-            });
+              }),
+            );
             throw receiptError;
           }
         }
@@ -846,8 +872,8 @@ export class OrderSyncProcessor {
           try {
             const mrResult =
               await this.soapClient.createMiscellaneousReceipt(mr);
-            await this.prisma.fusionMiscReceipt.create({
-              data: {
+            await this.miscReceiptsRepo.save(
+              this.miscReceiptsRepo.create({
                 status: 'SUCCESS',
                 requestDate: new Date(),
                 currencyCode: mr.currencyCode,
@@ -858,11 +884,11 @@ export class OrderSyncProcessor {
                 receiptNumber: mrResult.receiptNumber ?? mr.receiptNumber,
                 bankAccNumber: mr.bankAccountName,
                 recActivityName: mr.receivableActivityName,
-                receiptAmount: mr.receiptAmount,
+                receiptAmount: new Decimal(mr.receiptAmount),
                 orgId: toBigIntOrNull(mr.orgId),
                 region: effectiveRegion,
-              },
-            });
+              }),
+            );
             this.logger.log(
               `[${odooOrderId}]   ✅ Misc receipt created: ${mrResult.receiptNumber}`,
             );
@@ -870,8 +896,8 @@ export class OrderSyncProcessor {
             this.logger.error(
               `[${odooOrderId}]   ❌ Misc receipt failed: ${miscError instanceof Error ? miscError.message : String(miscError)}`,
             );
-            await this.prisma.fusionMiscReceipt.create({
-              data: {
+            await this.miscReceiptsRepo.save(
+              this.miscReceiptsRepo.create({
                 status: 'ERROR',
                 message:
                   miscError instanceof Error
@@ -886,11 +912,11 @@ export class OrderSyncProcessor {
                 receiptNumber: mr.receiptNumber,
                 bankAccNumber: mr.bankAccountName,
                 recActivityName: mr.receivableActivityName,
-                receiptAmount: mr.receiptAmount,
+                receiptAmount: new Decimal(mr.receiptAmount),
                 orgId: toBigIntOrNull(mr.orgId),
                 region: effectiveRegion,
-              },
-            });
+              }),
+            );
             throw miscError;
           }
         }
@@ -898,7 +924,7 @@ export class OrderSyncProcessor {
         // ── 11. Apply Receipts to Invoice ─────────────────────────
         for (const ar of applyReceipts) {
           // ── Duplicate check C (Java: getFindApplyReceipt) ──
-          const existingAr = await this.prisma.fusionApplyReceipt.findFirst({
+          const existingAr = await this.applyReceiptsRepo.findOne({
             where: {
               receiptNumber: ar.receiptNumber,
               region: effectiveRegion,
@@ -912,8 +938,8 @@ export class OrderSyncProcessor {
             continue;
           }
           const arResult = await this.soapClient.createApplyReceipt(ar);
-          await this.prisma.fusionApplyReceipt.create({
-            data: {
+          await this.applyReceiptsRepo.save(
+            this.applyReceiptsRepo.create({
               status: 'SUCCESS',
               requestDate: new Date(),
               accountingDate: ar.receiptDate,
@@ -923,8 +949,8 @@ export class OrderSyncProcessor {
               currencyCode: ar.receiptCurrency,
               txnSource: ar.transactionSource,
               region: effectiveRegion,
-            },
-          });
+            }),
+          );
         }
 
         // ── 12. Journal Entries ───────────────────────────────────
@@ -934,14 +960,14 @@ export class OrderSyncProcessor {
           // previously left unset; it is now populated below so this check works).
           const existingJh =
             txnNumber != null
-              ? await this.prisma.fusionJournalHeader.findFirst({
+              ? await this.journalHeadersRepo.findOne({
                   where: {
                     txnNumber,
                     region: effectiveRegion,
                     status: 'SUCCESS',
                   },
                 })
-              : await this.prisma.fusionJournalHeader.findFirst({
+              : await this.journalHeadersRepo.findOne({
                   where: {
                     batchDescription: jh.batchDescription,
                     region: effectiveRegion,
@@ -955,8 +981,8 @@ export class OrderSyncProcessor {
             continue;
           }
           const jeHeaderId = await this.soapClient.importJournalEntry(jh);
-          const jhAudit = await this.prisma.fusionJournalHeader.create({
-            data: {
+          const jhAudit = await this.journalHeadersRepo.save(
+            this.journalHeadersRepo.create({
               status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
               requestDate: new Date(),
               region: effectiveRegion,
@@ -971,24 +997,26 @@ export class OrderSyncProcessor {
               errorToSuspenseFlag: jh.errorToSuspenseFlag,
               summaryFlag: jh.summaryFlag,
               accountingDate: jh.accountingDate,
-            },
-          });
+            }),
+          );
 
-          await this.prisma.fusionJournalLine.createMany({
-            data: jh.journalLines.map((jl) => ({
-              status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
-              requestDate: new Date(),
-              region: effectiveRegion,
-              jeHeaderId: jeHeaderId ?? null,
-              ledgerId: numberToBigInt(jl.ledgerId),
-              chartOfAccountsId:
-                jl.chartOfAccountsId != null
-                  ? numberToBigInt(jl.chartOfAccountsId)
-                  : null,
-              currencyCode: jl.currencyCode,
-              headerId: jhAudit.id,
-            })),
-          });
+          await this.journalLinesRepo.save(
+            jh.journalLines.map((jl) =>
+              this.journalLinesRepo.create({
+                status: jeHeaderId != null ? 'SUCCESS' : 'ERROR',
+                requestDate: new Date(),
+                region: effectiveRegion,
+                jeHeaderId: jeHeaderId ?? null,
+                ledgerId: numberToBigInt(jl.ledgerId),
+                chartOfAccountsId:
+                  jl.chartOfAccountsId != null
+                    ? numberToBigInt(jl.chartOfAccountsId)
+                    : null,
+                currencyCode: jl.currencyCode,
+                headerId: jhAudit.id,
+              }),
+            ),
+          );
         }
 
         return String(txnNumber || '');
@@ -1001,7 +1029,7 @@ export class OrderSyncProcessor {
       // and org id — unlike the enrichment service, which hardcodes placeholder
       // receipt ids (1/1000/1) that Oracle rejects (JBO-27024). The enrichment
       // service remains the fallback for orders with no backup order row.
-      const backupOrder = await this.prisma.backupOdooOrder.findFirst({
+      const backupOrder = await this.backupOdooOrders.findOne({
         where: { orderName: order.odooOrderNumber },
         select: { id: true },
       });
@@ -1091,18 +1119,15 @@ export class OrderSyncProcessor {
       }
 
       // ── 14. Mark SYNCED ───────────────────────────────────────
-      await this.prisma.orderSyncQueue.update({
-        where: { id: order.id },
-        data: {
-          status: SyncStatus.SYNCED,
-          validationErrors: validationWarnings.length
-            ? { warnings: validationWarnings }
-            : Prisma.JsonNull,
-          oracleInvoiceNumber: order.isRefund ? null : oracleInvoiceNumber,
-          oracleCreditMemoNumber: order.isRefund
-            ? oracleCreditMemoNumber
-            : null,
-        },
+      await this.orders.update(order.id, {
+        status: SyncStatus.SYNCED,
+        validationErrors: (validationWarnings.length
+          ? { warnings: validationWarnings }
+          : null) as never,
+        oracleInvoiceNumber: order.isRefund ? null : oracleInvoiceNumber,
+        oracleCreditMemoNumber: order.isRefund
+          ? oracleCreditMemoNumber
+          : null,
       });
 
       if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'success');
@@ -1129,13 +1154,10 @@ export class OrderSyncProcessor {
           `[${odooOrderId}] ⏳ Sync deferred (transient): ${errorMessage}. ` +
             `Order returned to PENDING for automatic retry.`,
         );
-        await this.prisma.orderSyncQueue
-          .update({
-            where: { id: order.id },
-            data: {
-              status: SyncStatus.PENDING,
-              validationErrors: { error: errorMessage },
-            },
+        await this.orders
+          .update(order.id, {
+            status: SyncStatus.PENDING,
+            validationErrors: { error: errorMessage },
           })
           .catch(() => undefined);
 
@@ -1153,25 +1175,22 @@ export class OrderSyncProcessor {
       }
 
       this.logger.error(`Order sync failed: ${odooOrderId} - ${errorMessage}`);
-      await this.prisma.orderSyncQueue
-        .update({
-          where: { id: order.id },
-          data: {
-            status: SyncStatus.FAILED,
-            validationErrors: { error: errorMessage },
-          },
+      await this.orders
+        .update(order.id, {
+          status: SyncStatus.FAILED,
+          validationErrors: { error: errorMessage },
         })
         .catch(() => undefined);
-      await this.prisma.failedTransaction
-        .create({
-          data: {
+      await this.failedTransactions
+        .save(
+          this.failedTransactions.create({
             orderSyncQueueId: order.id,
             originalPayload: order,
             errorType: ErrorType.UNKNOWN_ERROR,
             errorMessage,
-            errorStack: err instanceof Error ? err.stack : undefined,
-          },
-        })
+            errorStack: err instanceof Error ? (err.stack ?? null) : null,
+          }),
+        )
         .catch(() => undefined);
 
       if (syncJobId) {
@@ -1233,30 +1252,39 @@ export class OrderSyncProcessor {
 
     // totalAmount is negative for refunds; store the magnitude to match the
     // manual-credit-memo convention in RefundsService.
-    const refundAmount = new Prisma.Decimal(order.totalAmount).abs();
+    const refundAmount = new Decimal(order.totalAmount).abs();
 
     try {
-      await this.prisma.refundTracking.upsert({
+      // Upsert on the unique refundOrderId (TypeORM has no native upsert here —
+      // do a find-then-update/insert).
+      const existing = await this.refundTracking.findOne({
         where: { refundOrderId: order.odooOrderId },
-        create: {
-          originalOrderId: order.refundReferenceId ?? order.odooOrderId,
-          originalOrderNumber: order.odooOrderNumber,
-          originalInvoiceNumber: order.oracleInvoiceNumber ?? null,
-          refundOrderId: order.odooOrderId,
-          refundOrderNumber: order.odooOrderNumber,
-          refundAmount,
-          refundReason:
-            'Auto-separated refund (negative-amount order); credit memo not auto-created',
-          refundDate: order.orderDate,
-          oracleCreditMemoNumber: '',
-          creditMemoStatus: SyncStatus.PENDING,
-        },
-        update: {
-          refundOrderNumber: order.odooOrderNumber,
-          refundAmount,
-          refundDate: order.orderDate,
-        },
       });
+      if (existing) {
+        await this.refundTracking.update(existing.id, {
+          refundOrderNumber: order.odooOrderNumber,
+          branchCode: order.branchCode,
+          refundAmount,
+          refundDate: order.orderDate,
+        });
+      } else {
+        await this.refundTracking.save(
+          this.refundTracking.create({
+            originalOrderId: order.refundReferenceId ?? order.odooOrderId,
+            originalOrderNumber: order.odooOrderNumber,
+            originalInvoiceNumber: order.oracleInvoiceNumber ?? null,
+            refundOrderId: order.odooOrderId,
+            refundOrderNumber: order.odooOrderNumber,
+            branchCode: order.branchCode,
+            refundAmount,
+            refundReason:
+              'Auto-separated refund (negative-amount order); pushed as a credit memo',
+            refundDate: order.orderDate,
+            oracleCreditMemoNumber: null,
+            creditMemoStatus: SyncStatus.PENDING,
+          }),
+        );
+      }
     } catch (err) {
       // Tracking is best-effort — never fail the order over it.
       this.logger.error(
@@ -1266,15 +1294,13 @@ export class OrderSyncProcessor {
       );
     }
 
-    await this.prisma.orderSyncQueue.update({
-      where: { id: order.id },
-      data: {
-        status: SyncStatus.SKIPPED,
-        validationErrors: {
-          reasons: [
-            'Refund separated — credit memos are not auto-created. Handle via the Refunds page.',
-          ],
-        },
+    await this.orders.update(order.id, {
+      status: SyncStatus.SKIPPED,
+      validationErrors: {
+        reasons: [
+          'Refund separated from the invoice pipeline — queued as a credit memo ' +
+            '(see Cancellations & Refunds).',
+        ],
       },
     });
 
@@ -1328,24 +1354,21 @@ export class OrderSyncProcessor {
         `invoice skipped. Missing: ${preview}`,
     );
 
-    await this.prisma.orderSyncQueue.update({
-      where: { id: order.id },
-      data: {
-        status: SyncStatus.SKIPPED,
-        validationErrors: {
-          reasons: [
-            "Order held for review — one or more items do not exist in Oracle's item " +
-              'catalog (AR_INVALID_INVENTORY_ITEM). No invoice was created.',
-          ],
-          missingOracleItems: missingItems,
-        },
+    await this.orders.update(order.id, {
+      status: SyncStatus.SKIPPED,
+      validationErrors: {
+        reasons: [
+          "Order held for review — one or more items do not exist in Oracle's item " +
+            'catalog (AR_INVALID_INVENTORY_ITEM). No invoice was created.',
+        ],
+        missingOracleItems: missingItems,
       },
     });
 
     await this.alertsService
       .createAlert({
-        alertType: 'INVALID_ORACLE_ITEM',
-        severity: 'WARNING',
+        alertType: AlertType.INVALID_ORACLE_ITEM,
+        severity: AlertSeverity.WARNING,
         title: `Order ${order.odooOrderNumber} held — invalid Oracle item(s)`,
         message:
           `Order ${odooOrderId} (branch ${order.branchCode}) was not invoiced because ` +
@@ -1372,18 +1395,15 @@ export class OrderSyncProcessor {
     syncJobId: string,
     outcome: 'success' | 'failed' | 'skipped',
   ) {
-    const update: Prisma.SyncJobUpdateInput = {
-      processedRecords: { increment: 1 },
-    };
+    await this.syncJobs.increment({ id: syncJobId }, 'processedRecords', 1);
+    if (outcome === 'success')
+      await this.syncJobs.increment({ id: syncJobId }, 'successCount', 1);
+    else if (outcome === 'failed')
+      await this.syncJobs.increment({ id: syncJobId }, 'failedCount', 1);
+    else await this.syncJobs.increment({ id: syncJobId }, 'skippedCount', 1);
 
-    if (outcome === 'success') update.successCount = { increment: 1 };
-    else if (outcome === 'failed') update.failedCount = { increment: 1 };
-    else update.skippedCount = { increment: 1 };
-
-    const job = await this.prisma.syncJob.update({
-      where: { id: syncJobId },
-      data: update,
-    });
+    const job = await this.syncJobs.findOne({ where: { id: syncJobId } });
+    if (!job) return;
 
     if (job.processedRecords >= job.totalRecords && job.totalRecords > 0) {
       let finalStatus: JobStatus;
@@ -1395,9 +1415,9 @@ export class OrderSyncProcessor {
         finalStatus = JobStatus.FAILED;
       }
 
-      await this.prisma.syncJob.update({
-        where: { id: syncJobId },
-        data: { status: finalStatus, completedAt: new Date() },
+      await this.syncJobs.update(syncJobId, {
+        status: finalStatus,
+        completedAt: new Date(),
       });
 
       this.gateway.emitSyncJobUpdate({

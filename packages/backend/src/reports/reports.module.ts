@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from '../prisma/prisma.module';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
+// ReportsService uses the global TypeORM DataSource (getRepository / getMetadata),
+// so no PrismaModule and no forFeature registration is required.
 @Module({
-  imports: [PrismaModule],
   controllers: [ReportsController],
   providers: [ReportsService],
 })

@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { IsNull, Repository } from 'typeorm';
+import { SyncControl } from '../database/entities/sync-control.entity';
 import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 export interface SyncServiceConfig {
@@ -20,7 +22,10 @@ export interface SyncServiceConfig {
 export class SyncControlService implements OnModuleInit {
   private readonly logger = new Logger(SyncControlService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(SyncControl)
+    private readonly syncControlRepo: Repository<SyncControl>,
+  ) {}
 
   /**
    * Initialize sync control records for all known sync services
@@ -90,29 +95,30 @@ export class SyncControlService implements OnModuleInit {
 
     for (const service of services) {
       // For global services (region = null), we need to handle upsert manually
-      // because Prisma doesn't handle null well in composite unique constraints
-      const existing = await this.prisma.syncControl.findFirst({
+      // because null in a composite unique constraint is handled specially
+      // (SQL NULL != NULL), so we match with IS NULL explicitly.
+      const existing = await this.syncControlRepo.findOne({
         where: {
           serviceName: service.serviceName,
-          region: null,
+          region: IsNull(),
         },
       });
 
       if (existing) {
-        await this.prisma.syncControl.update({
-          where: { id: existing.id },
-          data: {
-            displayName: service.displayName,
-            description: service.description,
-          },
+        await this.syncControlRepo.update(existing.id, {
+          displayName: service.displayName,
+          description: service.description,
         });
       } else {
-        await this.prisma.syncControl.create({
-          data: {
-            ...service,
+        await this.syncControlRepo.save(
+          this.syncControlRepo.create({
+            serviceName: service.serviceName,
+            displayName: service.displayName,
+            description: service.description,
+            enabled: service.enabled ?? true,
             region: null,
-          },
-        });
+          }),
+        );
       }
     }
   }
@@ -121,13 +127,13 @@ export class SyncControlService implements OnModuleInit {
    * Check if a sync service is enabled
    */
   async isEnabled(serviceName: string, region?: string): Promise<boolean> {
-    // NOTE: findFirst (not findUnique) — the serviceName_region compound key is
-    // seeded with region=null for global services, and Prisma forbids null in a
-    // findUnique compound key (SQL NULL != NULL). findFirst emits `region IS NULL`.
-    const control = await this.prisma.syncControl.findFirst({
+    // NOTE: the serviceName_region compound key is seeded with region=null for
+    // global services; SQL NULL != NULL, so we must match with IS NULL when
+    // region is not provided.
+    const control = await this.syncControlRepo.findOne({
       where: {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
     });
 
@@ -139,17 +145,17 @@ export class SyncControlService implements OnModuleInit {
    * Mark a sync service as running
    */
   async markRunning(serviceName: string, region?: string): Promise<void> {
-    await this.prisma.syncControl.updateMany({
-      where: {
+    await this.syncControlRepo.update(
+      {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
-      data: {
+      {
         isRunning: true,
         lastRunAt: new Date(),
-        runCount: { increment: 1 },
+        runCount: () => '"runCount" + 1',
       },
-    });
+    );
   }
 
   /**
@@ -160,30 +166,30 @@ export class SyncControlService implements OnModuleInit {
     status: 'success' | 'error',
     region?: string,
   ): Promise<void> {
-    await this.prisma.syncControl.updateMany({
-      where: {
+    await this.syncControlRepo.update(
+      {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
-      data: {
+      {
         isRunning: false,
         lastStatus: status,
-        ...(status === 'error' ? { errorCount: { increment: 1 } } : {}),
+        ...(status === 'error' ? { errorCount: () => '"errorCount" + 1' } : {}),
       },
-    });
+    );
   }
 
   /**
    * Enable a sync service
    */
   async enable(serviceName: string, region?: string): Promise<void> {
-    await this.prisma.syncControl.updateMany({
-      where: {
+    await this.syncControlRepo.update(
+      {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
-      data: { enabled: true },
-    });
+      { enabled: true },
+    );
     const regionLabel = region ? ` (region=${region})` : '';
     this.logger.log(
       `Sync service "${serviceName}"${regionLabel} has been ENABLED`,
@@ -194,13 +200,13 @@ export class SyncControlService implements OnModuleInit {
    * Disable a sync service
    */
   async disable(serviceName: string, region?: string): Promise<void> {
-    await this.prisma.syncControl.updateMany({
-      where: {
+    await this.syncControlRepo.update(
+      {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
-      data: { enabled: false },
-    });
+      { enabled: false },
+    );
     const regionLabel = region ? ` (region=${region})` : '';
     this.logger.warn(
       `Sync service "${serviceName}"${regionLabel} has been DISABLED`,
@@ -211,9 +217,9 @@ export class SyncControlService implements OnModuleInit {
    * Get all sync control records, optionally filtered by region
    */
   async listAll(region?: string) {
-    return this.prisma.syncControl.findMany({
+    return this.syncControlRepo.find({
       where: region ? { region } : {},
-      orderBy: [{ region: 'asc' }, { displayName: 'asc' }],
+      order: { region: 'ASC', displayName: 'ASC' },
     });
   }
 
@@ -221,10 +227,10 @@ export class SyncControlService implements OnModuleInit {
    * Get single sync control record
    */
   async getOne(serviceName: string, region?: string) {
-    return this.prisma.syncControl.findFirst({
+    return this.syncControlRepo.findOne({
       where: {
         serviceName,
-        region: region ?? null,
+        region: region ?? IsNull(),
       },
     });
   }

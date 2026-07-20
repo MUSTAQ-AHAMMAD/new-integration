@@ -8,7 +8,9 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
 import { VendHqSalesBackupService } from './vendhq-backup.service';
 import { VendHqToOracleSyncService } from './vendhq-to-oracle-sync.service';
 
@@ -18,7 +20,8 @@ export class VendHqBackupController {
   constructor(
     private readonly backupService: VendHqSalesBackupService,
     private readonly oracleSyncService: VendHqToOracleSyncService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(VendHqCredential)
+    private readonly credentials: Repository<VendHqCredential>,
   ) {}
 
   /**
@@ -44,7 +47,7 @@ export class VendHqBackupController {
     summary: 'Trigger VendHQ sales backup for a specific credential',
   })
   async triggerOne(@Param('credentialId') credentialId: string) {
-    const cred = await this.prisma.vendHqCredential.findUnique({
+    const cred = await this.credentials.findOne({
       where: { id: credentialId },
     });
     if (!cred || !cred.active) {
@@ -66,7 +69,7 @@ export class VendHqBackupController {
     summary: 'Trigger VendHQ sales backup for all credentials in a region',
   })
   async triggerByRegion(@Param('region') region: string) {
-    const creds = await this.prisma.vendHqCredential.findMany({
+    const creds = await this.credentials.find({
       where: { region, active: true },
     });
     if (creds.length === 0) {
@@ -98,7 +101,7 @@ export class VendHqBackupController {
     summary: 'List all regions that have active VendHQ credentials',
   })
   async listRegions() {
-    const creds = await this.prisma.vendHqCredential.findMany({
+    const creds = await this.credentials.find({
       where: { active: true },
       select: {
         id: true,
@@ -107,7 +110,7 @@ export class VendHqBackupController {
         lastSyncAt: true,
         lastSyncVersion: true,
       },
-      orderBy: { region: 'asc' },
+      order: { region: 'ASC' },
     });
     return creds;
   }

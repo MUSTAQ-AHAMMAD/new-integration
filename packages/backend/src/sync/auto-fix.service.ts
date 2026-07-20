@@ -2,8 +2,12 @@
  * Auto-Fix Service - Automatically diagnoses and fixes common sync issues
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { SyncStatus, Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { FindOptionsWhere, In, Repository } from 'typeorm';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncStatus } from '../database/enums';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { QueuesService } from '../queues/queues.service';
 import { PAID_ORDER_STATES } from '../common/odoo-utils';
@@ -30,7 +34,12 @@ export class AutoFixService {
   private readonly logger = new Logger(AutoFixService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOdooOrderRepo: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupOdooOrderPayment)
+    private readonly backupOdooOrderPaymentRepo: Repository<BackupOdooOrderPayment>,
     private readonly diagnosticsService: OrderDiagnosticsService,
     private readonly queuesService: QueuesService,
   ) {}
@@ -53,7 +62,7 @@ export class AutoFixService {
     const results: AutoFixResult[] = [];
 
     // Find skipped orders
-    const where: any = {
+    const where: FindOptionsWhere<OrderSyncQueue> = {
       status: SyncStatus.SKIPPED,
     };
 
@@ -65,10 +74,10 @@ export class AutoFixService {
       where.branchCode = branchCode;
     }
 
-    const skippedOrders = await this.prisma.orderSyncQueue.findMany({
+    const skippedOrders = await this.orderSyncQueueRepo.find({
       where,
       take: limit,
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'desc' },
     });
 
     this.logger.log(`Found ${skippedOrders.length} skipped orders to analyze`);
@@ -109,7 +118,7 @@ export class AutoFixService {
     };
   }
 
-  private async autoFixOrder(order: any): Promise<AutoFixResult> {
+  private async autoFixOrder(order: OrderSyncQueue): Promise<AutoFixResult> {
     const result: AutoFixResult = {
       orderSyncQueueId: order.id,
       odooOrderId: order.odooOrderId,
@@ -142,15 +151,14 @@ export class AutoFixService {
           result.action = 'reingest';
           result.message = `Order state "${backup.state}" indicates payment, but isPaid=false. Re-ingesting from backup.`;
 
-          // Re-ingest by updating the order
-          await this.prisma.orderSyncQueue.update({
-            where: { id: order.id },
-            data: {
-              isPaid: true,
-              status: SyncStatus.PENDING,
-              validationErrors: Prisma.JsonNull,
-              updatedAt: new Date(),
-            },
+          // Re-ingest by updating the order. validationErrors is a JSON/CLOB
+          // column typed `unknown`; null clears it (cast satisfies the
+          // QueryDeepPartialEntity, which does not include null for `unknown`).
+          await this.orderSyncQueueRepo.update(order.id, {
+            isPaid: true,
+            status: SyncStatus.PENDING,
+            validationErrors: null as never,
+            updatedAt: new Date(),
           });
 
           // Re-queue for processing
@@ -175,14 +183,11 @@ export class AutoFixService {
           'No backup data found, but order will sync with minimal data. Re-queuing for processing.';
 
         // Update status to PENDING and re-queue
-        await this.prisma.orderSyncQueue.update({
-          where: { id: order.id },
-          data: {
-            isPaid: true, // Assume paid since it was fetched
-            status: SyncStatus.PENDING,
-            validationErrors: Prisma.JsonNull,
-            updatedAt: new Date(),
-          },
+        await this.orderSyncQueueRepo.update(order.id, {
+          isPaid: true, // Assume paid since it was fetched
+          status: SyncStatus.PENDING,
+          validationErrors: null as never,
+          updatedAt: new Date(),
         });
 
         await this.queuesService.enqueueOrderSync({
@@ -205,13 +210,10 @@ export class AutoFixService {
       result.message = 'Order is marked as paid - retrying sync.';
 
       // Update status to PENDING and re-queue
-      await this.prisma.orderSyncQueue.update({
-        where: { id: order.id },
-        data: {
-          status: SyncStatus.PENDING,
-          validationErrors: Prisma.JsonNull,
-          updatedAt: new Date(),
-        },
+      await this.orderSyncQueueRepo.update(order.id, {
+        status: SyncStatus.PENDING,
+        validationErrors: null as never,
+        updatedAt: new Date(),
       });
 
       await this.queuesService.enqueueOrderSync({
@@ -233,7 +235,7 @@ export class AutoFixService {
     suggestions: Array<{ state: string; count: number; sample: any }>;
   }> {
     // Find skipped orders
-    const skippedOrders = await this.prisma.orderSyncQueue.findMany({
+    const skippedOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.SKIPPED,
         isPaid: false,
@@ -251,23 +253,27 @@ export class AutoFixService {
     // Get backup data using order numbers
     const orderNumbers = skippedOrders.map((o) => o.odooOrderNumber);
 
-    const backups = await this.prisma.backupOdooOrder.findMany({
-      where: { orderName: { in: orderNumbers } },
-      select: {
-        id: true,
-        orderId: true,
-        orderName: true,
-        state: true,
-        amountTotal: true,
-      },
-    });
+    const backups = orderNumbers.length
+      ? await this.backupOdooOrderRepo.find({
+          where: { orderName: In(orderNumbers) },
+          select: {
+            id: true,
+            orderId: true,
+            orderName: true,
+            state: true,
+            amountTotal: true,
+          },
+        })
+      : [];
 
     // Get payment data from backup tables
     const backupOrderIds = backups.map((b) => b.orderId);
-    const payments = await this.prisma.backupOdooOrderPayment.findMany({
-      where: { orderId: { in: backupOrderIds } },
-      select: { orderId: true, amount: true },
-    });
+    const payments = backupOrderIds.length
+      ? await this.backupOdooOrderPaymentRepo.find({
+          where: { orderId: In(backupOrderIds) },
+          select: { orderId: true, amount: true },
+        })
+      : [];
 
     // Create a map of orderId to total payment amount
     const paymentMap = new Map<number, number>();

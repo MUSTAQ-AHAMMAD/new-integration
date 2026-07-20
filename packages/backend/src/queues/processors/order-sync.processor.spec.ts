@@ -9,21 +9,35 @@ jest.mock('../queues.module', () => ({
   QueuesModule: class QueuesModule {},
 }));
 
-import { AuditStatus, ErrorType, SyncStatus, Prisma } from '@prisma/client';
+import { Repository } from 'typeorm';
+import { Decimal } from 'decimal.js';
+import { AuditStatus, ErrorType, SyncStatus } from '../../database/enums';
 import { Job } from 'bull';
 import { AlertsService } from '../../alerts/alerts.service';
 import { OracleSoapClient } from '../../clients/oracle/oracle-soap.client';
 import { GatewayService } from '../../gateway/gateway.service';
 import { PaymentMappingService } from '../../payment-mapping/payment-mapping.service';
-import { PrismaService } from '../../prisma/prisma.service';
 import { StoreConfigService } from '../../store-config/store-config.service';
 import { FusionTransformationService } from '../../sync/fusion-transformation.service';
 import { IdempotencyService } from '../../sync/idempotency.service';
 import { ValidationService } from '../../sync/validation.service';
+import { OrderSyncQueue } from '../../database/entities/order-sync-queue.entity';
+import { FailedTransaction } from '../../database/entities/failed-transaction.entity';
+import { FusionInvoiceHeader } from '../../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../../database/entities/fusion-invoice-line.entity';
+import { FusionInvTxn } from '../../database/entities/fusion-inv-txn.entity';
+import { FusionStandardReceipt } from '../../database/entities/fusion-standard-receipt.entity';
+import { FusionMiscReceipt } from '../../database/entities/fusion-misc-receipt.entity';
+import { FusionApplyReceipt } from '../../database/entities/fusion-apply-receipt.entity';
+import { FusionJournalHeader } from '../../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../../database/entities/fusion-journal-line.entity';
+import { SyncJob } from '../../database/entities/sync-job.entity';
+import { RefundTracking } from '../../database/entities/refund-tracking.entity';
+import { BackupOdooOrder } from '../../database/entities/backup-odoo-order.entity';
 import { OrderSyncProcessor } from './order-sync.processor';
 import { QueuesService } from '../queues.service';
 
-/** Shared order record returned by prisma mock */
+/** Shared order record returned by the OrderSyncQueue repo mock */
 const BASE_ORDER = {
   id: 'q-001',
   odooOrderId: 'ORD-001',
@@ -37,9 +51,27 @@ const BASE_ORDER = {
   isRefund: false,
   negativeInventoryFlag: false,
   negativeInventoryItems: null,
-  totalAmount: { toNumber: () => 150 },
-  validationErrors: Prisma.JsonNull,
+  totalAmount: new Decimal(150),
+  validationErrors: null,
 };
+
+/**
+ * Builds a jest-mocked TypeORM repository. `create` returns its input (so
+ * assertions can inspect the built entity) and `save`/`update`/`increment`
+ * resolve to benign defaults.
+ */
+function makeRepoMock<T extends object>(): jest.Mocked<Repository<T>> {
+  return {
+    findOne: jest.fn().mockResolvedValue(null),
+    find: jest.fn().mockResolvedValue([]),
+    findAndCount: jest.fn().mockResolvedValue([[], 0]),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    increment: jest.fn().mockResolvedValue({ affected: 1 }),
+    count: jest.fn().mockResolvedValue(0),
+  } as unknown as jest.Mocked<Repository<T>>;
+}
 
 function makeJob(overrides: Record<string, unknown> = {}): Job {
   return {
@@ -55,8 +87,22 @@ function makeJob(overrides: Record<string, unknown> = {}): Job {
 describe('OrderSyncProcessor — payment mapping handling', () => {
   let processor: OrderSyncProcessor;
 
-  // Mock every dependency
-  let mockPrisma: jest.Mocked<Partial<PrismaService>>;
+  // Repository mocks
+  let orders: jest.Mocked<Repository<OrderSyncQueue>>;
+  let failedTransactions: jest.Mocked<Repository<FailedTransaction>>;
+  let invoiceHeaders: jest.Mocked<Repository<FusionInvoiceHeader>>;
+  let invoiceLines: jest.Mocked<Repository<FusionInvoiceLine>>;
+  let invTxns: jest.Mocked<Repository<FusionInvTxn>>;
+  let standardReceipts: jest.Mocked<Repository<FusionStandardReceipt>>;
+  let miscReceipts: jest.Mocked<Repository<FusionMiscReceipt>>;
+  let applyReceipts: jest.Mocked<Repository<FusionApplyReceipt>>;
+  let journalHeaders: jest.Mocked<Repository<FusionJournalHeader>>;
+  let journalLines: jest.Mocked<Repository<FusionJournalLine>>;
+  let syncJobs: jest.Mocked<Repository<SyncJob>>;
+  let refundTracking: jest.Mocked<Repository<RefundTracking>>;
+  let backupOdooOrders: jest.Mocked<Repository<BackupOdooOrder>>;
+
+  // Service mocks
   let mockGateway: jest.Mocked<Partial<GatewayService>>;
   let mockValidation: jest.Mocked<Partial<ValidationService>>;
   let mockIdempotency: jest.Mocked<Partial<IdempotencyService>>;
@@ -70,64 +116,39 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
   let mockEnrichment: { enrichOrder: jest.Mock };
 
   beforeEach(() => {
-    mockPrisma = {
-      orderSyncQueue: {
-        findUnique: jest.fn().mockResolvedValue(BASE_ORDER),
-        update: jest.fn().mockResolvedValue({ ...BASE_ORDER }),
-      } as unknown as PrismaService['orderSyncQueue'],
-      failedTransaction: {
-        create: jest.fn().mockResolvedValue({}),
-      } as unknown as PrismaService['failedTransaction'],
-      fusionInvoiceHeader: {
-        create: jest.fn().mockResolvedValue({ id: 'hdr-1' }),
-      } as unknown as PrismaService['fusionInvoiceHeader'],
-      fusionInvoiceLine: {
-        createMany: jest.fn().mockResolvedValue({ count: 1 }),
-        // Duplicate check A: default undefined = "no existing invoice line".
-        findFirst: jest.fn().mockResolvedValue(undefined),
-      } as unknown as PrismaService['fusionInvoiceLine'],
-      fusionStandardReceipt: {
-        create: jest.fn().mockResolvedValue({}),
-        findFirst: jest.fn().mockResolvedValue(undefined),
-      } as unknown as PrismaService['fusionStandardReceipt'],
-      fusionMiscReceipt: {
-        create: jest.fn().mockResolvedValue({}),
-      } as unknown as PrismaService['fusionMiscReceipt'],
-      fusionApplyReceipt: {
-        create: jest.fn().mockResolvedValue({}),
-        findFirst: jest.fn().mockResolvedValue(undefined),
-      } as unknown as PrismaService['fusionApplyReceipt'],
-      fusionJournalHeader: {
-        create: jest.fn().mockResolvedValue({ id: 'jh-1' }),
-        findFirst: jest.fn().mockResolvedValue(undefined),
-      } as unknown as PrismaService['fusionJournalHeader'],
-      fusionJournalLine: {
-        create: jest.fn().mockResolvedValue({}),
-      } as unknown as PrismaService['fusionJournalLine'],
-      syncJob: {
-        update: jest.fn().mockResolvedValue({
-          id: 'sj-1',
-          processedRecords: 1,
-          totalRecords: 1,
-          failedCount: 0,
-          skippedCount: 0,
-          successCount: 1,
-        }),
-      } as unknown as PrismaService['syncJob'],
-      backupVendHqSale: {
-        findFirst: jest
-          .fn()
-          .mockResolvedValue({ id: 'sale-001', region: 'AE' }),
-      } as unknown as PrismaService['backupVendHqSale'],
-      refundTracking: {
-        upsert: jest.fn().mockResolvedValue({ id: 'rt-1' }),
-      } as unknown as PrismaService['refundTracking'],
-      // Default: no Odoo backup row → processor uses the enrichment fallback,
-      // preserving the existing mockEnrichment-driven test behavior.
-      backupOdooOrder: {
-        findFirst: jest.fn().mockResolvedValue(null),
-      } as unknown as PrismaService['backupOdooOrder'],
-    };
+    orders = makeRepoMock<OrderSyncQueue>();
+    failedTransactions = makeRepoMock<FailedTransaction>();
+    invoiceHeaders = makeRepoMock<FusionInvoiceHeader>();
+    invoiceLines = makeRepoMock<FusionInvoiceLine>();
+    invTxns = makeRepoMock<FusionInvTxn>();
+    standardReceipts = makeRepoMock<FusionStandardReceipt>();
+    miscReceipts = makeRepoMock<FusionMiscReceipt>();
+    applyReceipts = makeRepoMock<FusionApplyReceipt>();
+    journalHeaders = makeRepoMock<FusionJournalHeader>();
+    journalLines = makeRepoMock<FusionJournalLine>();
+    syncJobs = makeRepoMock<SyncJob>();
+    refundTracking = makeRepoMock<RefundTracking>();
+    backupOdooOrders = makeRepoMock<BackupOdooOrder>();
+
+    // Order lookup returns the base order; audit headers get an id on save.
+    orders.findOne.mockResolvedValue(BASE_ORDER as unknown as OrderSyncQueue);
+    invoiceHeaders.save.mockImplementation((e) =>
+      Promise.resolve({ id: 'hdr-1', ...(e as object) } as never),
+    );
+    journalHeaders.save.mockImplementation((e) =>
+      Promise.resolve({ id: 'jh-1', ...(e as object) } as never),
+    );
+    // Default: no Odoo backup row → processor uses the enrichment fallback.
+    backupOdooOrders.findOne.mockResolvedValue(null);
+    // SyncJob re-read after increments: job is complete + successful.
+    syncJobs.findOne.mockResolvedValue({
+      id: 'sj-1',
+      processedRecords: 1,
+      totalRecords: 1,
+      failedCount: 0,
+      skippedCount: 0,
+      successCount: 1,
+    } as unknown as SyncJob);
 
     mockGateway = {
       emitOrderStatus: jest.fn(),
@@ -208,7 +229,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         applyReceipts: [],
         journalHeaders: [],
       }),
-    };
+    } as unknown as jest.Mocked<Partial<FusionTransformationService>>;
 
     mockEnrichment = {
       enrichOrder: jest.fn().mockResolvedValue({
@@ -241,7 +262,19 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     };
 
     processor = new OrderSyncProcessor(
-      mockPrisma as unknown as PrismaService,
+      orders,
+      failedTransactions,
+      invoiceHeaders,
+      invoiceLines,
+      invTxns,
+      standardReceipts,
+      miscReceipts,
+      applyReceipts,
+      journalHeaders,
+      journalLines,
+      syncJobs,
+      refundTracking,
+      backupOdooOrders,
       mockGateway as unknown as GatewayService,
       mockValidation as unknown as ValidationService,
       mockIdempotency as unknown as IdempotencyService,
@@ -255,53 +288,6 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       {} as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
       mockEnrichment as unknown as import('../../sync/order-enrichment.service').OrderEnrichmentService,
     );
-
-    jest.clearAllMocks();
-    // Re-apply default mocks after clearAllMocks
-    (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue(
-      BASE_ORDER,
-    );
-    (mockPrisma.orderSyncQueue!.update as jest.Mock).mockResolvedValue({
-      ...BASE_ORDER,
-      status: SyncStatus.SYNCED,
-    });
-    (mockPrisma.failedTransaction!.create as jest.Mock).mockResolvedValue({});
-    (mockPrisma.backupVendHqSale!.findFirst as jest.Mock).mockResolvedValue({
-      id: 'sale-001',
-      region: 'AE',
-    });
-    (mockPrisma.fusionInvoiceHeader!.create as jest.Mock).mockResolvedValue({
-      id: 'hdr-1',
-    });
-    (mockPrisma.syncJob!.update as jest.Mock).mockResolvedValue({
-      id: 'sj-1',
-      processedRecords: 1,
-      totalRecords: 1,
-      failedCount: 0,
-      skippedCount: 0,
-      successCount: 1,
-    });
-    (mockValidation.validateOrder as jest.Mock).mockResolvedValue({
-      isValid: true,
-      errors: [],
-      warnings: [],
-      holdForNegativeInventory: false,
-    });
-    (mockIdempotency.generateKey as jest.Mock).mockReturnValue('idem-key-001');
-    (mockIdempotency.isDuplicate as jest.Mock).mockResolvedValue(false);
-    (mockIdempotency.recordOperation as jest.Mock).mockResolvedValue({});
-    (mockStoreConfig.getValidatedConfig as jest.Mock).mockResolvedValue({
-      branchCode: 'DXB',
-    });
-    (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue({
-      id: 'pm-1',
-      isActive: true,
-    });
-    (mockAlerts.createAlert as jest.Mock).mockResolvedValue({});
-    (mockQueues.enqueueNotification as jest.Mock).mockResolvedValue({});
-    (mockGateway.emitOrderStatus as jest.Mock).mockReturnValue(undefined);
-    (mockGateway.emitSyncJobUpdate as jest.Mock).mockReturnValue(undefined);
-    mockOracleClient.itemExists.mockResolvedValue(true);
   });
 
   describe('payment method null handling', () => {
@@ -313,12 +299,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       await processor.handleOrderSync(makeJob());
 
       // Order should be marked SYNCED, not FAILED
-      const updateCall = (
-        mockPrisma.orderSyncQueue!.update as jest.Mock
-      ).mock.calls.find(
+      const updateCall = (orders.update as jest.Mock).mock.calls.find(
         (c: unknown[]) =>
-          (c[0] as { data: { status: SyncStatus } }).data?.status ===
-          SyncStatus.SYNCED,
+          (c[1] as { status?: SyncStatus }).status === SyncStatus.SYNCED,
       );
       expect(updateCall).toBeDefined();
     });
@@ -330,10 +313,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
       await processor.handleOrderSync(makeJob());
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       const failedUpdate = updateCalls.find(
-        (c) => c[0].data?.status === SyncStatus.FAILED,
+        (c) => c[1]?.status === SyncStatus.FAILED,
       );
       expect(failedUpdate).toBeUndefined();
     });
@@ -363,11 +347,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
       await processor.handleOrderSync(makeJob());
 
-      expect(mockPrisma.failedTransaction!.create).toHaveBeenCalledWith(
+      expect(failedTransactions.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            errorType: ErrorType.CONFIGURATION_ERROR,
-          }),
+          errorType: ErrorType.CONFIGURATION_ERROR,
         }),
       );
     });
@@ -407,11 +389,10 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
       await processor.handleOrderSync(makeJob());
 
-      expect(mockPrisma.orderSyncQueue!.update).toHaveBeenCalledWith(
+      expect(orders.update).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          data: expect.objectContaining({
-            status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
-          }),
+          status: SyncStatus.NEGATIVE_INVENTORY_HOLD,
         }),
       );
     });
@@ -439,12 +420,10 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
       await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
 
-      expect(mockPrisma.syncJob!.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            skippedCount: { increment: 1 },
-          }),
-        }),
+      expect(syncJobs.increment).toHaveBeenCalledWith(
+        { id: 'sj-1' },
+        'skippedCount',
+        1,
       );
     });
   });
@@ -456,10 +435,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       await processor.handleOrderSync(makeJob());
 
       expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
-      expect(mockPrisma.orderSyncQueue!.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: SyncStatus.SYNCED }),
-        }),
+      expect(orders.update).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: SyncStatus.SYNCED }),
       );
     });
 
@@ -478,9 +456,7 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     // The enrichment service owns backup resolution and only throws for
     // orders it genuinely cannot process (e.g. the OrderSyncQueue row was
     // deleted). The processor must surface that failure safely: mark the
-    // order FAILED, avoid Oracle calls, and never record a SUCCESS. (Orders
-    // that merely lack backup data are handled by the enrichment service's
-    // minimal-fallback path and do not reach here.)
+    // order FAILED, avoid Oracle calls, and never record a SUCCESS.
     beforeEach(() => {
       mockEnrichment.enrichOrder.mockRejectedValue(
         new Error('Order not found: q-001'),
@@ -492,10 +468,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         'Order not found',
       );
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       const failedUpdate = updateCalls.find(
-        (c) => c[0].data?.status === SyncStatus.FAILED,
+        (c) => c[1]?.status === SyncStatus.FAILED,
       );
       expect(failedUpdate).toBeDefined();
     });
@@ -503,10 +480,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     it('does NOT mark the order as SYNCED when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       const syncedUpdate = updateCalls.find(
-        (c) => c[0].data?.status === SyncStatus.SYNCED,
+        (c) => c[1]?.status === SyncStatus.SYNCED,
       );
       expect(syncedUpdate).toBeUndefined();
     });
@@ -520,11 +498,9 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     it('creates a FailedTransaction record when enrichment fails', async () => {
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
-      expect(mockPrisma.failedTransaction!.create).toHaveBeenCalledWith(
+      expect(failedTransactions.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            errorMessage: expect.stringContaining('Order not found'),
-          }),
+          errorMessage: expect.stringContaining('Order not found'),
         }),
       );
     });
@@ -557,20 +533,21 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     it('returns the order to PENDING instead of FAILED', async () => {
       await processor.handleOrderSync(makeJob());
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.PENDING),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.PENDING),
       ).toBeDefined();
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.FAILED),
       ).toBeUndefined();
     });
 
     it('does NOT create a FailedTransaction for a transient circuit error', async () => {
       await processor.handleOrderSync(makeJob());
 
-      expect(mockPrisma.failedTransaction!.create).not.toHaveBeenCalled();
+      expect(failedTransactions.save).not.toHaveBeenCalled();
     });
 
     it('does NOT send an error-alert notification for a transient circuit error', async () => {
@@ -592,10 +569,11 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
 
       await expect(processor.handleOrderSync(makeJob())).rejects.toThrow();
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.FAILED),
       ).toBeDefined();
     });
   });
@@ -609,13 +587,13 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       isRefund: true,
       refundReferenceId: 'ORD-ORIGINAL-1',
       oracleInvoiceNumber: 'INV-777',
-      totalAmount: new Prisma.Decimal(-150),
+      totalAmount: new Decimal(-150),
       orderDate: new Date('2024-06-16T10:00:00Z'),
     };
 
     beforeEach(() => {
-      (mockPrisma.orderSyncQueue!.findUnique as jest.Mock).mockResolvedValue(
-        REFUND_ORDER,
+      orders.findOne.mockResolvedValue(
+        REFUND_ORDER as unknown as OrderSyncQueue,
       );
     });
 
@@ -629,28 +607,31 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     it('records the refund in RefundTracking for manual handling', async () => {
       await processor.handleOrderSync(makeJob({ odooOrderId: 'ORD-REFUND-1' }));
 
-      const upsert = mockPrisma.refundTracking!.upsert as jest.Mock;
-      expect(upsert).toHaveBeenCalledTimes(1);
-      const arg = upsert.mock.calls[0][0] as {
-        where: { refundOrderId: string };
-        create: { refundAmount: Prisma.Decimal; originalOrderId: string };
+      // No existing tracking row → a new one is created + saved.
+      expect(refundTracking.save).toHaveBeenCalledTimes(1);
+      const created = (refundTracking.create as jest.Mock).mock
+        .calls[0][0] as {
+        refundOrderId: string;
+        refundAmount: Decimal;
+        originalOrderId: string;
       };
-      expect(arg.where.refundOrderId).toBe('ORD-REFUND-1');
+      expect(created.refundOrderId).toBe('ORD-REFUND-1');
       // stored as positive magnitude
-      expect(arg.create.refundAmount.toString()).toBe('150');
-      expect(arg.create.originalOrderId).toBe('ORD-ORIGINAL-1');
+      expect(created.refundAmount.toString()).toBe('150');
+      expect(created.originalOrderId).toBe('ORD-ORIGINAL-1');
     });
 
     it('marks the refund order SKIPPED, not FAILED', async () => {
       await processor.handleOrderSync(makeJob({ odooOrderId: 'ORD-REFUND-1' }));
 
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<[{ data: { status?: SyncStatus } }]>;
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus }]
+      >;
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.SKIPPED),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.SKIPPED),
       ).toBeDefined();
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.FAILED),
       ).toBeUndefined();
     });
   });
@@ -666,20 +647,19 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
 
       // Order held as SKIPPED with the missing item recorded
-      const updateCalls = (mockPrisma.orderSyncQueue!.update as jest.Mock).mock
-        .calls as Array<
-        [{ data: { status?: SyncStatus; validationErrors?: unknown } }]
+      const updateCalls = (orders.update as jest.Mock).mock.calls as Array<
+        [unknown, { status?: SyncStatus; validationErrors?: unknown }]
       >;
       const held = updateCalls.find(
-        (c) => c[0].data?.status === SyncStatus.SKIPPED,
+        (c) => c[1]?.status === SyncStatus.SKIPPED,
       );
       expect(held).toBeDefined();
       expect(
-        (held![0].data.validationErrors as { missingOracleItems?: string[] })
+        (held![1].validationErrors as { missingOracleItems?: string[] })
           .missingOracleItems,
       ).toContain('ITEM-001');
       expect(
-        updateCalls.find((c) => c[0].data?.status === SyncStatus.FAILED),
+        updateCalls.find((c) => c[1]?.status === SyncStatus.FAILED),
       ).toBeUndefined();
     });
 

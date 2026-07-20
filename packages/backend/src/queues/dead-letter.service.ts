@@ -1,8 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
+import { InjectRepository } from '@nestjs/typeorm';
+import {
+  Between,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { Queue } from 'bull';
-import { ErrorType, SyncStatus, Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { AlertSeverity, AlertType, ErrorType, SyncStatus } from '../database/enums';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
 import { AlertsService } from '../alerts/alerts.service';
 import { GatewayService } from '../gateway/gateway.service';
 import { QUEUE_NAMES } from './queues.constants';
@@ -26,7 +34,10 @@ export class DeadLetterQueueService {
   private readonly BACKOFF_BASE_MS = 5000; // 5 seconds
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orders: Repository<OrderSyncQueue>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
     private readonly alertsService: AlertsService,
     private readonly gateway: GatewayService,
     @InjectQueue(QUEUE_NAMES.ORDER_SYNC) private readonly orderSyncQueue: Queue,
@@ -53,11 +64,9 @@ export class DeadLetterQueueService {
 
     try {
       // Update order status to FAILED with detailed error info
-      await this.prisma.orderSyncQueue.update({
-        where: {
-          odooOrderId_branchCode: { odooOrderId, branchCode },
-        },
-        data: {
+      await this.orders.update(
+        { odooOrderId, branchCode },
+        {
           status: SyncStatus.FAILED,
           validationErrors: {
             errorType: error.type,
@@ -67,27 +76,27 @@ export class DeadLetterQueueService {
             deadLetterAt: new Date().toISOString(),
           },
         },
-      });
+      );
 
       // Create failed transaction record
-      await this.prisma.failedTransaction.create({
-        data: {
+      await this.failedTransactions.save(
+        this.failedTransactions.create({
           orderSyncQueueId: originalPayload.id,
           originalPayload,
           errorType: error.type,
           errorMessage: error.message,
-          errorStack: error.stack,
-          errorCode: error.code,
+          errorStack: error.stack ?? null,
+          errorCode: error.code ?? null,
           retryCount: attempts,
           maxRetries: this.MAX_RETRY_ATTEMPTS,
           isResolved: false,
-        },
-      });
+        }),
+      );
 
       // Create alert for critical failure
       await this.alertsService.createAlert({
-        alertType: 'SYNC_FAILURE',
-        severity: 'CRITICAL',
+        alertType: AlertType.SYNC_FAILURE,
+        severity: AlertSeverity.CRITICAL,
         title: `Order ${odooOrderId} moved to dead-letter queue`,
         message: `Order failed after ${attempts} retry attempts. Error: ${error.message}. Manual intervention required.`,
         relatedEntityId: odooOrderId,
@@ -148,39 +157,42 @@ export class DeadLetterQueueService {
     const pageSize = options.pageSize || 50;
     const skip = (page - 1) * pageSize;
 
-    const where: any = {
+    const where: Record<string, unknown> = {
       status: SyncStatus.FAILED,
-      syncAttempts: { gte: this.MAX_RETRY_ATTEMPTS },
+      syncAttempts: MoreThanOrEqual(this.MAX_RETRY_ATTEMPTS),
     };
 
     if (options.branchCode) {
       where.branchCode = options.branchCode;
     }
 
-    if (options.startDate || options.endDate) {
-      where.createdAt = {};
-      if (options.startDate) where.createdAt.gte = options.startDate;
-      if (options.endDate) where.createdAt.lte = options.endDate;
+    if (options.startDate && options.endDate) {
+      where.createdAt = Between(options.startDate, options.endDate);
+    } else if (options.startDate) {
+      where.createdAt = MoreThanOrEqual(options.startDate);
+    } else if (options.endDate) {
+      where.createdAt = LessThanOrEqual(options.endDate);
     }
 
-    const [orders, total] = await Promise.all([
-      this.prisma.orderSyncQueue.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          failedTransactions: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-          },
-        },
-      }),
-      this.prisma.orderSyncQueue.count({ where }),
-    ]);
+    const [orders, total] = await this.orders.findAndCount({
+      where,
+      skip,
+      take: pageSize,
+      order: { createdAt: 'DESC' },
+      relations: { failedTransactions: true },
+    });
+
+    // Match Prisma's `failedTransactions: { orderBy desc, take 1 }` — keep only
+    // the most recent failed transaction per order.
+    const data = orders.map((order) => ({
+      ...order,
+      failedTransactions: [...(order.failedTransactions ?? [])]
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, 1),
+    }));
 
     return {
-      data: orders,
+      data,
       pagination: {
         total,
         page,
@@ -199,10 +211,8 @@ export class DeadLetterQueueService {
   ): Promise<void> {
     this.logger.log(`Manual retry requested for dead-letter order: ${orderId}`);
 
-    const order = await this.prisma.orderSyncQueue.findUnique({
-      where: {
-        odooOrderId_branchCode: { odooOrderId: orderId, branchCode },
-      },
+    const order = await this.orders.findOne({
+      where: { odooOrderId: orderId, branchCode },
     });
 
     if (!order) {
@@ -214,13 +224,10 @@ export class DeadLetterQueueService {
     }
 
     // Reset order status and retry count
-    await this.prisma.orderSyncQueue.update({
-      where: { id: order.id },
-      data: {
-        status: SyncStatus.PENDING,
-        syncAttempts: 0,
-        validationErrors: Prisma.DbNull,
-      },
+    await this.orders.update(order.id, {
+      status: SyncStatus.PENDING,
+      syncAttempts: 0,
+      validationErrors: null as never,
     });
 
     // Enqueue for retry
@@ -245,30 +252,38 @@ export class DeadLetterQueueService {
   }): Promise<{ queued: number; failed: number }> {
     this.logger.log('Bulk retry of dead-letter orders requested', options);
 
-    const where: any = {
-      status: SyncStatus.FAILED,
-      syncAttempts: { gte: this.MAX_RETRY_ATTEMPTS },
-    };
+    const qb = this.orders
+      .createQueryBuilder('o')
+      .where('o.status = :status', { status: SyncStatus.FAILED })
+      .andWhere('o.syncAttempts >= :maxAttempts', {
+        maxAttempts: this.MAX_RETRY_ATTEMPTS,
+      });
 
+    // Only orders that have a failed transaction of the requested error type.
     if (options.errorType) {
-      where.failedTransactions = {
-        some: { errorType: options.errorType },
-      };
+      qb.andWhere(
+        `EXISTS (SELECT 1 FROM "FailedTransaction" ft ` +
+          `WHERE ft."orderSyncQueueId" = o.id AND ft."errorType" = :errorType)`,
+        { errorType: options.errorType },
+      );
     }
 
     if (options.branchCode) {
-      where.branchCode = options.branchCode;
+      qb.andWhere('o.branchCode = :branchCode', {
+        branchCode: options.branchCode,
+      });
     }
 
     if (options.orderIds && options.orderIds.length > 0) {
-      where.odooOrderId = { in: options.orderIds };
+      qb.andWhere('o.odooOrderId IN (:...orderIds)', {
+        orderIds: options.orderIds,
+      });
     }
 
-    const orders = await this.prisma.orderSyncQueue.findMany({
-      where,
-      take: options.limit || 100,
-      orderBy: { createdAt: 'asc' },
-    });
+    const orders = await qb
+      .orderBy('o.createdAt', 'ASC')
+      .take(options.limit || 100)
+      .getMany();
 
     let queued = 0;
     let failed = 0;
@@ -313,27 +328,28 @@ export class DeadLetterQueueService {
     oldestEntry: Date | null;
     newestEntry: Date | null;
   }> {
-    const deadLetters = await this.prisma.orderSyncQueue.findMany({
+    const deadLetters = await this.orders.find({
       where: {
         status: SyncStatus.FAILED,
-        syncAttempts: { gte: this.MAX_RETRY_ATTEMPTS },
+        syncAttempts: MoreThanOrEqual(this.MAX_RETRY_ATTEMPTS),
       },
-      include: {
-        failedTransactions: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
+      relations: { failedTransactions: true },
     });
 
-    const byErrorType: Record<ErrorType, number> = {} as any;
+    const byErrorType: Record<ErrorType, number> = {} as Record<
+      ErrorType,
+      number
+    >;
     const branchCounts: Record<string, number> = {};
     let oldestEntry: Date | null = null;
     let newestEntry: Date | null = null;
 
     for (const order of deadLetters) {
-      // Count by error type
-      const errorType = order.failedTransactions[0]?.errorType;
+      // Count by error type — use the most recent failed transaction.
+      const latest = [...(order.failedTransactions ?? [])].sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      )[0];
+      const errorType = latest?.errorType;
       if (errorType) {
         byErrorType[errorType] = (byErrorType[errorType] || 0) + 1;
       }

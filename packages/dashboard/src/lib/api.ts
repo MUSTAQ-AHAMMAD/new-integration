@@ -144,12 +144,14 @@ export const api = {
   cancelSyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}/cancel`, { method: 'POST' }),
   retrySyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}/retry`, { method: 'POST' }),
   getQueueStats: () => apiRequest<QueueStats>('/sync/queue/stats'),
-  listOrderQueue: (params?: { status?: string; branchCode?: string; search?: string; limit?: number }) => {
+  listOrderQueue: (params?: { status?: string; branchCode?: string; search?: string; limit?: number; isCancelled?: boolean; isRefund?: boolean }) => {
     const qs = new URLSearchParams();
     if (params?.status && params.status !== 'ALL') qs.set('status', params.status);
     if (params?.branchCode && params.branchCode !== 'ALL') qs.set('branchCode', params.branchCode);
     if (params?.search) qs.set('search', params.search);
     if (params?.limit) qs.set('limit', String(params.limit));
+    if (typeof params?.isCancelled === 'boolean') qs.set('isCancelled', String(params.isCancelled));
+    if (typeof params?.isRefund === 'boolean') qs.set('isRefund', String(params.isRefund));
     const q = qs.toString();
     return apiRequest<OrderQueueEntry[]>(`/sync/order-queue${q ? `?${q}` : ''}`);
   },

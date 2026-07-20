@@ -16,6 +16,7 @@ import {
   ApiPropertyOptional,
   ApiTags,
 } from '@nestjs/swagger';
+import { CreditMemoService } from './credit-memo.service';
 import { RefundsService } from './refunds.service';
 
 class ListRefundsQueryDto {
@@ -94,7 +95,10 @@ class CreateManualCreditMemoDto {
 @ApiTags('refunds')
 @Controller('refunds')
 export class RefundsController {
-  constructor(private readonly refundsService: RefundsService) {}
+  constructor(
+    private readonly refundsService: RefundsService,
+    private readonly creditMemoService: CreditMemoService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List refund tracking records' })
@@ -124,5 +128,21 @@ export class RefundsController {
   @ApiOperation({ summary: 'Create a manual credit memo entry' })
   createManualCreditMemo(@Body() body: CreateManualCreditMemoDto) {
     return this.refundsService.createManualCreditMemo(body);
+  }
+
+  @Post('process-pending')
+  @ApiOperation({
+    summary: 'Push all PENDING refunds to Oracle as credit memos now',
+  })
+  processPending() {
+    return this.creditMemoService.processPending();
+  }
+
+  @Post(':id/push')
+  @ApiOperation({
+    summary: 'Build and push the credit memo for a single refund to Oracle',
+  })
+  pushCreditMemo(@Param('id') id: string) {
+    return this.creditMemoService.pushRefund(id);
   }
 }

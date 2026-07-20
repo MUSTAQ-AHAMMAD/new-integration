@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
+import { Repository } from 'typeorm';
+import { NotificationRecipient } from '../database/entities/notification-recipient.entity';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { SettingsService } from './settings.service';
 
@@ -19,11 +20,9 @@ function makeRecipient(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma() {
+function makeRecipientsRepo() {
   return {
-    notificationRecipient: {
-      findMany: jest.fn().mockResolvedValue([makeRecipient()]),
-    },
+    find: jest.fn().mockResolvedValue([makeRecipient()]),
   };
 }
 
@@ -54,18 +53,18 @@ function makeNotifications() {
 
 describe('SettingsService', () => {
   let service: SettingsService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let recipients: ReturnType<typeof makeRecipientsRepo>;
   let redis: ReturnType<typeof makeRedis>;
   let config: ReturnType<typeof makeConfig>;
   let notifications: ReturnType<typeof makeNotifications>;
 
   beforeEach(() => {
-    prisma = makePrisma();
+    recipients = makeRecipientsRepo();
     redis = makeRedis();
     config = makeConfig();
     notifications = makeNotifications();
     service = new SettingsService(
-      prisma as unknown as PrismaService,
+      recipients as unknown as Repository<NotificationRecipient>,
       redis as unknown as RedisService,
       config as unknown as ConfigService,
       notifications as unknown as NotificationsService,
@@ -138,7 +137,7 @@ describe('SettingsService', () => {
 
     it('uses env var overrides for defaults', async () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({
           FAILURE_RATE_THRESHOLD: 0.2,
@@ -194,7 +193,7 @@ describe('SettingsService', () => {
 
     it('uses env var overrides when provided', () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({
           ORDER_SYNC_CRON: '*/1 * * * *',
@@ -236,7 +235,7 @@ describe('SettingsService', () => {
 
     it('uses env var for maxRetries when configured', async () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({ MAX_RETRY_ATTEMPTS: 5 }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
@@ -288,7 +287,7 @@ describe('SettingsService', () => {
   describe('listApiKeys', () => {
     it('returns only keys that are set in config', () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({
           ODOO_PASSWORD: 'supersecret123',
@@ -303,7 +302,7 @@ describe('SettingsService', () => {
 
     it('masks the value and does not expose the raw secret', () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({
           ODOO_PASSWORD: 'supersecret123',
@@ -318,7 +317,7 @@ describe('SettingsService', () => {
 
     it('returns empty array when no configured secrets are found', () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({}) as unknown as ConfigService,
         notifications as unknown as NotificationsService,
@@ -328,7 +327,7 @@ describe('SettingsService', () => {
 
     it('masks short values (≤6 chars) entirely with asterisks', () => {
       const svc = new SettingsService(
-        prisma as unknown as PrismaService,
+        recipients as unknown as Repository<NotificationRecipient>,
         redis as unknown as RedisService,
         makeConfig({ ODOO_PASSWORD: 'abc' }) as unknown as ConfigService,
         notifications as unknown as NotificationsService,

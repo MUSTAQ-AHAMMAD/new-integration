@@ -1,6 +1,6 @@
 /**
  * OdooBackupService — scheduled backup of orders from the main Odoo instance
- * (configured via ODOO_BASE_URL / ODOO_API_KEY env vars) into local PostgreSQL
+ * (configured via ODOO_BASE_URL / ODOO_API_KEY env vars) into the local Oracle
  * backup tables.
  *
  * Runs every 15 minutes. On each run it:
@@ -24,7 +24,15 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import {
+  Between,
+  DataSource,
+  FindOptionsWhere,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import * as https from 'https';
 import {
@@ -39,7 +47,12 @@ import {
   toApiDatetime,
   RawOdooOrderFields,
 } from '../common/odoo-utils';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
+import { OdooBackupState } from '../database/entities/odoo-backup-state.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { OrderSyncService } from '../sync/order-sync.service';
 import { SyncControlService } from '../sync/sync-control.service';
 
@@ -167,7 +180,20 @@ export class OdooBackupService {
   private readonly logger = new Logger(OdooBackupService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(BackupOdooOrder)
+    private readonly orders: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupOdooOrderLine)
+    private readonly orderLines: Repository<BackupOdooOrderLine>,
+    @InjectRepository(BackupOdooOrderPayment)
+    private readonly orderPayments: Repository<BackupOdooOrderPayment>,
+    @InjectRepository(OdooBackupState)
+    private readonly backupState: Repository<OdooBackupState>,
+    @InjectRepository(OdooCredential)
+    private readonly credentials: Repository<OdooCredential>,
+    @InjectRepository(StoreConfiguration)
+    private readonly storeConfigs: Repository<StoreConfiguration>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly odooClient: OdooClient,
     @Inject(forwardRef(() => OrderSyncService))
     private readonly orderSyncService: OrderSyncService,
@@ -190,7 +216,7 @@ export class OdooBackupService {
 
     await this.syncControl.markRunning('odoo-backup');
     try {
-      const state = await this.prisma.odooBackupState.findUnique({
+      const state = await this.backupState.findOne({
         where: { source: DEFAULT_SOURCE },
       });
 
@@ -202,23 +228,10 @@ export class OdooBackupService {
       const result = await this.backupOrders({ startDate });
 
       // Pre-load StoreConfigurations for branchCode resolution
-      const storeConfigs = await this.prisma.storeConfiguration.findMany({
-        where: { isActive: true },
-        select: { branchCode: true, odooBranchId: true, region: true },
-      });
-      const branchIdMap = new Map(
-        storeConfigs.map((sc) => [
-          sc.odooBranchId,
-          { branchCode: sc.branchCode, region: sc.region ?? null },
-        ]),
-      );
+      const branchIdMap = await this.loadBranchIdMap();
 
       // Advance the watermark after a successful cron run
-      await this.prisma.odooBackupState.upsert({
-        where: { source: DEFAULT_SOURCE },
-        create: { source: DEFAULT_SOURCE, lastSyncAt: runAt },
-        update: { lastSyncAt: runAt },
-      });
+      await this.upsertBackupState(runAt);
 
       // Ingest backed-up orders into the OrderSyncQueue so the downstream
       // pipeline (BullMQ → Oracle) has real data to process.
@@ -249,7 +262,7 @@ export class OdooBackupService {
             storeEntry?.branchCode ?? payload.branchCode;
           const resolvedRegion = storeEntry?.region ?? null;
 
-          const backupOrder = await this.prisma.backupOdooOrder.findUnique({
+          const backupOrder = await this.orders.findOne({
             where: { orderId: order.id },
             select: { id: true },
           });
@@ -339,7 +352,7 @@ export class OdooBackupService {
       return;
     }
 
-    const credentials = await this.prisma.odooCredential.findMany({
+    const credentials = await this.credentials.find({
       where: { active: true },
     });
 
@@ -350,17 +363,7 @@ export class OdooBackupService {
     // Pre-load all active StoreConfiguration records so we can resolve the
     // canonical branchCode for each Odoo order's numeric branch_id without
     // issuing a separate DB query per order.
-    const storeConfigs = await this.prisma.storeConfiguration.findMany({
-      where: { isActive: true },
-      select: { branchCode: true, odooBranchId: true, region: true },
-    });
-    // Map odooBranchId → { branchCode, region } for fast lookup
-    const branchIdMap = new Map(
-      storeConfigs.map((sc) => [
-        sc.odooBranchId,
-        { branchCode: sc.branchCode, region: sc.region ?? null },
-      ]),
-    );
+    const branchIdMap = await this.loadBranchIdMap();
 
     for (const cred of credentials) {
       const runAt = new Date();
@@ -407,7 +410,7 @@ export class OdooBackupService {
 
             // Look up the BackupOdooOrder record we just upserted so we can link
             // the queue entry back to the raw backup for transformation.
-            const backupOrder = await this.prisma.backupOdooOrder.findUnique({
+            const backupOrder = await this.orders.findOne({
               where: { orderId: order.id },
               select: { id: true },
             });
@@ -431,10 +434,7 @@ export class OdooBackupService {
         // Advance the per-credential watermark after the ingestion loop so that
         // any backup failure (backupOrdersForCredential throwing) prevents the
         // watermark from advancing and the orders are re-fetched on the next run.
-        await this.prisma.odooCredential.update({
-          where: { id: cred.id },
-          data: { lastSyncAt: runAt },
-        });
+        await this.credentials.update({ id: cred.id }, { lastSyncAt: runAt });
 
         this.logger.log(
           `Odoo credential backup+ingest done for region=${cred.region}: ` +
@@ -718,10 +718,10 @@ export class OdooBackupService {
 
       // Persist the discovered path so future cron runs skip the discovery step.
       try {
-        await this.prisma.odooCredential.update({
-          where: { id: cred.id },
-          data: { apiPath: fallbackPath },
-        });
+        await this.credentials.update(
+          { id: cred.id },
+          { apiPath: fallbackPath },
+        );
         this.logger.log(
           `OdooCredential region=${cred.region}: apiPath auto-set to "${fallbackPath}".`,
         );
@@ -832,7 +832,7 @@ export class OdooBackupService {
       // array.  Orders are collected after the upsert attempt (not before) so
       // that allOrders reflects what has actually been persisted, including
       // orders where upsert failed (tracked in skipped) — the ingest step
-      // looks up the backup row separately via backupOdooOrder.findUnique.
+      // looks up the backup row separately via this.orders.findOne.
       for (const order of currentPageOrders) {
         try {
           await this.upsertOrder(order, cred.region);
@@ -1052,6 +1052,44 @@ export class OdooBackupService {
   // ---------------------------------------------------------------------------
 
   /**
+   * Loads active StoreConfiguration rows into a Map keyed by odooBranchId so an
+   * order's numeric branch_id can be resolved to a canonical branchCode/region
+   * without a per-order query.
+   */
+  private async loadBranchIdMap(): Promise<
+    Map<bigint, { branchCode: string; region: string | null }>
+  > {
+    const storeConfigs = await this.storeConfigs.find({
+      where: { isActive: true },
+      select: { branchCode: true, odooBranchId: true, region: true },
+    });
+    return new Map(
+      storeConfigs.map((sc) => [
+        sc.odooBranchId,
+        { branchCode: sc.branchCode, region: sc.region ?? null },
+      ]),
+    );
+  }
+
+  /**
+   * Upserts the singleton OdooBackupState watermark row for DEFAULT_SOURCE.
+   * find-then-save because Oracle has no ON CONFLICT-style upsert here.
+   */
+  private async upsertBackupState(lastSyncAt: Date): Promise<void> {
+    const existing = await this.backupState.findOne({
+      where: { source: DEFAULT_SOURCE },
+    });
+    if (existing) {
+      existing.lastSyncAt = lastSyncAt;
+      await this.backupState.save(existing);
+      return;
+    }
+    await this.backupState.save(
+      this.backupState.create({ source: DEFAULT_SOURCE, lastSyncAt }),
+    );
+  }
+
+  /**
    * Resolves the raw payment array from an Odoo order, preferring
    * `statement_ids` (Odoo v15) when non-empty, falling back to
    * `payment_ids` (Odoo v18), and then to `payments` (some API variants).
@@ -1072,8 +1110,8 @@ export class OdooBackupService {
 
   /**
    * Upserts one Odoo order and its related line items and payments.
-   * Uses the @@unique([orderId]) constraint on BackupOdooOrder to prevent
-   * duplicate header rows.
+   * Uses the unique index on BackupOdooOrder.orderId to prevent duplicate
+   * header rows (find-then-save).
    *
    * @param order           Raw order from the Odoo API
    * @param region          Region identifier from the credential (optional)
@@ -1144,13 +1182,20 @@ export class OdooBackupService {
       rawJson: order as object,
     };
 
-    const upserted = await this.prisma.backupOdooOrder.upsert({
+    const existing = await this.orders.findOne({
       where: { orderId: order.id },
-      create: { orderId: order.id, ...orderData },
-      update: orderData,
       select: { id: true },
     });
-    const parentId = upserted.id;
+    let parentId: string;
+    if (existing) {
+      await this.orders.update({ id: existing.id }, orderData);
+      parentId = existing.id;
+    } else {
+      const created = await this.orders.save(
+        this.orders.create({ orderId: order.id, ...orderData }),
+      );
+      parentId = created.id;
+    }
 
     // ── Order lines ──────────────────────────────────────────────────────────
     // Odoo POS uses `lines`, sale orders use `order_line`, some versions use
@@ -1233,12 +1278,10 @@ export class OdooBackupService {
         };
       });
 
-      await this.prisma.$transaction([
-        this.prisma.backupOdooOrderLine.deleteMany({
-          where: { orderId: order.id },
-        }),
-        this.prisma.backupOdooOrderLine.createMany({ data: lineDataItems }),
-      ]);
+      await this.dataSource.transaction(async (mgr) => {
+        await mgr.delete(BackupOdooOrderLine, { orderId: order.id });
+        await mgr.insert(BackupOdooOrderLine, lineDataItems);
+      });
     }
 
     // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
@@ -1290,14 +1333,10 @@ export class OdooBackupService {
         };
       });
 
-      await this.prisma.$transaction([
-        this.prisma.backupOdooOrderPayment.deleteMany({
-          where: { orderId: order.id },
-        }),
-        this.prisma.backupOdooOrderPayment.createMany({
-          data: paymentDataItems,
-        }),
-      ]);
+      await this.dataSource.transaction(async (mgr) => {
+        await mgr.delete(BackupOdooOrderPayment, { orderId: order.id });
+        await mgr.insert(BackupOdooOrderPayment, paymentDataItems);
+      });
     }
   }
 
@@ -1322,16 +1361,14 @@ export class OdooBackupService {
   }): Promise<{ ingested: number; skipped: number; total: number }> {
     const { startDate, endDate, state, region, limit } = params;
 
-    // Build filter criteria using Prisma types
-    const where: Prisma.BackupOdooOrderWhereInput = {};
-    if (startDate || endDate) {
-      where.dateOrder = {};
-      if (startDate) {
-        where.dateOrder.gte = new Date(startDate);
-      }
-      if (endDate) {
-        where.dateOrder.lte = new Date(endDate);
-      }
+    // Build filter criteria using TypeORM operators
+    const where: FindOptionsWhere<BackupOdooOrder> = {};
+    if (startDate && endDate) {
+      where.dateOrder = Between(new Date(startDate), new Date(endDate));
+    } else if (startDate) {
+      where.dateOrder = MoreThanOrEqual(new Date(startDate));
+    } else if (endDate) {
+      where.dateOrder = LessThanOrEqual(new Date(endDate));
     }
     if (state) {
       where.state = state;
@@ -1341,10 +1378,10 @@ export class OdooBackupService {
     }
 
     // Fetch orders from backup tables
-    const backupOrders = await this.prisma.backupOdooOrder.findMany({
+    const backupOrders = await this.orders.find({
       where,
       take: limit ?? 1000, // Default to 1000 to avoid memory issues
-      orderBy: { dateOrder: 'asc' },
+      order: { dateOrder: 'ASC' },
       select: {
         id: true,
         orderId: true,
@@ -1368,16 +1405,7 @@ export class OdooBackupService {
     );
 
     // Pre-load StoreConfigurations for branchCode resolution
-    const storeConfigs = await this.prisma.storeConfiguration.findMany({
-      where: { isActive: true },
-      select: { branchCode: true, odooBranchId: true, region: true },
-    });
-    const branchIdMap = new Map(
-      storeConfigs.map((sc) => [
-        sc.odooBranchId,
-        { branchCode: sc.branchCode, region: sc.region ?? null },
-      ]),
-    );
+    const branchIdMap = await this.loadBranchIdMap();
 
     let ingested = 0;
     let skipped = 0;
@@ -1396,7 +1424,7 @@ export class OdooBackupService {
           order = backupOrder.rawJson as unknown as RawOdooOrderFields;
         } else {
           // Fallback: construct from backup fields and fetch payment data from database
-          const payments = await this.prisma.backupOdooOrderPayment.findMany({
+          const payments = await this.orderPayments.find({
             where: { parentOrderId: backupOrder.id },
             select: {
               paymentId: true,

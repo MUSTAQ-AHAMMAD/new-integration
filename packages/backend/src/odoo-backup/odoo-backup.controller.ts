@@ -12,6 +12,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   IsBoolean,
   IsInt,
@@ -20,7 +22,9 @@ import {
   IsUrl,
   Min,
 } from 'class-validator';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { OdooBackupState } from '../database/entities/odoo-backup-state.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
 import { OdooBackupService } from './odoo-backup.service';
 
 // ---------------------------------------------------------------------------
@@ -174,7 +178,12 @@ export class ReingestFromBackupDto {
 export class OdooBackupController {
   constructor(
     private readonly backupService: OdooBackupService,
-    private readonly prisma: PrismaService,
+    @InjectRepository(BackupOdooOrder)
+    private readonly orders: Repository<BackupOdooOrder>,
+    @InjectRepository(OdooBackupState)
+    private readonly backupState: Repository<OdooBackupState>,
+    @InjectRepository(OdooCredential)
+    private readonly credentials: Repository<OdooCredential>,
   ) {}
 
   /**
@@ -196,8 +205,8 @@ export class OdooBackupController {
   async listOrders(@Query('limit') limit?: string) {
     const parsed = parseInt(limit ?? '100', 10);
     const take = Math.min(isNaN(parsed) ? 100 : parsed, 500);
-    return this.prisma.backupOdooOrder.findMany({
-      orderBy: { createdAt: 'desc' },
+    return this.orders.find({
+      order: { createdAt: 'DESC' },
       take,
       select: {
         id: true,
@@ -224,9 +233,9 @@ export class OdooBackupController {
     summary: 'Get a backed-up Odoo order with lines and payments',
   })
   async getOrder(@Param('id') id: string) {
-    return this.prisma.backupOdooOrder.findUnique({
+    return this.orders.findOne({
       where: { id },
-      include: { orderLines: true, orderPayments: true },
+      relations: { orderLines: true, orderPayments: true },
     });
   }
 
@@ -236,7 +245,7 @@ export class OdooBackupController {
   @Get('state')
   @ApiOperation({ summary: 'Get the Odoo backup watermark state' })
   async getState() {
-    const state = await this.prisma.odooBackupState.findUnique({
+    const state = await this.backupState.findOne({
       where: { source: 'default' },
     });
     return state ?? { source: 'default', lastSyncAt: null };
@@ -250,8 +259,8 @@ export class OdooBackupController {
   @Get('credentials')
   @ApiOperation({ summary: 'List all per-region Odoo credentials' })
   async listCredentials() {
-    const creds = await this.prisma.odooCredential.findMany({
-      orderBy: { region: 'asc' },
+    const creds = await this.credentials.find({
+      order: { region: 'ASC' },
     });
     return creds.map((c) => ({ ...c, apiKey: this.maskKey(c.apiKey) }));
   }
@@ -262,8 +271,8 @@ export class OdooBackupController {
   @Post('credentials')
   @ApiOperation({ summary: 'Create a new per-region Odoo credential' })
   async createCredential(@Body() dto: CreateOdooCredentialDto) {
-    const cred = await this.prisma.odooCredential.create({
-      data: {
+    const cred = await this.credentials.save(
+      this.credentials.create({
         baseUrl: dto.baseUrl,
         apiKey: dto.apiKey,
         region: dto.region,
@@ -272,8 +281,8 @@ export class OdooBackupController {
         ...(dto.rejectUnauthorizedSsl !== undefined && {
           rejectUnauthorizedSsl: dto.rejectUnauthorizedSsl,
         }),
-      },
-    });
+      }),
+    );
     return { ...cred, apiKey: this.maskKey(cred.apiKey) };
   }
 
@@ -286,9 +295,9 @@ export class OdooBackupController {
     @Param('id') id: string,
     @Body() dto: UpdateOdooCredentialDto,
   ) {
-    const cred = await this.prisma.odooCredential.update({
-      where: { id },
-      data: {
+    await this.credentials.update(
+      { id },
+      {
         ...(dto.baseUrl !== undefined && { baseUrl: dto.baseUrl }),
         ...(dto.apiKey !== undefined && { apiKey: dto.apiKey }),
         ...(dto.region !== undefined && { region: dto.region }),
@@ -298,8 +307,9 @@ export class OdooBackupController {
           rejectUnauthorizedSsl: dto.rejectUnauthorizedSsl,
         }),
       },
-    });
-    return { ...cred, apiKey: this.maskKey(cred.apiKey) };
+    );
+    const cred = await this.credentials.findOne({ where: { id } });
+    return cred ? { ...cred, apiKey: this.maskKey(cred.apiKey) } : { id };
   }
 
   /**
@@ -309,7 +319,7 @@ export class OdooBackupController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete an Odoo credential' })
   async deleteCredential(@Param('id') id: string) {
-    await this.prisma.odooCredential.delete({ where: { id } });
+    await this.credentials.delete({ id });
     return { ok: true, id };
   }
 
@@ -327,7 +337,7 @@ export class OdooBackupController {
       'Test an Odoo credential by probing its configured endpoint (limit=1)',
   })
   async probeCredential(@Param('id') id: string) {
-    const cred = await this.prisma.odooCredential.findUnique({ where: { id } });
+    const cred = await this.credentials.findOne({ where: { id } });
     if (!cred) {
       throw new NotFoundException(`Odoo credential not found: ${id}`);
     }

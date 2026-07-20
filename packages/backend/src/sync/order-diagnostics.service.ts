@@ -5,8 +5,13 @@
  * the Oracle sync process.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { SyncStatus } from '../database/enums';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 
 export interface OrderDiagnostic {
   orderSyncQueue: {
@@ -60,7 +65,16 @@ export interface OrderDiagnostic {
 export class OrderDiagnosticsService {
   private readonly logger = new Logger(OrderDiagnosticsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(BackupOdooOrder)
+    private readonly backupOdooOrderRepo: Repository<BackupOdooOrder>,
+    @InjectRepository(BackupIbqOrder)
+    private readonly backupIbqOrderRepo: Repository<BackupIbqOrder>,
+    @InjectRepository(StoreConfiguration)
+    private readonly storeConfigurationRepo: Repository<StoreConfiguration>,
+  ) {}
 
   /**
    * Diagnose why a specific order is not syncing to Oracle
@@ -73,10 +87,10 @@ export class OrderDiagnosticsService {
   ): Promise<OrderDiagnostic> {
     // Find order in sync queue
     const queueEntry = branchCode
-      ? await this.prisma.orderSyncQueue.findUnique({
-          where: { odooOrderId_branchCode: { odooOrderId, branchCode } },
+      ? await this.orderSyncQueueRepo.findOne({
+          where: { odooOrderId, branchCode },
         })
-      : await this.prisma.orderSyncQueue.findFirst({
+      : await this.orderSyncQueueRepo.findOne({
           where: { odooOrderId },
         });
 
@@ -106,7 +120,7 @@ export class OrderDiagnosticsService {
 
     // Fetch related data in parallel
     const [backupOdoo, backupIbq, storeConfig] = await Promise.all([
-      this.prisma.backupOdooOrder.findFirst({
+      this.backupOdooOrderRepo.findOne({
         where: { orderName: queueEntry.odooOrderNumber },
         select: {
           orderId: true,
@@ -117,13 +131,11 @@ export class OrderDiagnosticsService {
           branchId: true,
         },
       }),
-      this.prisma.backupIbqOrder.findFirst({
-        where: {
-          OR: [
-            { orderId: parseInt(odooOrderId, 10) || -1 },
-            { orderName: queueEntry.odooOrderNumber },
-          ],
-        },
+      this.backupIbqOrderRepo.findOne({
+        where: [
+          { orderId: parseInt(odooOrderId, 10) || -1 },
+          { orderName: queueEntry.odooOrderNumber },
+        ],
         select: {
           orderId: true,
           orderName: true,
@@ -133,7 +145,7 @@ export class OrderDiagnosticsService {
           branchId: true,
         },
       }),
-      this.prisma.storeConfiguration.findUnique({
+      this.storeConfigurationRepo.findOne({
         where: { branchCode: effectiveBranchCode },
         select: {
           branchCode: true,
@@ -172,7 +184,7 @@ export class OrderDiagnosticsService {
       },
       backupOdooOrder: backupOdoo,
       backupIbqOrder: backupIbq,
-      storeConfig,
+      storeConfig: storeConfig as OrderDiagnostic['storeConfig'],
       analysis,
     };
   }
@@ -333,26 +345,26 @@ export class OrderDiagnosticsService {
       skippedUnpaid,
       skippedCancelled,
     ] = await Promise.all([
-      this.prisma.orderSyncQueue.count(),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count(),
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.SKIPPED },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.FAILED },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.PENDING },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.SYNCED },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.NEGATIVE_INVENTORY_HOLD },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.SKIPPED, isPaid: false },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderSyncQueueRepo.count({
         where: { status: SyncStatus.SKIPPED, isCancelled: true },
       }),
     ]);

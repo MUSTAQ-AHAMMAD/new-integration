@@ -1,6 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma, SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Decimal } from 'decimal.js';
+import { RefundTracking } from '../database/entities/refund-tracking.entity';
+import { SyncStatus } from '../database/enums';
 
 export interface ListRefundsParams {
   status?: string;
@@ -25,7 +28,7 @@ export interface RefundRecord {
   originalOrderNumber: string;
   refundOrderId: string;
   refundOrderNumber: string;
-  refundAmount: Prisma.Decimal | number | string;
+  refundAmount: Decimal | number | string;
   refundReason: string;
   refundDate: Date;
   oracleCreditMemoNumber: string | null;
@@ -47,116 +50,89 @@ export interface RefundStatsRow {
 export class RefundsService {
   private readonly logger = new Logger(RefundsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(RefundTracking)
+    private readonly refunds: Repository<RefundTracking>,
+  ) {}
 
   async listRefunds(params?: ListRefundsParams) {
-    const conditions: Prisma.Sql[] = [];
+    const qb = this.refunds.createQueryBuilder('r');
 
     if (params?.status) {
-      conditions.push(
-        Prisma.sql`"creditMemoStatus" = ${params.status.toUpperCase()}`,
-      );
+      qb.andWhere('r.creditMemoStatus = :status', {
+        status: params.status.toUpperCase(),
+      });
     }
-
     if (params?.month) {
-      conditions.push(
-        Prisma.sql`EXTRACT(MONTH FROM "refundDate") = ${params.month}`,
-      );
+      qb.andWhere('EXTRACT(MONTH FROM r.refundDate) = :month', {
+        month: params.month,
+      });
     }
-
     if (params?.year) {
-      conditions.push(
-        Prisma.sql`EXTRACT(YEAR FROM "refundDate") = ${params.year}`,
-      );
+      qb.andWhere('EXTRACT(YEAR FROM r.refundDate) = :year', {
+        year: params.year,
+      });
     }
 
-    const whereClause = conditions.length
-      ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
-      : Prisma.empty;
-    const take = params?.limit ?? 50;
-
-    return this.prisma.$queryRaw<RefundRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "RefundTracking"
-      ${whereClause}
-      ORDER BY "refundDate" DESC, "createdAt" DESC
-      LIMIT ${take}
-    `);
+    return qb
+      .orderBy('r.refundDate', 'DESC')
+      .addOrderBy('r.createdAt', 'DESC')
+      .take(params?.limit ?? 50)
+      .getMany();
   }
 
   async getRefund(id: string) {
-    const [refund] = await this.prisma.$queryRaw<RefundRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "RefundTracking"
-      WHERE "id" = ${id}
-      LIMIT 1
-    `);
-
+    const refund = await this.refunds.findOne({ where: { id } });
     if (!refund) {
       throw new NotFoundException(`Refund ${id} not found`);
     }
-
     return refund;
   }
 
   async reconcileRefund(id: string, reconcileNote: string) {
-    const [refund] = await this.prisma.$queryRaw<RefundRecord[]>(Prisma.sql`
-      UPDATE "RefundTracking"
-      SET
-        "isReconciled" = TRUE,
-        "reconcileNote" = ${reconcileNote},
-        "updatedAt" = NOW()
-      WHERE "id" = ${id}
-      RETURNING *
-    `);
-
+    const refund = await this.refunds.findOne({ where: { id } });
     if (!refund) {
       throw new NotFoundException(`Refund ${id} not found`);
     }
 
+    refund.isReconciled = true;
+    refund.reconcileNote = reconcileNote;
+    refund.reconciledAt = new Date();
+    const saved = await this.refunds.save(refund);
+
     this.logger.log(`Refund ${id} marked as reconciled`);
-    return refund;
+    return saved;
   }
 
   async createManualCreditMemo(data: ManualCreditMemoInput) {
-    const refund = await this.prisma.refundTracking.create({
-      data: {
-        originalOrderId: data.originalOrderId,
-        originalOrderNumber: data.originalOrderNumber,
-        refundOrderId: data.refundOrderId,
-        refundOrderNumber: data.refundOrderNumber,
-        refundAmount: new Prisma.Decimal(data.refundAmount),
-        refundReason: data.refundReason,
-        refundDate: data.refundDate,
-        oracleCreditMemoNumber: '',
-        creditMemoStatus: SyncStatus.PENDING,
-      },
+    const refund = this.refunds.create({
+      originalOrderId: data.originalOrderId,
+      originalOrderNumber: data.originalOrderNumber,
+      refundOrderId: data.refundOrderId,
+      refundOrderNumber: data.refundOrderNumber,
+      refundAmount: new Decimal(data.refundAmount),
+      refundReason: data.refundReason,
+      refundDate: data.refundDate,
+      oracleCreditMemoNumber: '',
+      creditMemoStatus: SyncStatus.PENDING,
     });
+    const saved = await this.refunds.save(refund);
 
     this.logger.log(
       `Manual credit memo created for refund order ${data.refundOrderNumber}`,
     );
 
-    return refund;
+    return saved;
   }
 
-  async getRefundStats() {
-    const [stats] = await this.prisma.$queryRaw<RefundStatsRow[]>(Prisma.sql`
-      SELECT
-        COUNT(*)::int AS "total",
-        COALESCE(SUM(CASE WHEN COALESCE("isReconciled", FALSE) = TRUE THEN 1 ELSE 0 END), 0)::int AS "reconciled",
-        COALESCE(SUM(CASE WHEN "creditMemoStatus" = 'PENDING' THEN 1 ELSE 0 END), 0)::int AS "pending",
-        COALESCE(SUM(CASE WHEN "creditMemoStatus" = 'FAILED' THEN 1 ELSE 0 END), 0)::int AS "failed"
-      FROM "RefundTracking"
-    `);
+  async getRefundStats(): Promise<RefundStatsRow> {
+    const [total, reconciled, pending, failed] = await Promise.all([
+      this.refunds.count(),
+      this.refunds.count({ where: { isReconciled: true } }),
+      this.refunds.count({ where: { creditMemoStatus: SyncStatus.PENDING } }),
+      this.refunds.count({ where: { creditMemoStatus: SyncStatus.FAILED } }),
+    ]);
 
-    return (
-      stats ?? {
-        total: 0,
-        reconciled: 0,
-        pending: 0,
-        failed: 0,
-      }
-    );
+    return { total, reconciled, pending, failed };
   }
 }

@@ -4,7 +4,17 @@ import {
   StandardReceiptRequest,
 } from '../clients/oracle/oracle-soap.client';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
-import { PrismaService } from '../prisma/prisma.service';
+import { Repository } from 'typeorm';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
+import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
+import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
+import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
+import { FusionJournalHeader } from '../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../database/entities/fusion-journal-line.entity';
+import { SaleSyncStatus } from '../database/entities/sale-sync-status.entity';
 import { FusionTransformationService } from '../sync/fusion-transformation.service';
 import { VendHqToOracleSyncService } from './vendhq-to-oracle-sync.service';
 
@@ -63,41 +73,55 @@ function makeTransformResult() {
   };
 }
 
-function makePrisma() {
+function makeRepos() {
+  const sales = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(makeSale()),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  const itemMeta = {
+    find: jest.fn().mockResolvedValue([]),
+  };
+  const invoiceHeaders = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({ id: 'inv-header-001' }),
+  };
+  const invoiceLines = {
+    insert: jest.fn().mockResolvedValue({}),
+  };
+  const standardReceiptsRepo = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({}),
+  };
+  const miscReceiptsRepo = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({}),
+  };
+  const applyReceiptsRepo = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({}),
+  };
+  const journalHeadersRepo = {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({ id: 'jh-001' }),
+  };
+  const journalLinesRepo = {
+    insert: jest.fn().mockResolvedValue({}),
+  };
+  const saleSyncStatus = {
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+  };
   return {
-    backupVendHqSale: {
-      findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockResolvedValue(makeSale()),
-      findFirst: jest.fn().mockResolvedValue(null),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    vendHqItemMeta: {
-      findMany: jest.fn().mockResolvedValue([]),
-    },
-    fusionInvoiceHeader: {
-      create: jest.fn().mockResolvedValue({ id: 'inv-header-001' }),
-    },
-    fusionInvoiceLine: {
-      createMany: jest.fn().mockResolvedValue({ count: 1 }),
-    },
-    fusionStandardReceipt: {
-      create: jest.fn().mockResolvedValue({}),
-    },
-    fusionMiscReceipt: {
-      create: jest.fn().mockResolvedValue({}),
-    },
-    fusionApplyReceipt: {
-      create: jest.fn().mockResolvedValue({}),
-    },
-    fusionJournalHeader: {
-      create: jest.fn().mockResolvedValue({ id: 'jh-001' }),
-    },
-    fusionJournalLine: {
-      createMany: jest.fn().mockResolvedValue({ count: 1 }),
-    },
-    saleSyncStatus: {
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    },
+    sales,
+    itemMeta,
+    invoiceHeaders,
+    invoiceLines,
+    standardReceiptsRepo,
+    miscReceiptsRepo,
+    applyReceiptsRepo,
+    journalHeadersRepo,
+    journalLinesRepo,
+    saleSyncStatus,
   };
 }
 
@@ -127,12 +151,12 @@ function makeSoapClient() {
 
 describe('VendHqToOracleSyncService', () => {
   let service: VendHqToOracleSyncService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let repos: ReturnType<typeof makeRepos>;
   let transformation: ReturnType<typeof makeTransformation>;
   let soapClient: ReturnType<typeof makeSoapClient>;
 
   beforeEach(() => {
-    prisma = makePrisma();
+    repos = makeRepos();
     transformation = makeTransformation();
     soapClient = makeSoapClient();
     const syncControl = {
@@ -141,7 +165,16 @@ describe('VendHqToOracleSyncService', () => {
       markStopped: jest.fn().mockResolvedValue(undefined),
     };
     service = new VendHqToOracleSyncService(
-      prisma as unknown as PrismaService,
+      repos.sales as unknown as Repository<BackupVendHqSale>,
+      repos.itemMeta as unknown as Repository<VendHqItemMeta>,
+      repos.invoiceHeaders as unknown as Repository<FusionInvoiceHeader>,
+      repos.invoiceLines as unknown as Repository<FusionInvoiceLine>,
+      repos.standardReceiptsRepo as unknown as Repository<FusionStandardReceipt>,
+      repos.miscReceiptsRepo as unknown as Repository<FusionMiscReceipt>,
+      repos.applyReceiptsRepo as unknown as Repository<FusionApplyReceipt>,
+      repos.journalHeadersRepo as unknown as Repository<FusionJournalHeader>,
+      repos.journalLinesRepo as unknown as Repository<FusionJournalLine>,
+      repos.saleSyncStatus as unknown as Repository<SaleSyncStatus>,
       transformation as unknown as FusionTransformationService,
       soapClient as unknown as OracleSoapClient,
       syncControl as never,
@@ -158,8 +191,8 @@ describe('VendHqToOracleSyncService', () => {
 
       await service.handleCron();
 
-      // findMany should not have been called since handleCron returned early
-      expect(prisma.backupVendHqSale.findMany).not.toHaveBeenCalled();
+      // find should not have been called since handleCron returned early
+      expect(repos.sales.find).not.toHaveBeenCalled();
     });
   });
 
@@ -167,13 +200,13 @@ describe('VendHqToOracleSyncService', () => {
 
   describe('runSyncJob', () => {
     it('returns zeros when no pending sales', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([]);
+      repos.sales.find.mockResolvedValueOnce([]);
       const result = await service.runSyncJob();
       expect(result).toEqual({ processed: 0, succeeded: 0, failed: 0 });
     });
 
     it('processes sales and returns succeeded count', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
       const result = await service.runSyncJob();
       expect(result.processed).toBe(1);
       expect(result.succeeded).toBe(1);
@@ -181,9 +214,9 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('filters by region when provided', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([]);
+      repos.sales.find.mockResolvedValueOnce([]);
       await service.runSyncJob('KW');
-      expect(prisma.backupVendHqSale.findMany).toHaveBeenCalledWith(
+      expect(repos.sales.find).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ region: 'KW' }),
         }),
@@ -191,7 +224,7 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('increments failed count when processSale throws', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
       transformation.buildSalePayloads.mockRejectedValueOnce(
         new Error('transformation failed'),
       );
@@ -201,7 +234,7 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('processes multiple sales independently', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([
+      repos.sales.find.mockResolvedValueOnce([
         makeSale({ id: 'sale-001' }),
         makeSale({ id: 'sale-002' }),
         makeSale({ id: 'sale-003' }),
@@ -223,21 +256,19 @@ describe('VendHqToOracleSyncService', () => {
 
   describe('processSale — Oracle pipeline', () => {
     it('creates invoice header and lines in DB', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
       await service.runSyncJob();
       expect(soapClient.createSimpleInvoice).toHaveBeenCalledTimes(1);
-      expect(prisma.fusionInvoiceHeader.create).toHaveBeenCalledTimes(1);
-      expect(prisma.fusionInvoiceLine.createMany).toHaveBeenCalledTimes(1);
+      expect(repos.invoiceHeaders.save).toHaveBeenCalledTimes(1);
+      expect(repos.invoiceLines.insert).toHaveBeenCalledTimes(1);
     });
 
     it('marks the sale as fusionSynced=true after success', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
       await service.runSyncJob();
-      expect(prisma.backupVendHqSale.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'sale-db-001' },
-          data: expect.objectContaining({ fusionSynced: true }),
-        }),
+      expect(repos.sales.update).toHaveBeenCalledWith(
+        { id: 'sale-db-001' },
+        expect.objectContaining({ fusionSynced: true }),
       );
     });
 
@@ -254,14 +285,14 @@ describe('VendHqToOracleSyncService', () => {
           orgId: 300,
           receiptAmount: 100,
         },
-      ];
+      ] as StandardReceiptRequest[];
       transformation.buildSalePayloads.mockResolvedValueOnce(result);
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
 
       await service.runSyncJob();
 
       expect(soapClient.createStandardReceipt).toHaveBeenCalledTimes(1);
-      expect(prisma.fusionStandardReceipt.create).toHaveBeenCalledTimes(1);
+      expect(repos.standardReceiptsRepo.save).toHaveBeenCalledTimes(1);
     });
 
     it('creates misc receipts for each MR in the transform result', async () => {
@@ -278,20 +309,20 @@ describe('VendHqToOracleSyncService', () => {
           orgId: 300,
           receiptAmount: -2.5,
         },
-      ];
+      ] as MiscReceiptRequest[];
       transformation.buildSalePayloads.mockResolvedValueOnce(result);
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
 
       await service.runSyncJob();
 
       expect(soapClient.createMiscellaneousReceipt).toHaveBeenCalledTimes(1);
-      expect(prisma.fusionMiscReceipt.create).toHaveBeenCalledTimes(1);
+      expect(repos.miscReceiptsRepo.save).toHaveBeenCalledTimes(1);
     });
 
     it('updates SaleSyncStatus after successful sync', async () => {
-      prisma.backupVendHqSale.findMany.mockResolvedValueOnce([makeSale()]);
+      repos.sales.find.mockResolvedValueOnce([makeSale()]);
       await service.runSyncJob();
-      expect(prisma.saleSyncStatus.updateMany).toHaveBeenCalledTimes(1);
+      expect(repos.saleSyncStatus.update).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -320,7 +351,7 @@ describe('VendHqToOracleSyncService', () => {
     ];
 
     it('flags items missing from VendHqItemMeta', async () => {
-      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([
+      repos.itemMeta.find.mockResolvedValueOnce([
         { itemId: 'prod-1', status: 'SUCCESS' },
       ]);
       const summary = await service.validateInvoiceLines(lines, 'AE');
@@ -331,7 +362,7 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('flags items with a non-success status', async () => {
-      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([
+      repos.itemMeta.find.mockResolvedValueOnce([
         { itemId: 'prod-1', status: 'SUCCESS' },
         { itemId: 'prod-2', status: 'ERROR' },
       ]);
@@ -364,7 +395,7 @@ describe('VendHqToOracleSyncService', () => {
 
   describe('traceSale', () => {
     it('reports sale not found when the invoice is missing', async () => {
-      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce(null);
+      repos.sales.findOne.mockResolvedValueOnce(null);
       const report = await service.traceSale('MISSING', 'AE');
       expect(report.sale.found).toBe(false);
       expect(report.steps[0]).toEqual(
@@ -373,13 +404,18 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('traces a sale through transform and validation as a dry run', async () => {
-      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce({
+      repos.sales.findOne.mockResolvedValueOnce({
         ...makeSale(),
         backupLineItems: [
-          { lineNumber: 1, productId: 'prod-1', productName: 'Widget', quantity: 1 },
+          {
+            lineNumber: 1,
+            productId: 'prod-1',
+            productName: 'Widget',
+            quantity: 1,
+          },
         ],
       });
-      prisma.vendHqItemMeta.findMany.mockResolvedValueOnce([]);
+      repos.itemMeta.find.mockResolvedValueOnce([]);
 
       const report = await service.traceSale('INV-001', 'AE');
 
@@ -392,10 +428,13 @@ describe('VendHqToOracleSyncService', () => {
     });
 
     it('attempts the Oracle push when dryRun is false', async () => {
-      prisma.backupVendHqSale.findFirst.mockResolvedValueOnce({
-        ...makeSale(),
-        backupLineItems: [],
-      });
+      repos.sales.findOne
+        .mockResolvedValueOnce({
+          ...makeSale(),
+          backupLineItems: [],
+        })
+        // processSale's updateSaleSyncStatus does a second findOne
+        .mockResolvedValueOnce(makeSale());
 
       const report = await service.traceSale('INV-001', 'AE', {
         dryRun: false,

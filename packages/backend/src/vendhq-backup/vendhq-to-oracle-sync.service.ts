@@ -1,11 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { SaleStatus } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
 import {
   InvoiceLine,
   OracleSoapClient,
 } from '../clients/oracle/oracle-soap.client';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
+import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
+import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
+import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
+import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
+import { FusionJournalHeader } from '../database/entities/fusion-journal-header.entity';
+import { FusionJournalLine } from '../database/entities/fusion-journal-line.entity';
+import { SaleSyncStatus } from '../database/entities/sale-sync-status.entity';
+import { SaleStatus } from '../database/enums';
 import { FusionTransformationService } from '../sync/fusion-transformation.service';
 import { SyncControlService } from '../sync/sync-control.service';
 import {
@@ -79,7 +90,26 @@ export class VendHqToOracleSyncService {
   private running = false;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(BackupVendHqSale)
+    private readonly sales: Repository<BackupVendHqSale>,
+    @InjectRepository(VendHqItemMeta)
+    private readonly itemMeta: Repository<VendHqItemMeta>,
+    @InjectRepository(FusionInvoiceHeader)
+    private readonly invoiceHeaders: Repository<FusionInvoiceHeader>,
+    @InjectRepository(FusionInvoiceLine)
+    private readonly invoiceLines: Repository<FusionInvoiceLine>,
+    @InjectRepository(FusionStandardReceipt)
+    private readonly standardReceiptsRepo: Repository<FusionStandardReceipt>,
+    @InjectRepository(FusionMiscReceipt)
+    private readonly miscReceiptsRepo: Repository<FusionMiscReceipt>,
+    @InjectRepository(FusionApplyReceipt)
+    private readonly applyReceiptsRepo: Repository<FusionApplyReceipt>,
+    @InjectRepository(FusionJournalHeader)
+    private readonly journalHeadersRepo: Repository<FusionJournalHeader>,
+    @InjectRepository(FusionJournalLine)
+    private readonly journalLinesRepo: Repository<FusionJournalLine>,
+    @InjectRepository(SaleSyncStatus)
+    private readonly saleSyncStatus: Repository<SaleSyncStatus>,
     private readonly transformationService: FusionTransformationService,
     private readonly soapClient: OracleSoapClient,
     private readonly syncControl: SyncControlService,
@@ -129,10 +159,10 @@ export class VendHqToOracleSyncService {
       ...(region ? { region } : {}),
     };
 
-    const pending = await this.prisma.backupVendHqSale.findMany({
+    const pending = await this.sales.find({
       where,
       take: BATCH_SIZE,
-      orderBy: { saleDate: 'asc' },
+      order: { saleDate: 'ASC' },
     });
 
     if (pending.length === 0) {
@@ -237,8 +267,8 @@ export class VendHqToOracleSyncService {
       0,
     );
 
-    const auditHeader = await this.prisma.fusionInvoiceHeader.create({
-      data: {
+    const auditHeader = await this.invoiceHeaders.save(
+      this.invoiceHeaders.create({
         status: invoiceStatus,
         message: invoiceErrorMessage,
         requestDate: new Date(),
@@ -258,11 +288,11 @@ export class VendHqToOracleSyncService {
         customerTxnId: toBigIntOrNull(invoiceResult?.customerTrxId),
         totalAmount,
         region,
-      },
-    });
+      }),
+    );
 
-    await this.prisma.fusionInvoiceLine.createMany({
-      data: invoiceHeader.invoiceLines.map((il) => ({
+    await this.invoiceLines.insert(
+      invoiceHeader.invoiceLines.map((il) => ({
         status: invoiceStatus,
         message: invoiceErrorMessage,
         requestDate: new Date(),
@@ -277,7 +307,7 @@ export class VendHqToOracleSyncService {
         region,
         headerId: auditHeader.id,
       })),
-    });
+    );
 
     // ── Standard Receipts ────────────────────────────────────────────────────
     for (const sr of standardReceipts) {
@@ -296,8 +326,8 @@ export class VendHqToOracleSyncService {
         throw error; // Re-throw to maintain existing error handling
       }
 
-      await this.prisma.fusionStandardReceipt.create({
-        data: {
+      await this.standardReceiptsRepo.save(
+        this.standardReceiptsRepo.create({
           status: srStatus,
           message: srErrorMessage,
           requestDate: new Date(),
@@ -307,13 +337,14 @@ export class VendHqToOracleSyncService {
           receiptMethodId: numberToBigInt(sr.receiptMethodId),
           receiptNumber: srResult?.receiptNumber ?? sr.receiptNumber,
           remittanceBankAccId: String(sr.remittanceBankAccountId),
-          customerId: sr.customerId,
+          customerId:
+            sr.customerId != null ? numberToBigInt(Number(sr.customerId)) : null,
           accountValue: sr.accountValue,
           receiptAmount: sr.receiptAmount,
-          orgId: sr.orgId,
+          orgId: sr.orgId != null ? numberToBigInt(Number(sr.orgId)) : null,
           region,
-        },
-      });
+        }),
+      );
     }
 
     // ── Misc Receipts ────────────────────────────────────────────────────────
@@ -333,8 +364,8 @@ export class VendHqToOracleSyncService {
         throw error; // Re-throw to maintain existing error handling
       }
 
-      await this.prisma.fusionMiscReceipt.create({
-        data: {
+      await this.miscReceiptsRepo.save(
+        this.miscReceiptsRepo.create({
           status: mrStatus,
           message: mrErrorMessage,
           requestDate: new Date(),
@@ -347,10 +378,10 @@ export class VendHqToOracleSyncService {
           bankAccNumber: mr.bankAccountName,
           recActivityName: mr.receivableActivityName,
           receiptAmount: mr.receiptAmount,
-          orgId: mr.orgId,
+          orgId: mr.orgId != null ? numberToBigInt(Number(mr.orgId)) : null,
           region,
-        },
-      });
+        }),
+      );
     }
 
     // ── Apply Receipts ───────────────────────────────────────────────────────
@@ -370,8 +401,8 @@ export class VendHqToOracleSyncService {
         throw error; // Re-throw to maintain existing error handling
       }
 
-      await this.prisma.fusionApplyReceipt.create({
-        data: {
+      await this.applyReceiptsRepo.save(
+        this.applyReceiptsRepo.create({
           status: arStatus,
           message: arErrorMessage,
           requestDate: new Date(),
@@ -383,8 +414,8 @@ export class VendHqToOracleSyncService {
           currencyCode: ar.receiptCurrency,
           txnSource: ar.transactionSource,
           region,
-        },
-      });
+        }),
+      );
     }
 
     // ── Journal Entries ──────────────────────────────────────────────────────
@@ -408,8 +439,8 @@ export class VendHqToOracleSyncService {
         throw error; // Re-throw to maintain existing error handling
       }
 
-      const jhAudit = await this.prisma.fusionJournalHeader.create({
-        data: {
+      const jhAudit = await this.journalHeadersRepo.save(
+        this.journalHeadersRepo.create({
           status: jeStatus,
           message: jeErrorMessage,
           requestDate: new Date(),
@@ -424,11 +455,11 @@ export class VendHqToOracleSyncService {
           errorToSuspenseFlag: jh.errorToSuspenseFlag,
           summaryFlag: jh.summaryFlag,
           accountingDate: jh.accountingDate,
-        },
-      });
+        }),
+      );
 
-      await this.prisma.fusionJournalLine.createMany({
-        data: jh.journalLines.map((jl, idx) => ({
+      await this.journalLinesRepo.insert(
+        jh.journalLines.map((jl, idx) => ({
           status: jeStatus,
           message: jeErrorMessage,
           requestDate: new Date(),
@@ -464,18 +495,18 @@ export class VendHqToOracleSyncService {
           taxCode: jl.taxCode ?? null,
           headerId: jhAudit.id,
         })),
-      });
+      );
     }
 
     // ── Mark sale as synced ──────────────────────────────────────────────────
-    await this.prisma.backupVendHqSale.update({
-      where: { id: saleDbId },
-      data: {
+    await this.sales.update(
+      { id: saleDbId },
+      {
         fusionSynced: true,
         fusionSyncAt: new Date(),
         fusionSyncError: null,
       },
-    });
+    );
 
     // ── Update SaleSyncStatus if present ────────────────────────────────────
     await this.updateSaleSyncStatus(saleDbId, txnNumber);
@@ -505,8 +536,8 @@ export class VendHqToOracleSyncService {
 
     const metaRows =
       itemNumbers.length > 0
-        ? await this.prisma.vendHqItemMeta.findMany({
-            where: { itemId: { in: itemNumbers }, region },
+        ? await this.itemMeta.find({
+            where: { itemId: In(itemNumbers), region },
             select: { itemId: true, status: true },
           })
         : [];
@@ -599,9 +630,9 @@ export class VendHqToOracleSyncService {
     };
 
     // ── Step 1: Fetch the backup sale ────────────────────────────────────────
-    const sale = await this.prisma.backupVendHqSale.findFirst({
+    const sale = await this.sales.findOne({
       where: { invoiceNumber, ...(region ? { region } : {}) },
-      include: { backupLineItems: true },
+      relations: { backupLineItems: true },
     });
 
     if (!sale) {
@@ -713,7 +744,7 @@ export class VendHqToOracleSyncService {
     oracleInvoiceId: string,
   ): Promise<void> {
     try {
-      const sale = await this.prisma.backupVendHqSale.findUnique({
+      const sale = await this.sales.findOne({
         where: { id: saleDbId },
         select: { invoiceNumber: true, outletId: true, saleDate: true },
       });
@@ -721,17 +752,17 @@ export class VendHqToOracleSyncService {
 
       // SaleSyncStatus uses a composite PK: [saleId, outletId, saleDate]
       // saleId in SaleSyncStatus is the VendHQ invoice number
-      await this.prisma.saleSyncStatus.updateMany({
-        where: {
+      await this.saleSyncStatus.update(
+        {
           saleId: sale.invoiceNumber,
           ...(sale.outletId != null ? { outletId: sale.outletId } : {}),
         },
-        data: {
+        {
           status: SaleStatus.SYNCED,
           lastSyncAt: new Date(),
           oracleInvoiceId,
         },
-      });
+      );
     } catch {
       // Best-effort — don't fail the main sync if status update fails
     }

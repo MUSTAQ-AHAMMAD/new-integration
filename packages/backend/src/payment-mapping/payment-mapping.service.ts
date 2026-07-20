@@ -1,23 +1,23 @@
-import { numberToBigInt } from '../common/utils/bigint-utils';
 import { Injectable, Logger } from '@nestjs/common';
-import { AlertSeverity, AlertType } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
+import { AlertSeverity, AlertType } from '../database/enums';
 
 @Injectable()
 export class PaymentMappingService {
   private readonly logger = new Logger(PaymentMappingService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(PaymentMethodMapping)
+    private readonly mappings: Repository<PaymentMethodMapping>,
     private readonly alertsService: AlertsService,
   ) {}
 
   async resolvePaymentMethod(sourceSystem: string, sourcePaymentName: string) {
-    const mapping = await this.prisma.paymentMethodMapping.findUnique({
-      where: {
-        sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName },
-      },
+    const mapping = await this.mappings.findOne({
+      where: { sourceSystem, sourcePaymentName },
     });
 
     if (!mapping) {
@@ -30,20 +30,25 @@ export class PaymentMappingService {
         relatedEntityType: 'PAYMENT_METHOD',
       });
 
-      await this.prisma.paymentMethodMapping.upsert({
-        where: {
-          sourceSystem_sourcePaymentName: { sourceSystem, sourcePaymentName },
-        },
-        create: {
-          sourceSystem,
-          sourcePaymentName,
-          oracleReceiptMethodId: 0n,
-          oracleReceiptMethodName: 'PENDING_MAPPING',
-          isActive: false,
-          requiresApproval: true,
-        },
-        update: { requiresApproval: true },
+      // Upsert a PENDING_MAPPING placeholder so the pair is tracked exactly once.
+      const existing = await this.mappings.findOne({
+        where: { sourceSystem, sourcePaymentName },
       });
+      if (existing) {
+        existing.requiresApproval = true;
+        await this.mappings.save(existing);
+      } else {
+        await this.mappings.save(
+          this.mappings.create({
+            sourceSystem,
+            sourcePaymentName,
+            oracleReceiptMethodId: 0n,
+            oracleReceiptMethodName: 'PENDING_MAPPING',
+            isActive: false,
+            requiresApproval: true,
+          }),
+        );
+      }
 
       // Return null so the caller can gracefully queue the order rather than
       // halting the entire integration run.
@@ -68,22 +73,20 @@ export class PaymentMappingService {
   }
 
   async listMappings(sourceSystem?: string) {
-    return this.prisma.paymentMethodMapping.findMany({
+    return this.mappings.find({
       where: sourceSystem ? { sourceSystem } : undefined,
-      orderBy: { sourcePaymentName: 'asc' },
+      order: { sourcePaymentName: 'ASC' },
     });
   }
 
   async approvePendingMapping(id: string, approvedBy: string) {
-    return this.prisma.paymentMethodMapping.update({
-      where: { id },
-      data: {
-        requiresApproval: false,
-        isActive: true,
-        approvedBy,
-        approvedAt: new Date(),
-      },
+    await this.mappings.update(id, {
+      requiresApproval: false,
+      isActive: true,
+      approvedBy,
+      approvedAt: new Date(),
     });
+    return this.mappings.findOne({ where: { id } });
   }
 
   async createMapping(data: {
@@ -93,16 +96,18 @@ export class PaymentMappingService {
     oracleReceiptMethodName: string;
     oracleBankAccountId?: number;
   }) {
-    return this.prisma.paymentMethodMapping.create({
-      data: {
-        ...data,
+    return this.mappings.save(
+      this.mappings.create({
+        sourceSystem: data.sourceSystem,
+        sourcePaymentName: data.sourcePaymentName,
+        oracleReceiptMethodName: data.oracleReceiptMethodName,
         isActive: true,
-        oracleReceiptMethodId: numberToBigInt(data.oracleReceiptMethodId),
+        oracleReceiptMethodId: BigInt(data.oracleReceiptMethodId),
         oracleBankAccountId:
           data.oracleBankAccountId != null
             ? BigInt(data.oracleBankAccountId)
             : null,
-      },
-    });
+      }),
+    );
   }
 }

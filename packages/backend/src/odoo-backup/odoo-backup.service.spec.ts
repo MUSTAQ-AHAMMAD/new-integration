@@ -11,17 +11,20 @@
  *     is newer than any available order).
  *  3. Credential baseUrl / apiPath misconfiguration.
  *
- * Note: describe blocks that use jest.spyOn(axios, 'get') call
- * jest.resetAllMocks() in beforeEach (not clearAllMocks) because Jest 30's
- * clearAllMocks only resets _mockState (call history) and leaves
- * _mockConfigRegistry intact.  Unconsumed mockResolvedValueOnce values from
- * a failing test would bleed into the next test's axios.get calls, causing
- * false successes/failures.  resetAllMocks also clears specificMockImpls,
- * preventing cross-test contamination.  Each test re-creates its mocks via
- * makeService() after beforeEach runs, so the reset has no side effects.
+ * Migrated to TypeORM: the parent order is upserted via findOne + create/save,
+ * and child lines/payments are replaced via dataSource.transaction(cb) using
+ * mgr.delete + mgr.insert. Assertions therefore target orders.create/save and
+ * the transaction manager's delete/insert calls.
  */
 
 import axios, { AxiosError } from 'axios';
+import { DataSource, Repository } from 'typeorm';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
+import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
+import { OdooBackupState } from '../database/entities/odoo-backup-state.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { OdooBackupService } from './odoo-backup.service';
 
 // ---------------------------------------------------------------------------
@@ -43,34 +46,50 @@ function makeOrder(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma() {
+function makeRepos() {
+  const manager = {
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    insert: jest.fn().mockResolvedValue({}),
+  };
+  const orders = {
+    // upsertOrder: findOne(null) → create → save; ingest step: findOne(select id)
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  const orderLines = {
+    find: jest.fn().mockResolvedValue([]),
+  };
+  const orderPayments = {
+    find: jest.fn().mockResolvedValue([]),
+  };
+  const backupState = {
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
+  };
+  const credentials = {
+    find: jest.fn().mockResolvedValue([]),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  const storeConfigs = {
+    find: jest.fn().mockResolvedValue([]),
+  };
+  const dataSource = {
+    transaction: jest.fn((cb: (mgr: unknown) => Promise<unknown>) =>
+      cb(manager),
+    ),
+  };
   return {
-    odooBackupState: {
-      findUnique: jest.fn().mockResolvedValue(null),
-      upsert: jest.fn().mockResolvedValue({}),
-    },
-    odooCredential: {
-      findMany: jest.fn().mockResolvedValue([]),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    storeConfiguration: {
-      findMany: jest.fn().mockResolvedValue([]),
-    },
-    backupOdooOrder: {
-      upsert: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
-      findUnique: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
-    },
-    backupOdooOrderLine: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    backupOdooOrderPayment: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    $transaction: jest
-      .fn()
-      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops)),
+    orders,
+    orderLines,
+    orderPayments,
+    backupState,
+    credentials,
+    storeConfigs,
+    dataSource,
+    manager,
   };
 }
 
@@ -95,18 +114,24 @@ function makeSyncControl() {
 }
 
 function makeService(
-  prisma = makePrisma(),
+  repos = makeRepos(),
   odooClient = makeOdooClient(),
   orderSyncService = makeOrderSyncService(),
   syncControl = makeSyncControl(),
 ) {
   const service = new OdooBackupService(
-    prisma as never,
+    repos.orders as unknown as Repository<BackupOdooOrder>,
+    repos.orderLines as unknown as Repository<BackupOdooOrderLine>,
+    repos.orderPayments as unknown as Repository<BackupOdooOrderPayment>,
+    repos.backupState as unknown as Repository<OdooBackupState>,
+    repos.credentials as unknown as Repository<OdooCredential>,
+    repos.storeConfigs as unknown as Repository<StoreConfiguration>,
+    repos.dataSource as unknown as DataSource,
     odooClient as never,
     orderSyncService as never,
     syncControl as never,
   );
-  return { service, prisma, odooClient, orderSyncService, syncControl };
+  return { service, repos, odooClient, orderSyncService, syncControl };
 }
 
 function makeCredential(overrides: Record<string, unknown> = {}) {
@@ -462,7 +487,7 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
   });
 
   it('auto-falls back to /api/sale.order when /api/pos/order returns 404', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const notFound = new AxiosError('Not Found');
     notFound.response = { status: 404 } as never;
 
@@ -479,10 +504,9 @@ describe('OdooBackupService.backupOrdersForCredential — URL and auth', () => {
     expect(mockAxiosGet.mock.calls[1][0]).toContain('/api/sale.order');
     expect(result.orders).toHaveLength(1);
     // The discovered path should be persisted so future runs skip discovery
-    expect(prisma.odooCredential.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ apiPath: '/api/sale.order' }),
-      }),
+    expect(repos.credentials.update).toHaveBeenCalledWith(
+      { id: 'cred-001' },
+      expect.objectContaining({ apiPath: '/api/sale.order' }),
     );
   });
 });
@@ -499,7 +523,7 @@ describe('OdooBackupService.backupOrdersForCredential — branch name extraction
   });
 
   it('extracts branchName from the part before "/" in orderName when branch_id has no name', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     // branch_id is a plain integer — resolveName returns null.
     // branchName should fall back to the order name prefix.
     const order = makeOrder({ branch_id: 246, name: 'CCNTRBHR/2139' });
@@ -507,15 +531,13 @@ describe('OdooBackupService.backupOrdersForCredential — branch name extraction
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ branchName: 'CCNTRBHR' }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: 'CCNTRBHR' }),
     );
   });
 
   it('uses the Many2one branch name when the API returns [id, name]', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       branch_id: [246, 'Bahrain Branch'],
       name: 'CCNTRBHR/2139',
@@ -524,24 +546,20 @@ describe('OdooBackupService.backupOrdersForCredential — branch name extraction
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ branchName: 'Bahrain Branch' }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: 'Bahrain Branch' }),
     );
   });
 
   it('leaves branchName null when branch_id is absent and order name has no "/"', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ branch_id: null, name: 'ORDER-001' });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ branchName: null }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ branchName: null }),
     );
   });
 });
@@ -634,83 +652,73 @@ describe('OdooBackupService — new field mapping aligned with old integration',
   });
 
   it('stores amountUntaxed (TOTAL_PRICE) from amount_untaxed field', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ amount_untaxed: 190.0 });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ amountUntaxed: 190.0 }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ amountUntaxed: 190.0 }),
     );
   });
 
   it('stores amountDiscount (TOTAL_LOYALTY) from amount_discount field', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ amount_discount: 15.5 });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ amountDiscount: 15.5 }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ amountDiscount: 15.5 }),
     );
   });
 
   it('stores warehouseName (OUTLET_NAME) from warehouse_id Many2one', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ warehouse_id: [5, 'Dubai Mall Store'] });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+    expect(repos.orders.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({
-          warehouseId: 5,
-          warehouseName: 'Dubai Mall Store',
-        }),
+        warehouseId: 5,
+        warehouseName: 'Dubai Mall Store',
       }),
     );
   });
 
   it('stores posConfigName (REGISTER_NAME) from pos_config_id Many2one', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ pos_config_id: [12, 'Register 01'] });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
+    expect(repos.orders.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({
-          posConfigId: 12,
-          posConfigName: 'Register 01',
-        }),
+        posConfigId: 12,
+        posConfigName: 'Register 01',
       }),
     );
   });
 
   it('falls back to session_id for posConfigName when pos_config_id is absent', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({ session_id: [7, 'Session-Morning'] });
     mockAxiosGet.mockResolvedValue({ data: [order] });
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrder.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ posConfigName: 'Session-Morning' }),
-      }),
+    expect(repos.orders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ posConfigName: 'Session-Morning' }),
     );
   });
 
   it('stores taxName (TAX_NAME) from tax_id Many2many on line items', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       lines: [
         {
@@ -729,18 +737,17 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderLine.deleteMany).toHaveBeenCalled();
-    expect(prisma.backupOdooOrderLine.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({ taxName: 'VAT 5%' }),
-        ]),
-      }),
+    expect(repos.manager.delete).toHaveBeenCalled();
+    expect(repos.manager.insert).toHaveBeenCalledWith(
+      BackupOdooOrderLine,
+      expect.arrayContaining([
+        expect.objectContaining({ taxName: 'VAT 5%' }),
+      ]),
     );
   });
 
   it('stores productCode (ITEM_NUMBER) from default_code on line items', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       lines: [
         {
@@ -757,18 +764,17 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderLine.deleteMany).toHaveBeenCalled();
-    expect(prisma.backupOdooOrderLine.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({ productCode: 'PROD-001' }),
-        ]),
-      }),
+    expect(repos.manager.delete).toHaveBeenCalled();
+    expect(repos.manager.insert).toHaveBeenCalledWith(
+      BackupOdooOrderLine,
+      expect.arrayContaining([
+        expect.objectContaining({ productCode: 'PROD-001' }),
+      ]),
     );
   });
 
   it('stores currency (CURRENCY) from currency_id Many2one on payments', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       statement_ids: [
         { id: 801, name: 'Cash', amount: 210.0, currency_id: [1, 'AED'] },
@@ -778,18 +784,17 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
-    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
-        ]),
-      }),
+    expect(repos.manager.delete).toHaveBeenCalled();
+    expect(repos.manager.insert).toHaveBeenCalledWith(
+      BackupOdooOrderPayment,
+      expect.arrayContaining([
+        expect.objectContaining({ currency: 'AED', paymentName: 'Cash' }),
+      ]),
     );
   });
 
   it('stores paymentDate (PAYMENT_DATE) from date field on payments', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       statement_ids: [
         { id: 802, name: 'Card', amount: 50.0, date: '2024-05-17T10:30:00Z' },
@@ -799,20 +804,19 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
-    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({
-            paymentDate: new Date('2024-05-17T10:30:00Z'),
-          }),
-        ]),
-      }),
+    expect(repos.manager.delete).toHaveBeenCalled();
+    expect(repos.manager.insert).toHaveBeenCalledWith(
+      BackupOdooOrderPayment,
+      expect.arrayContaining([
+        expect.objectContaining({
+          paymentDate: new Date('2024-05-17T10:30:00Z'),
+        }),
+      ]),
     );
   });
 
   it('resolves payment method from journal_id when name and payment_method_id are absent', async () => {
-    const { service, prisma } = makeService();
+    const { service, repos } = makeService();
     const order = makeOrder({
       payment_ids: [
         { id: 803, journal_id: [4, 'Bank Transfer'], amount: 100.0 },
@@ -822,13 +826,12 @@ describe('OdooBackupService — new field mapping aligned with old integration',
 
     await service.backupOrdersForCredential(makeCredential(), { limit: 100 });
 
-    expect(prisma.backupOdooOrderPayment.deleteMany).toHaveBeenCalled();
-    expect(prisma.backupOdooOrderPayment.createMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.arrayContaining([
-          expect.objectContaining({ paymentName: 'Bank Transfer' }),
-        ]),
-      }),
+    expect(repos.manager.delete).toHaveBeenCalled();
+    expect(repos.manager.insert).toHaveBeenCalledWith(
+      BackupOdooOrderPayment,
+      expect.arrayContaining([
+        expect.objectContaining({ paymentName: 'Bank Transfer' }),
+      ]),
     );
   });
 });
@@ -845,8 +848,8 @@ describe('OdooBackupService.runCredentialBackupJob', () => {
   });
 
   it('skips silently when no active credentials are configured', async () => {
-    const { service, prisma } = makeService();
-    prisma.odooCredential.findMany.mockResolvedValue([]);
+    const { service, repos } = makeService();
+    repos.credentials.find.mockResolvedValue([]);
 
     await service.runCredentialBackupJob();
 
@@ -854,22 +857,23 @@ describe('OdooBackupService.runCredentialBackupJob', () => {
   });
 
   it('advances lastSyncAt watermark after a successful backup', async () => {
-    const { service, prisma } = makeService();
-    prisma.odooCredential.findMany.mockResolvedValue([makeCredential()]);
+    const { service, repos } = makeService();
+    repos.credentials.find.mockResolvedValue([makeCredential()]);
     mockAxiosGet.mockResolvedValue({ data: [] });
 
     await service.runCredentialBackupJob();
 
-    expect(prisma.odooCredential.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
-      }),
+    expect(repos.credentials.update).toHaveBeenCalledWith(
+      { id: 'cred-001' },
+      expect.objectContaining({ lastSyncAt: expect.any(Date) }),
     );
   });
 
   it('ingests fetched orders into OrderSyncQueue', async () => {
-    const { service, prisma, orderSyncService } = makeService();
-    prisma.odooCredential.findMany.mockResolvedValue([makeCredential()]);
+    const { service, repos, orderSyncService } = makeService();
+    repos.credentials.find.mockResolvedValue([makeCredential()]);
+    // ingest step calls orders.findOne for the backup row id
+    repos.orders.findOne.mockResolvedValue({ id: 'order-db-001' });
     mockAxiosGet.mockResolvedValue({ data: [makeOrder()] });
 
     await service.runCredentialBackupJob();
@@ -878,8 +882,8 @@ describe('OdooBackupService.runCredentialBackupJob', () => {
   });
 
   it('skips ingest for orders missing branch_id and still advances watermark', async () => {
-    const { service, prisma, orderSyncService } = makeService();
-    prisma.odooCredential.findMany.mockResolvedValue([makeCredential()]);
+    const { service, repos, orderSyncService } = makeService();
+    repos.credentials.find.mockResolvedValue([makeCredential()]);
     // Order without branch_id — normalizeOrderForIngestion returns null
     mockAxiosGet.mockResolvedValue({ data: [makeOrder({ branch_id: null })] });
 
@@ -887,10 +891,9 @@ describe('OdooBackupService.runCredentialBackupJob', () => {
 
     expect(orderSyncService.ingestOrder).not.toHaveBeenCalled();
     // Watermark should still advance so we don't re-fetch this order forever
-    expect(prisma.odooCredential.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ lastSyncAt: expect.any(Date) }),
-      }),
+    expect(repos.credentials.update).toHaveBeenCalledWith(
+      { id: 'cred-001' },
+      expect.objectContaining({ lastSyncAt: expect.any(Date) }),
     );
   });
 });

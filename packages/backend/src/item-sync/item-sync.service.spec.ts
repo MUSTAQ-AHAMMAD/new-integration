@@ -1,6 +1,7 @@
+import { Repository } from 'typeorm';
 import { ItemSyncService } from './item-sync.service';
 import { OracleNativeService } from '../admin/oracle-native.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
 import { SyncControlService } from '../sync/sync-control.service';
 
 // ---------------------------------------------------------------------------
@@ -26,11 +27,9 @@ function makeImportSummary(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma() {
+function makeItemMetaRepo() {
   return {
-    vendHqItemMeta: {
-      findMany: jest.fn().mockResolvedValue([]),
-    },
+    find: jest.fn().mockResolvedValue([]),
   };
 }
 
@@ -54,16 +53,16 @@ function makeSyncControl() {
 
 describe('ItemSyncService', () => {
   let service: ItemSyncService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let itemMeta: ReturnType<typeof makeItemMetaRepo>;
   let oracleNative: ReturnType<typeof makeOracleNative>;
   let syncControl: ReturnType<typeof makeSyncControl>;
 
   beforeEach(() => {
-    prisma = makePrisma();
+    itemMeta = makeItemMetaRepo();
     oracleNative = makeOracleNative();
     syncControl = makeSyncControl();
     service = new ItemSyncService(
-      prisma as unknown as PrismaService,
+      itemMeta as unknown as Repository<VendHqItemMeta>,
       oracleNative as unknown as OracleNativeService,
       syncControl as unknown as SyncControlService,
     );
@@ -155,7 +154,7 @@ describe('ItemSyncService', () => {
   describe('getItemSyncStatus', () => {
     it('queries VendHqItemMeta filtered by region', async () => {
       await service.getItemSyncStatus('SA');
-      expect(prisma.vendHqItemMeta.findMany).toHaveBeenCalledWith(
+      expect(itemMeta.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { region: 'SA' } }),
       );
     });

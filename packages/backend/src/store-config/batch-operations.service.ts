@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, In, IsNull, Not, Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service';
-import { AlertType } from '@prisma/client';
+import { AlertLog } from '../database/entities/alert-log.entity';
+import { ConfigurationBackup } from '../database/entities/configuration-backup.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { AlertType } from '../database/enums';
 
 /**
  * Enhanced batch operations service with:
@@ -16,7 +22,15 @@ export class BatchOperationsService {
   private readonly logger = new Logger(BatchOperationsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(StoreConfiguration)
+    private readonly stores: Repository<StoreConfiguration>,
+    @InjectRepository(ConfigurationBackup)
+    private readonly backups: Repository<ConfigurationBackup>,
+    @InjectRepository(VendHqRegister)
+    private readonly registers: Repository<VendHqRegister>,
+    @InjectRepository(AlertLog)
+    private readonly alertLogs: Repository<AlertLog>,
     private readonly alertsService: AlertsService,
   ) {}
 
@@ -51,23 +65,31 @@ export class BatchOperationsService {
       // === STEP 1: FETCH DATA (outside transaction) ===
       this.logger.log('Step 1/6: Fetching VendHQ register data by region...');
 
-      const registersByRegion = await this.prisma.$queryRaw<
-        Array<{
-          region: string;
-          bankAccountId: bigint | null;
-          cashAccountId: bigint | null;
-        }>
-      >`
-        SELECT DISTINCT ON (region)
-          region,
-          "bankAccountId",
-          "cashAccountId"
-        FROM "VendHqRegister"
-        WHERE "bankAccountId" IS NOT NULL
-          AND "cashAccountId" IS NOT NULL
-          AND region IS NOT NULL
-        ORDER BY region, "createdAt" DESC
-      `;
+      // Most-recent register per region (Oracle-portable replacement for the
+      // former Postgres DISTINCT ON (region) ... ORDER BY region, createdAt DESC).
+      const allRegisters = await this.registers.find({
+        where: {
+          bankAccountId: Not(IsNull()),
+          cashAccountId: Not(IsNull()),
+          region: Not(IsNull()),
+        },
+        order: { createdAt: 'DESC' },
+      });
+      const registersByRegion: Array<{
+        region: string;
+        bankAccountId: bigint | null;
+        cashAccountId: bigint | null;
+      }> = [];
+      const seenRegions = new Set<string>();
+      for (const reg of allRegisters) {
+        if (!reg.region || seenRegions.has(reg.region)) continue;
+        seenRegions.add(reg.region);
+        registersByRegion.push({
+          region: reg.region,
+          bankAccountId: reg.bankAccountId,
+          cashAccountId: reg.cashAccountId,
+        });
+      }
 
       if (registersByRegion.length === 0) {
         throw new Error(
@@ -84,11 +106,11 @@ export class BatchOperationsService {
         'Step 2/6: Identifying stores with missing account IDs...',
       );
 
-      const stores = await this.prisma.storeConfiguration.findMany({
-        where: {
-          isActive: true,
-          OR: [{ bankAccountId: null }, { cashAccountId: null }],
-        },
+      const stores = await this.stores.find({
+        where: [
+          { isActive: true, bankAccountId: IsNull() },
+          { isActive: true, cashAccountId: IsNull() },
+        ],
         select: {
           branchCode: true,
           region: true,
@@ -155,15 +177,15 @@ export class BatchOperationsService {
         cashAccountId: s.cashAccountId,
       }));
 
-      const backup = await this.prisma.configurationBackup.create({
-        data: {
+      const backup = await this.backups.save(
+        this.backups.create({
           backupReason: 'pre_batch_account_population',
           backupData: backupData,
           affectedBranches: stores.map((s) => s.branchCode),
           recordCount: stores.length,
           createdBy: 'SYSTEM_BATCH_UPDATE',
-        },
-      });
+        }),
+      );
 
       backupId = backup.id;
       this.logger.log(`✅ Backup created: ${backupId}`);
@@ -171,86 +193,84 @@ export class BatchOperationsService {
       // === STEP 4: ATOMIC TRANSACTION ===
       this.logger.log('Step 4/6: Executing atomic batch update...');
 
-      await this.prisma.$transaction(
-        async (tx) => {
-          // Process in batches of 10 for better performance
-          const BATCH_SIZE = 10;
+      await this.dataSource.transaction(async (manager) => {
+        // Process in batches of 10 for better performance
+        const BATCH_SIZE = 10;
 
-          for (let i = 0; i < stores.length; i += BATCH_SIZE) {
-            const batch = stores.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < stores.length; i += BATCH_SIZE) {
+          const batch = stores.slice(i, i + BATCH_SIZE);
 
-            await Promise.all(
-              batch.map(async (store) => {
-                if (!store.region) {
-                  errors.push(
-                    `Store ${store.branchCode} has no region - skipped`,
-                  );
-                  skipped++;
-                  return;
-                }
+          await Promise.all(
+            batch.map(async (store) => {
+              if (!store.region) {
+                errors.push(
+                  `Store ${store.branchCode} has no region - skipped`,
+                );
+                skipped++;
+                return;
+              }
 
-                const regionData = registersByRegion.find(
-                  (r) => r.region === store.region,
+              const regionData = registersByRegion.find(
+                (r) => r.region === store.region,
+              );
+
+              if (!regionData) {
+                errors.push(
+                  `No register data for region ${store.region} - skipped`,
+                );
+                skipped++;
+                return;
+              }
+
+              const updateData: {
+                bankAccountId?: number;
+                cashAccountId?: number;
+              } = {};
+
+              if (!store.bankAccountId && regionData.bankAccountId) {
+                updateData.bankAccountId = Number(regionData.bankAccountId);
+              }
+
+              if (!store.cashAccountId && regionData.cashAccountId) {
+                updateData.cashAccountId = Number(regionData.cashAccountId);
+              }
+
+              if (Object.keys(updateData).length > 0) {
+                await manager.update(
+                  StoreConfiguration,
+                  { branchCode: store.branchCode },
+                  updateData,
                 );
 
-                if (!regionData) {
-                  errors.push(
-                    `No register data for region ${store.region} - skipped`,
-                  );
-                  skipped++;
-                  return;
-                }
-
-                const updateData: any = {};
-
-                if (!store.bankAccountId && regionData.bankAccountId) {
-                  updateData.bankAccountId = Number(regionData.bankAccountId);
-                }
-
-                if (!store.cashAccountId && regionData.cashAccountId) {
-                  updateData.cashAccountId = Number(regionData.cashAccountId);
-                }
-
-                if (Object.keys(updateData).length > 0) {
-                  await tx.storeConfiguration.update({
-                    where: { branchCode: store.branchCode },
-                    data: updateData,
-                  });
-
-                  this.logger.log(
-                    `Updated ${store.branchCode}: bank=${updateData.bankAccountId || 'unchanged'}, cash=${updateData.cashAccountId || 'unchanged'}`,
-                  );
-                  updated++;
-                } else {
-                  skipped++;
-                }
-              }),
-            );
-          }
-
-          // === POST-UPDATE VERIFICATION ===
-          const missingAfterUpdate = await tx.storeConfiguration.count({
-            where: {
-              isActive: true,
-              OR: [{ bankAccountId: null }, { cashAccountId: null }],
-            },
-          });
-
-          if (missingAfterUpdate > 0) {
-            throw new Error(
-              `Integrity check failed: ${missingAfterUpdate} active stores still have NULL account IDs after update`,
-            );
-          }
-
-          this.logger.log(
-            '✅ Integrity check passed: All active stores have account IDs',
+                this.logger.log(
+                  `Updated ${store.branchCode}: bank=${updateData.bankAccountId || 'unchanged'}, cash=${updateData.cashAccountId || 'unchanged'}`,
+                );
+                updated++;
+              } else {
+                skipped++;
+              }
+            }),
           );
-        },
-        {
-          maxWait: 10000, // 10 seconds max wait for transaction to start
-          timeout: 60000, // 60 seconds transaction timeout
-        },
-      );
+        }
+
+        // === POST-UPDATE VERIFICATION ===
+        const missingAfterUpdate = await manager.count(StoreConfiguration, {
+          where: [
+            { isActive: true, bankAccountId: IsNull() },
+            { isActive: true, cashAccountId: IsNull() },
+          ],
+        });
+
+        if (missingAfterUpdate > 0) {
+          throw new Error(
+            `Integrity check failed: ${missingAfterUpdate} active stores still have NULL account IDs after update`,
+          );
+        }
+
+        this.logger.log(
+          '✅ Integrity check passed: All active stores have account IDs',
+        );
+      });
 
       // === STEP 5: RESOLVE ALERTS ===
       this.logger.log('Step 5/6: Resolving related alerts...');
@@ -311,21 +331,22 @@ export class BatchOperationsService {
   ): Promise<number> {
     if (branchCodes.length === 0) return 0;
 
-    const result = await this.prisma.alertLog.updateMany({
-      where: {
+    const result = await this.alertLogs.update(
+      {
         alertType: AlertType.STORE_CONFIG_INVALID,
-        relatedEntityId: { in: branchCodes },
+        relatedEntityId: In(branchCodes),
         isResolved: false,
       },
-      data: {
+      {
         isResolved: true,
         resolvedAt: new Date(),
         resolvedBy: 'SYSTEM_AUTO_FIX',
       },
-    });
+    );
 
-    this.logger.log(`Resolved ${result.count} store configuration alerts`);
-    return result.count;
+    const count = result.affected ?? 0;
+    this.logger.log(`Resolved ${count} store configuration alerts`);
+    return count;
   }
 
   /**
@@ -337,7 +358,7 @@ export class BatchOperationsService {
   }> {
     this.logger.log(`🔄 Rolling back from backup: ${backupId}`);
 
-    const backup = await this.prisma.configurationBackup.findUnique({
+    const backup = await this.backups.findOne({
       where: { id: backupId },
     });
 
@@ -345,32 +366,37 @@ export class BatchOperationsService {
       throw new Error(`Backup not found: ${backupId}`);
     }
 
-    const backupData = backup.backupData as any[];
+    const backupData = backup.backupData as Array<{
+      branchCode: string;
+      bankAccountId: number | bigint | null;
+      cashAccountId: number | bigint | null;
+    }>;
     const errors: string[] = [];
     let restored = 0;
 
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const config of backupData) {
-          try {
-            await tx.storeConfiguration.update({
-              where: { branchCode: config.branchCode },
-              data: {
-                bankAccountId: config.bankAccountId,
-                cashAccountId: config.cashAccountId,
-                updatedAt: new Date(),
-              },
-            });
-            restored++;
-          } catch (err) {
-            errors.push(`Failed to restore ${config.branchCode}: ${err}`);
-          }
+    await this.dataSource.transaction(async (manager) => {
+      for (const config of backupData) {
+        try {
+          await manager.update(
+            StoreConfiguration,
+            { branchCode: config.branchCode },
+            {
+              bankAccountId:
+                config.bankAccountId != null
+                  ? Number(config.bankAccountId)
+                  : null,
+              cashAccountId:
+                config.cashAccountId != null
+                  ? Number(config.cashAccountId)
+                  : null,
+            },
+          );
+          restored++;
+        } catch (err) {
+          errors.push(`Failed to restore ${config.branchCode}: ${err}`);
         }
-      },
-      {
-        timeout: 60000,
-      },
-    );
+      }
+    });
 
     this.logger.log(
       `✅ Rollback complete: ${restored} configurations restored`,
@@ -382,9 +408,9 @@ export class BatchOperationsService {
   /**
    * List available backups
    */
-  async listBackups(limit = 20): Promise<any[]> {
-    return this.prisma.configurationBackup.findMany({
-      orderBy: { createdAt: 'desc' },
+  async listBackups(limit = 20): Promise<Partial<ConfigurationBackup>[]> {
+    return this.backups.find({
+      order: { createdAt: 'DESC' },
       take: limit,
       select: {
         id: true,
@@ -401,7 +427,7 @@ export class BatchOperationsService {
    * Create a manual backup
    */
   async createManualBackup(reason: string): Promise<string> {
-    const stores = await this.prisma.storeConfiguration.findMany({
+    const stores = await this.stores.find({
       where: { isActive: true },
       select: {
         branchCode: true,
@@ -411,15 +437,15 @@ export class BatchOperationsService {
       },
     });
 
-    const backup = await this.prisma.configurationBackup.create({
-      data: {
+    const backup = await this.backups.save(
+      this.backups.create({
         backupReason: reason,
         backupData: stores,
         affectedBranches: stores.map((s) => s.branchCode),
         recordCount: stores.length,
         createdBy: 'MANUAL',
-      },
-    });
+      }),
+    );
 
     this.logger.log(
       `Manual backup created: ${backup.id} (${stores.length} stores)`,

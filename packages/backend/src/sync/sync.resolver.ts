@@ -9,7 +9,7 @@ import {
   registerEnumType,
   Args,
 } from '@nestjs/graphql';
-import { JobStatus, JobType, ScopeType } from '@prisma/client';
+import { JobStatus, JobType, ScopeType } from '../database/enums';
 import {
   IsArray,
   IsDateString,

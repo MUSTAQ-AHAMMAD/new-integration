@@ -1,9 +1,11 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { NotificationRole } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { PrismaService } from '../prisma/prisma.service';
+import { NotificationRecipient } from '../database/entities/notification-recipient.entity';
+import { NotificationRole } from '../database/enums';
 import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
 
 @Injectable()
@@ -12,7 +14,8 @@ export class NotificationsService implements OnModuleInit {
   private transporter: Transporter | null = null;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(NotificationRecipient)
+    private readonly recipients: Repository<NotificationRecipient>,
     private readonly config: ConfigService,
   ) {}
 
@@ -53,14 +56,14 @@ export class NotificationsService implements OnModuleInit {
   }
 
   async listRecipients(activeOnly = false) {
-    return this.prisma.notificationRecipient.findMany({
+    return this.recipients.find({
       where: activeOnly ? { isActive: true } : undefined,
-      orderBy: { name: 'asc' },
+      order: { name: 'ASC' },
     });
   }
 
   async getRecipient(id: string) {
-    return this.prisma.notificationRecipient.findUnique({ where: { id } });
+    return this.recipients.findOne({ where: { id } });
   }
 
   async createRecipient(data: {
@@ -75,7 +78,7 @@ export class NotificationsService implements OnModuleInit {
     escalationLevel?: number;
     backupRecipientId?: string;
   }) {
-    return this.prisma.notificationRecipient.create({ data });
+    return this.recipients.save(this.recipients.create(data));
   }
 
   async updateRecipient(
@@ -93,15 +96,16 @@ export class NotificationsService implements OnModuleInit {
       isActive?: boolean;
     },
   ) {
-    return this.prisma.notificationRecipient.update({ where: { id }, data });
+    await this.recipients.update(id, data);
+    return this.recipients.findOne({ where: { id } });
   }
 
   async deleteRecipient(id: string) {
-    return this.prisma.notificationRecipient.delete({ where: { id } });
+    return this.recipients.delete(id);
   }
 
   async getErrorAlertRecipients(): Promise<string[]> {
-    const recipients = await this.prisma.notificationRecipient.findMany({
+    const recipients = await this.recipients.find({
       where: { isActive: true, receiveErrorAlerts: true },
       select: { email: true },
     });
@@ -109,7 +113,7 @@ export class NotificationsService implements OnModuleInit {
   }
 
   async getInventoryAlertRecipients(): Promise<string[]> {
-    const recipients = await this.prisma.notificationRecipient.findMany({
+    const recipients = await this.recipients.find({
       where: { isActive: true, receiveInventoryAlerts: true },
       select: { email: true },
     });
@@ -117,7 +121,7 @@ export class NotificationsService implements OnModuleInit {
   }
 
   async getDailyReportRecipients(): Promise<string[]> {
-    const recipients = await this.prisma.notificationRecipient.findMany({
+    const recipients = await this.recipients.find({
       where: { isActive: true, receiveDailyReports: true },
       select: { email: true },
     });

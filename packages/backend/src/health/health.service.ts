@@ -1,8 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { HealthStatus, ServiceName } from '@prisma/client';
+import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, MoreThanOrEqual, Repository } from 'typeorm';
+import { IntegrationHealthCheck } from '../database/entities/integration-health-check.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { AuditLog } from '../database/entities/audit-log.entity';
+import {
+  AuditStatus,
+  HealthStatus,
+  JobStatus,
+  ServiceName,
+  SyncStatus,
+} from '../database/enums';
 import { GatewayService } from '../gateway/gateway.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
 
@@ -18,7 +31,16 @@ export class HealthService {
   private readonly HIGH_UNRESOLVED_FAILURES_THRESHOLD = 100;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(IntegrationHealthCheck)
+    private readonly healthChecks: Repository<IntegrationHealthCheck>,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderQueue: Repository<OrderSyncQueue>,
+    @InjectRepository(SyncJob)
+    private readonly syncJobs: Repository<SyncJob>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactions: Repository<FailedTransaction>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly redis: RedisService,
     private readonly gateway: GatewayService,
     private readonly oracleSoap: OracleSoapClient,
@@ -41,15 +63,15 @@ export class HealthService {
     try {
       await checkFn();
       const responseTimeMs = Date.now() - start;
-      await this.prisma.integrationHealthCheck.create({
-        data: {
+      await this.healthChecks.save(
+        this.healthChecks.create({
           serviceName,
           status: HealthStatus.HEALTHY,
           responseTimeMs,
           lastSuccessAt: new Date(),
           consecutiveFailures: 0,
-        },
-      });
+        }),
+      );
       this.gateway.emitHealthUpdate({
         service: serviceName,
         status: HealthStatus.HEALTHY,
@@ -63,19 +85,19 @@ export class HealthService {
       );
 
       // Retrieve the current consecutive-failure count so we can increment it.
-      const lastCheck = await this.prisma.integrationHealthCheck
-        .findFirst({
+      const lastCheck = await this.healthChecks
+        .findOne({
           where: { serviceName },
-          orderBy: { createdAt: 'desc' },
+          order: { createdAt: 'DESC' },
           select: { consecutiveFailures: true },
         })
         .catch(() => null);
 
       const consecutiveFailures = (lastCheck?.consecutiveFailures ?? 0) + 1;
 
-      await this.prisma.integrationHealthCheck
-        .create({
-          data: {
+      await this.healthChecks
+        .save(
+          this.healthChecks.create({
             serviceName,
             status: HealthStatus.UNHEALTHY,
             responseTimeMs,
@@ -83,8 +105,8 @@ export class HealthService {
             lastFailureAt: new Date(),
             failureReason,
             consecutiveFailures,
-          },
-        })
+          }),
+        )
         .catch(() => undefined);
       this.gateway.emitHealthUpdate({
         service: serviceName,
@@ -95,7 +117,7 @@ export class HealthService {
 
   private checkDatabase() {
     return this.checkService(ServiceName.DATABASE, async () => {
-      await this.prisma.$queryRaw`SELECT 1`;
+      await this.dataSource.query('SELECT 1 FROM DUAL');
     });
   }
 
@@ -109,6 +131,26 @@ export class HealthService {
     return this.checkService(ServiceName.ORACLE_SOAP, async () => {
       await this.oracleSoap.ping();
     });
+  }
+
+  /**
+   * Latest health check per service. Replaces the Prisma `findMany` with
+   * `distinct: ['serviceName']` (Postgres DISTINCT ON) — Oracle has no such
+   * clause, so fetch ordered rows and keep the first (most recent) per service.
+   */
+  async getLatestHealthPerService(): Promise<IntegrationHealthCheck[]> {
+    const rows = await this.healthChecks.find({
+      order: { serviceName: 'ASC', createdAt: 'DESC' },
+    });
+
+    const seen = new Set<string>();
+    const latest: IntegrationHealthCheck[] = [];
+    for (const row of rows) {
+      if (seen.has(row.serviceName)) continue;
+      seen.add(row.serviceName);
+      latest.push(row);
+    }
+    return latest;
   }
 
   /**
@@ -130,31 +172,21 @@ export class HealthService {
       recentlyProcessed,
       recentlyFailed,
     ] = await Promise.all([
-      this.prisma.orderSyncQueue.count({
-        where: { status: 'PENDING' },
-      }),
-      this.prisma.orderSyncQueue.count({
-        where: { status: 'PROCESSING' },
-      }),
-      this.prisma.orderSyncQueue.count({
-        where: { status: 'SYNCED' },
-      }),
-      this.prisma.orderSyncQueue.count({
-        where: { status: 'FAILED' },
-      }),
-      this.prisma.orderSyncQueue.count({
-        where: { status: 'SKIPPED' },
-      }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({ where: { status: SyncStatus.PENDING } }),
+      this.orderQueue.count({ where: { status: SyncStatus.PROCESSING } }),
+      this.orderQueue.count({ where: { status: SyncStatus.SYNCED } }),
+      this.orderQueue.count({ where: { status: SyncStatus.FAILED } }),
+      this.orderQueue.count({ where: { status: SyncStatus.SKIPPED } }),
+      this.orderQueue.count({
         where: {
-          status: 'SYNCED',
-          updatedAt: { gte: oneHourAgo },
+          status: SyncStatus.SYNCED,
+          updatedAt: MoreThanOrEqual(oneHourAgo),
         },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({
         where: {
-          status: 'FAILED',
-          updatedAt: { gte: oneHourAgo },
+          status: SyncStatus.FAILED,
+          updatedAt: MoreThanOrEqual(oneHourAgo),
         },
       }),
     ]);
@@ -167,29 +199,23 @@ export class HealthService {
 
     // Get sync job status
     const [runningJobs, pendingJobs, failedJobs] = await Promise.all([
-      this.prisma.syncJob.count({
-        where: { status: 'PROCESSING' },
-      }),
-      this.prisma.syncJob.count({
-        where: { status: 'PENDING' },
-      }),
-      this.prisma.syncJob.count({
+      this.syncJobs.count({ where: { status: JobStatus.PROCESSING } }),
+      this.syncJobs.count({ where: { status: JobStatus.PENDING } }),
+      this.syncJobs.count({
         where: {
-          status: 'FAILED',
-          createdAt: { gte: oneDayAgo },
+          status: JobStatus.FAILED,
+          createdAt: MoreThanOrEqual(oneDayAgo),
         },
       }),
     ]);
 
     // Get failed transaction stats
     const [unresolvedFailures, todayFailures] = await Promise.all([
-      this.prisma.failedTransaction.count({
-        where: { isResolved: false },
-      }),
-      this.prisma.failedTransaction.count({
+      this.failedTransactions.count({ where: { isResolved: false } }),
+      this.failedTransactions.count({
         where: {
           isResolved: false,
-          createdAt: { gte: oneDayAgo },
+          createdAt: MoreThanOrEqual(oneDayAgo),
         },
       }),
     ]);
@@ -283,45 +309,37 @@ export class HealthService {
       failedWeek,
       averageProcessingTime,
     ] = await Promise.all([
-      this.prisma.orderSyncQueue.count({
-        where: { createdAt: { gte: oneDayAgo } },
+      this.orderQueue.count({
+        where: { createdAt: MoreThanOrEqual(oneDayAgo) },
       }),
-      this.prisma.orderSyncQueue.count({
-        where: { createdAt: { gte: sevenDaysAgo } },
+      this.orderQueue.count({
+        where: { createdAt: MoreThanOrEqual(sevenDaysAgo) },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({
         where: {
-          status: 'SYNCED',
-          updatedAt: { gte: oneDayAgo },
+          status: SyncStatus.SYNCED,
+          updatedAt: MoreThanOrEqual(oneDayAgo),
         },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({
         where: {
-          status: 'SYNCED',
-          updatedAt: { gte: sevenDaysAgo },
+          status: SyncStatus.SYNCED,
+          updatedAt: MoreThanOrEqual(sevenDaysAgo),
         },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({
         where: {
-          status: 'FAILED',
-          updatedAt: { gte: oneDayAgo },
+          status: SyncStatus.FAILED,
+          updatedAt: MoreThanOrEqual(oneDayAgo),
         },
       }),
-      this.prisma.orderSyncQueue.count({
+      this.orderQueue.count({
         where: {
-          status: 'FAILED',
-          updatedAt: { gte: sevenDaysAgo },
+          status: SyncStatus.FAILED,
+          updatedAt: MoreThanOrEqual(sevenDaysAgo),
         },
       }),
-      this.prisma.auditLog.aggregate({
-        where: {
-          status: 'SUCCESS',
-          createdAt: { gte: oneDayAgo },
-        },
-        _avg: {
-          processingDurationMs: true,
-        },
-      }),
+      this.getAverageProcessingTimeMs(oneDayAgo),
     ]);
 
     return {
@@ -335,9 +353,7 @@ export class HealthService {
         failedThisWeek: failedWeek,
       },
       performance: {
-        averageProcessingTimeMs: Math.round(
-          averageProcessingTime._avg.processingDurationMs ?? 0,
-        ),
+        averageProcessingTimeMs: Math.round(averageProcessingTime),
         successRateToday:
           totalOrdersToday > 0
             ? parseFloat(((syncedToday / totalOrdersToday) * 100).toFixed(2))
@@ -348,5 +364,21 @@ export class HealthService {
             : 0,
       },
     };
+  }
+
+  /**
+   * Average processing duration (ms) of successful audit-log operations since
+   * the given cutoff. Replaces the Prisma `auditLog.aggregate({ _avg })` call.
+   */
+  private async getAverageProcessingTimeMs(since: Date): Promise<number> {
+    const row = await this.dataSource
+      .getRepository(AuditLog)
+      .createQueryBuilder('a')
+      .select('AVG(a.processingDurationMs)', 'avg')
+      .where('a.status = :status', { status: AuditStatus.SUCCESS })
+      .andWhere('a.createdAt >= :since', { since })
+      .getRawOne<{ avg: string | number | null }>();
+
+    return row?.avg != null ? Number(row.avg) : 0;
   }
 }

@@ -4,8 +4,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { JobStatus, Prisma, ScopeType, SyncStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Between, In, MoreThan, Repository } from 'typeorm';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { SyncJob } from '../database/entities/sync-job.entity';
+import { JobStatus, JobType, ScopeType, SyncStatus } from '../database/enums';
 import { QueuesService } from '../queues/queues.service';
 import { TimezoneService } from './timezone.service';
 import { CreateSyncJobDto } from './dto/create-sync-job.dto';
@@ -18,27 +22,32 @@ export class SyncService {
   private readonly MAX_CSV_EXPORT_RECORDS = 5000;
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(SyncJob)
+    private readonly syncJobRepo: Repository<SyncJob>,
+    @InjectRepository(OrderSyncQueue)
+    private readonly orderSyncQueueRepo: Repository<OrderSyncQueue>,
+    @InjectRepository(FailedTransaction)
+    private readonly failedTransactionRepo: Repository<FailedTransaction>,
     private readonly queues: QueuesService,
     private readonly timezoneService: TimezoneService,
   ) {}
 
   async createSyncJob(dto: CreateSyncJobDto) {
-    const scopeValue: Record<string, Prisma.InputJsonValue> = {};
+    const scopeValue: Record<string, unknown> = {};
     if (dto.orderIds) scopeValue.orderIds = dto.orderIds;
     if (dto.branchCode) scopeValue.branchCode = dto.branchCode;
     if (dto.startDate) scopeValue.startDate = dto.startDate;
     if (dto.endDate) scopeValue.endDate = dto.endDate;
     if (dto.timezone) scopeValue.timezone = dto.timezone;
 
-    const job = await this.prisma.syncJob.create({
-      data: {
-        jobType: dto.jobType,
-        scopeType: dto.scopeType,
+    const job = await this.syncJobRepo.save(
+      this.syncJobRepo.create({
+        jobType: dto.jobType as unknown as JobType,
+        scopeType: dto.scopeType as unknown as ScopeType,
         scopeValue: scopeValue,
         createdBy: dto.createdBy || 'API',
-      },
-    });
+      }),
+    );
 
     let enqueuedCount = 0;
     let skippedCount = 0;
@@ -76,10 +85,10 @@ export class SyncService {
 
       await Promise.all([
         toSkipIds.length > 0
-          ? this.prisma.orderSyncQueue.updateMany({
-              where: { id: { in: toSkipIds } },
-              data: { status: SyncStatus.SKIPPED },
-            })
+          ? this.orderSyncQueueRepo.update(
+              { id: In(toSkipIds) },
+              { status: SyncStatus.SKIPPED },
+            )
           : Promise.resolve(),
         toEnqueue.length > 0
           ? this.queues.enqueueOrderSyncBulk(toEnqueue)
@@ -108,31 +117,31 @@ export class SyncService {
     // handled (marked SKIPPED) without going through the queue.
     // successCount starts at 0 — Oracle-synced counts are incremented by the
     // queue processor as each order is actually submitted to Oracle.
-    return this.prisma.syncJob.update({
-      where: { id: job.id },
-      data: {
-        totalRecords,
-        processedRecords: skippedCount,
-        successCount: 0,
-        skippedCount,
-        status: finalStatus,
-        startedAt: totalRecords > 0 ? new Date() : undefined,
-        completedAt:
-          finalStatus === JobStatus.COMPLETED ? new Date() : undefined,
-      },
+    await this.syncJobRepo.update(job.id, {
+      totalRecords,
+      processedRecords: skippedCount,
+      successCount: 0,
+      skippedCount,
+      status: finalStatus,
+      startedAt: totalRecords > 0 ? new Date() : undefined,
+      completedAt: finalStatus === JobStatus.COMPLETED ? new Date() : undefined,
     });
+
+    // The row was just created and updated by id, so it always exists.
+    const saved = await this.syncJobRepo.findOne({ where: { id: job.id } });
+    return saved as SyncJob;
   }
 
   async listSyncJobs(status?: string, limit = 50) {
-    return this.prisma.syncJob.findMany({
+    return this.syncJobRepo.find({
       where: status ? { status: status as JobStatus } : undefined,
-      orderBy: { createdAt: 'desc' },
+      order: { createdAt: 'desc' },
       take: limit,
     });
   }
 
   async getSyncJob(id: string) {
-    const job = await this.prisma.syncJob.findUnique({ where: { id } });
+    const job = await this.syncJobRepo.findOne({ where: { id } });
     if (!job) throw new NotFoundException(`Sync job ${id} not found`);
     return job;
   }
@@ -148,18 +157,20 @@ export class SyncService {
       );
     }
 
-    return this.prisma.syncJob.update({
-      where: { id },
-      data: { status: JobStatus.CANCELLED, completedAt: new Date() },
+    await this.syncJobRepo.update(id, {
+      status: JobStatus.CANCELLED,
+      completedAt: new Date(),
     });
+
+    return this.syncJobRepo.findOne({ where: { id } });
   }
 
   async retrySyncJob(id: string) {
     const job = await this.getSyncJob(id);
-    const parsedScope = job.scopeValue as Prisma.JsonObject;
+    const parsedScope = (job.scopeValue as Record<string, unknown>) ?? {};
     const dto: CreateSyncJobDto = {
-      jobType: job.jobType,
-      scopeType: job.scopeType,
+      jobType: job.jobType as unknown as CreateSyncJobDto['jobType'],
+      scopeType: job.scopeType as unknown as CreateSyncJobDto['scopeType'],
       orderIds: Array.isArray(parsedScope.orderIds)
         ? parsedScope.orderIds.map(String)
         : undefined,
@@ -182,13 +193,10 @@ export class SyncService {
       createdBy: job.createdBy,
     };
 
-    await this.prisma.syncJob.update({
-      where: { id },
-      data: {
-        status: JobStatus.PENDING,
-        retryCount: { increment: 1 },
-        errorMessage: null,
-      },
+    await this.syncJobRepo.increment({ id }, 'retryCount', 1);
+    await this.syncJobRepo.update(id, {
+      status: JobStatus.PENDING,
+      errorMessage: null,
     });
 
     return this.createSyncJob(dto);
@@ -204,58 +212,56 @@ export class SyncService {
       branchCode?: string;
       search?: string;
       limit?: number;
+      isCancelled?: boolean;
+      isRefund?: boolean;
     } = {},
   ) {
-    const { status, branchCode, search, limit = 200 } = opts;
+    const { status, branchCode, search, limit = 200, isCancelled, isRefund } =
+      opts;
     const take = Math.min(limit, 1000);
 
-    const where: Prisma.OrderSyncQueueWhereInput = {};
+    const qb = this.orderSyncQueueRepo.createQueryBuilder('o');
+
     if (status && status !== 'ALL') {
-      where.status = status as SyncStatus;
+      qb.andWhere('o.status = :status', { status });
     }
     if (branchCode && branchCode !== 'ALL') {
-      where.branchCode = branchCode;
+      qb.andWhere('o.branchCode = :branchCode', { branchCode });
+    }
+    if (typeof isCancelled === 'boolean') {
+      qb.andWhere('o.isCancelled = :isCancelled', {
+        isCancelled: isCancelled ? 1 : 0,
+      });
+    }
+    if (typeof isRefund === 'boolean') {
+      qb.andWhere('o.isRefund = :isRefund', { isRefund: isRefund ? 1 : 0 });
     }
     if (search) {
       const s = search.trim();
-      where.OR = [
-        { odooOrderNumber: { contains: s, mode: 'insensitive' } },
-        { customerName: { contains: s, mode: 'insensitive' } },
-      ];
+      qb.andWhere(
+        '(LOWER(o.odooOrderNumber) LIKE LOWER(:search) OR LOWER(o.customerName) LIKE LOWER(:search))',
+        { search: `%${s}%` },
+      );
     }
 
-    return this.prisma.orderSyncQueue.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take,
-      include: {
-        failedTransactions: {
-          where: { isResolved: false },
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: {
-            id: true,
-            errorType: true,
-            errorMessage: true,
-            retryCount: true,
-            createdAt: true,
-          },
-        },
-      },
+    const orders = await qb
+      .orderBy('o.createdAt', 'DESC')
+      .take(take)
+      .getMany();
+
+    return this.attachFailedTransactions(orders, {
+      onlyUnresolved: true,
+      take: 5,
+      select: true,
     });
   }
 
   async retryOrderQueueEntry(id: string) {
-    const order = await this.prisma.orderSyncQueue.findUnique({
-      where: { id },
-    });
+    const order = await this.orderSyncQueueRepo.findOne({ where: { id } });
     if (!order)
       throw new NotFoundException(`Order queue entry ${id} not found`);
 
-    await this.prisma.orderSyncQueue.update({
-      where: { id },
-      data: { status: SyncStatus.PENDING },
-    });
+    await this.orderSyncQueueRepo.update(id, { status: SyncStatus.PENDING });
 
     await this.queues.enqueueOrderSync({
       orderSyncQueueId: order.id,
@@ -268,25 +274,29 @@ export class SyncService {
   }
 
   async getOrderStatus(odooOrderId: string) {
-    return this.prisma.orderSyncQueue.findMany({
+    const orders = await this.orderSyncQueueRepo.find({
       where: { odooOrderId },
-      include: {
-        failedTransactions: { take: 5, orderBy: { createdAt: 'desc' } },
-      },
     });
+    return this.attachFailedTransactions(orders, { take: 5 });
   }
 
   async listFailedTransactions(limit = 50) {
-    return this.prisma.failedTransaction.findMany({
+    const failed = await this.failedTransactionRepo.find({
       where: { isResolved: false },
-      include: {
-        orderSyncQueue: {
-          select: { odooOrderNumber: true, branchCode: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
+      relations: { orderSyncQueue: true },
+      order: { createdAt: 'desc' },
       take: limit,
     });
+
+    return failed.map((ft) => ({
+      ...ft,
+      orderSyncQueue: ft.orderSyncQueue
+        ? {
+            odooOrderNumber: ft.orderSyncQueue.odooOrderNumber,
+            branchCode: ft.orderSyncQueue.branchCode,
+          }
+        : null,
+    }));
   }
 
   async resolveFailedTransaction(
@@ -294,48 +304,49 @@ export class SyncService {
     resolvedBy: string,
     resolutionNote?: string,
   ) {
-    return this.prisma.failedTransaction.update({
-      where: { id },
-      data: {
-        isResolved: true,
-        resolvedBy,
-        resolvedAt: new Date(),
-        resolutionNote,
-      },
+    await this.failedTransactionRepo.update(id, {
+      isResolved: true,
+      resolvedBy,
+      resolvedAt: new Date(),
+      resolutionNote: resolutionNote ?? null,
     });
+
+    return this.failedTransactionRepo.findOne({ where: { id } });
   }
 
   private async findOrdersByScope(
     dto: CreateSyncJobDto,
     take?: number,
     cursorId?: string,
-  ) {
+  ): Promise<OrderSyncQueue[]> {
     // Orders are sorted by `id` (CUID, lexicographically time-ordered) to
     // support stable cursor-based pagination across batches. This replaces
     // the previous `createdAt` / `orderDateUtc` ordering, which was not
     // suitable for keyset pagination because those columns are non-unique.
-    const pagination =
-      take !== undefined
-        ? {
-            take,
-            ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
-          }
-        : {};
+    //
+    // Keyset pagination is expressed as `id > :cursorId` (TypeORM `MoreThan`)
+    // combined with `ORDER BY id ASC`, matching Prisma's `cursor + skip:1`.
+    const buildWhere = (
+      base: Record<string, unknown>,
+    ): Record<string, unknown> =>
+      cursorId ? { ...base, id: MoreThan(cursorId) } : base;
+
+    const options = (base: Record<string, unknown>) => ({
+      where: buildWhere(base),
+      order: { id: 'ASC' as const },
+      ...(take !== undefined ? { take } : {}),
+    });
 
     if (dto.scopeType === ScopeType.SINGLE_ORDER && dto.orderIds?.length) {
-      return this.prisma.orderSyncQueue.findMany({
-        where: { odooOrderId: { in: dto.orderIds } },
-        orderBy: { id: 'asc' },
-        ...pagination,
-      });
+      return this.orderSyncQueueRepo.find(
+        options({ odooOrderId: In(dto.orderIds) }),
+      );
     }
 
     if (dto.scopeType === ScopeType.BRANCH && dto.branchCode) {
-      return this.prisma.orderSyncQueue.findMany({
-        where: { branchCode: dto.branchCode },
-        orderBy: { id: 'asc' },
-        ...pagination,
-      });
+      return this.orderSyncQueueRepo.find(
+        options({ branchCode: dto.branchCode }),
+      );
     }
 
     if (
@@ -349,11 +360,9 @@ export class SyncService {
         dto.endDate,
         timezone,
       );
-      return this.prisma.orderSyncQueue.findMany({
-        where: { orderDateUtc: { gte: range.start, lte: range.end } },
-        orderBy: { id: 'asc' },
-        ...pagination,
-      });
+      return this.orderSyncQueueRepo.find(
+        options({ orderDateUtc: Between(range.start, range.end) }),
+      );
     }
 
     if (
@@ -368,27 +377,67 @@ export class SyncService {
         dto.endDate,
         timezone,
       );
-      return this.prisma.orderSyncQueue.findMany({
-        where: {
+      return this.orderSyncQueueRepo.find(
+        options({
           branchCode: dto.branchCode,
-          orderDateUtc: { gte: range.start, lte: range.end },
-        },
-        orderBy: { id: 'asc' },
-        ...pagination,
-      });
+          orderDateUtc: Between(range.start, range.end),
+        }),
+      );
     }
 
     if (dto.scopeType === ScopeType.FAILED_ONLY) {
-      return this.prisma.orderSyncQueue.findMany({
-        where: { status: SyncStatus.FAILED },
-        orderBy: { id: 'asc' },
-        ...pagination,
-      });
+      return this.orderSyncQueueRepo.find(
+        options({ status: SyncStatus.FAILED }),
+      );
     }
 
-    return this.prisma.orderSyncQueue.findMany({
-      orderBy: { id: 'asc' },
-      ...pagination,
+    return this.orderSyncQueueRepo.find(options({}));
+  }
+
+  /**
+   * Loads related FailedTransaction rows for a set of orders and attaches them
+   * as `failedTransactions`. Prisma's per-relation `where`/`orderBy`/`take`
+   * `include` has no direct `find` equivalent, so the children are fetched in a
+   * single query and grouped in memory.
+   */
+  private async attachFailedTransactions<T extends { id: string }>(
+    orders: T[],
+    opts: { onlyUnresolved?: boolean; take: number; select?: boolean },
+  ): Promise<(T & { failedTransactions: unknown[] })[]> {
+    if (orders.length === 0) {
+      return orders.map((o) => ({ ...o, failedTransactions: [] }));
+    }
+
+    const qb = this.failedTransactionRepo
+      .createQueryBuilder('ft')
+      .where('ft.orderSyncQueueId IN (:...ids)', {
+        ids: orders.map((o) => o.id),
+      });
+    if (opts.onlyUnresolved) {
+      qb.andWhere('ft.isResolved = :resolved', { resolved: 0 });
+    }
+    const allFailed = await qb.orderBy('ft.createdAt', 'DESC').getMany();
+
+    const byOrder = new Map<string, FailedTransaction[]>();
+    for (const ft of allFailed) {
+      const key = ft.orderSyncQueueId ?? '';
+      const list = byOrder.get(key) ?? [];
+      if (list.length < opts.take) list.push(ft);
+      byOrder.set(key, list);
+    }
+
+    return orders.map((o) => {
+      const list = byOrder.get(o.id) ?? [];
+      const failedTransactions = opts.select
+        ? list.map((ft) => ({
+            id: ft.id,
+            errorType: ft.errorType,
+            errorMessage: ft.errorMessage,
+            retryCount: ft.retryCount,
+            createdAt: ft.createdAt,
+          }))
+        : list;
+      return { ...o, failedTransactions };
     });
   }
 
@@ -406,7 +455,7 @@ export class SyncService {
   ): Promise<{ updated: number; enqueued: number }> {
     // Find skipped orders that should actually be processed
     // (orders that were skipped but are now marked as paid)
-    const skippedOrders = await this.prisma.orderSyncQueue.findMany({
+    const skippedOrders = await this.orderSyncQueueRepo.find({
       where: {
         status: SyncStatus.SKIPPED,
         isPaid: true,
@@ -427,14 +476,10 @@ export class SyncService {
     }
 
     // Update status to PENDING
-    const updateResult = await this.prisma.orderSyncQueue.updateMany({
-      where: {
-        id: { in: skippedOrders.map((o) => o.id) },
-      },
-      data: {
-        status: SyncStatus.PENDING,
-      },
-    });
+    const updateResult = await this.orderSyncQueueRepo.update(
+      { id: In(skippedOrders.map((o) => o.id)) },
+      { status: SyncStatus.PENDING },
+    );
 
     // Enqueue for processing
     await this.queues.enqueueOrderSyncBulk(
@@ -446,13 +491,14 @@ export class SyncService {
       })),
     );
 
+    const updatedCount = updateResult.affected ?? 0;
     this.logger.log(
-      `Re-queued ${updateResult.count} previously skipped orders` +
+      `Re-queued ${updatedCount} previously skipped orders` +
         (branchCode ? ` for branch ${branchCode}` : ''),
     );
 
     return {
-      updated: updateResult.count,
+      updated: updatedCount,
       enqueued: skippedOrders.length,
     };
   }
@@ -461,20 +507,10 @@ export class SyncService {
    * Export failed transactions to CSV format
    */
   async exportFailedTransactionsCSV(): Promise<string> {
-    const failedTransactions = await this.prisma.failedTransaction.findMany({
+    const failedTransactions = await this.failedTransactionRepo.find({
       where: { isResolved: false },
-      include: {
-        orderSyncQueue: {
-          select: {
-            odooOrderNumber: true,
-            branchCode: true,
-            totalAmount: true,
-            currency: true,
-            orderDate: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
+      relations: { orderSyncQueue: true },
+      order: { createdAt: 'desc' },
       take: this.MAX_CSV_EXPORT_RECORDS, // Limit to prevent memory issues
     });
 
@@ -518,40 +554,41 @@ export class SyncService {
    * List failed orders with details
    */
   async listFailedOrders(limit = 100) {
-    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+    const orders = await this.orderSyncQueueRepo.find({
       where: { status: SyncStatus.FAILED },
-      orderBy: { updatedAt: 'desc' },
+      order: { updatedAt: 'desc' },
       take: limit,
-      include: {
-        failedTransactions: {
-          where: { isResolved: false },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
     });
 
-    return failedOrders.map((order) => ({
-      id: order.id,
-      orderNumber: order.odooOrderNumber,
-      orderId: order.odooOrderId,
-      branchCode: order.branchCode,
-      branchName: order.branchName,
-      totalAmount: order.totalAmount,
-      currency: order.currency,
-      orderDate: order.orderDate,
-      syncAttempts: order.syncAttempts,
-      lastSyncAt: order.lastSyncAt,
-      customerName: order.customerName,
-      errorDetails: order.failedTransactions[0]
-        ? {
-            errorType: order.failedTransactions[0].errorType,
-            errorMessage: order.failedTransactions[0].errorMessage,
-            errorStack: order.failedTransactions[0].errorStack,
-            createdAt: order.failedTransactions[0].createdAt,
-          }
-        : null,
-    }));
+    const withFailures = await this.attachFailedTransactions(orders, {
+      onlyUnresolved: true,
+      take: 1,
+    });
+
+    return withFailures.map((order) => {
+      const failedTransactions = order.failedTransactions as FailedTransaction[];
+      return {
+        id: order.id,
+        orderNumber: order.odooOrderNumber,
+        orderId: order.odooOrderId,
+        branchCode: order.branchCode,
+        branchName: order.branchName,
+        totalAmount: order.totalAmount,
+        currency: order.currency,
+        orderDate: order.orderDate,
+        syncAttempts: order.syncAttempts,
+        lastSyncAt: order.lastSyncAt,
+        customerName: order.customerName,
+        errorDetails: failedTransactions[0]
+          ? {
+              errorType: failedTransactions[0].errorType,
+              errorMessage: failedTransactions[0].errorMessage,
+              errorStack: failedTransactions[0].errorStack,
+              createdAt: failedTransactions[0].createdAt,
+            }
+          : null,
+      };
+    });
   }
 
   /**
@@ -561,7 +598,7 @@ export class SyncService {
     updated: number;
     enqueued: number;
   }> {
-    const failedOrders = await this.prisma.orderSyncQueue.findMany({
+    const failedOrders = await this.orderSyncQueueRepo.find({
       where: { status: SyncStatus.FAILED },
       select: {
         id: true,
@@ -576,14 +613,10 @@ export class SyncService {
     }
 
     // Update status to PENDING
-    const updateResult = await this.prisma.orderSyncQueue.updateMany({
-      where: {
-        id: { in: failedOrders.map((o) => o.id) },
-      },
-      data: {
-        status: SyncStatus.PENDING,
-      },
-    });
+    const updateResult = await this.orderSyncQueueRepo.update(
+      { id: In(failedOrders.map((o) => o.id)) },
+      { status: SyncStatus.PENDING },
+    );
 
     // Enqueue for processing
     await this.queues.enqueueOrderSyncBulk(
@@ -595,8 +628,9 @@ export class SyncService {
       })),
     );
 
-    this.logger.log(`Re-queued ${updateResult.count} failed orders for retry`);
+    const updatedCount = updateResult.affected ?? 0;
+    this.logger.log(`Re-queued ${updatedCount} failed orders for retry`);
 
-    return { updated: updateResult.count, enqueued: failedOrders.length };
+    return { updated: updatedCount, enqueued: failedOrders.length };
   }
 }

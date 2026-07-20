@@ -10,7 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { NotificationRole } from '@prisma/client';
+import { NotificationRole } from '../database/enums';
 import { NotificationsService } from './notifications.service';
 
 @ApiTags('notifications')

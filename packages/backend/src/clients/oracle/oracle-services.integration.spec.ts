@@ -5,7 +5,11 @@
  * and handle responses correctly.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { PrismaService } from '../../prisma/prisma.service';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { BackupOdooOrderLine } from '../../database/entities/backup-odoo-order-line.entity';
+import { FusionInvoiceLine } from '../../database/entities/fusion-invoice-line.entity';
+import { StoreConfiguration } from '../../database/entities/store-configuration.entity';
+import { VendHqItemMeta } from '../../database/entities/vend-hq-item-meta.entity';
 import { OracleSoapClient } from './oracle-soap.client';
 import { OracleCustomerService } from './oracle-customer.service';
 import { OracleTaxService } from './oracle-tax.service';
@@ -31,18 +35,20 @@ describe('Oracle Services Integration', () => {
           },
         },
         {
-          provide: PrismaService,
-          useValue: {
-            storeConfiguration: {
-              findFirst: jest.fn(),
-            },
-            fusionInvoiceLine: {
-              findFirst: jest.fn(),
-            },
-            fusionInvTxn: {
-              findFirst: jest.fn(),
-            },
-          },
+          provide: getRepositoryToken(StoreConfiguration),
+          useValue: { findOne: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(FusionInvoiceLine),
+          useValue: { findOne: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(VendHqItemMeta),
+          useValue: { findOne: jest.fn() },
+        },
+        {
+          provide: getRepositoryToken(BackupOdooOrderLine),
+          useValue: { findOne: jest.fn() },
         },
       ],
     }).compile();

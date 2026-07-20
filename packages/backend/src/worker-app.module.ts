@@ -18,7 +18,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { ScheduleModule } from '@nestjs/schedule';
-import { PrismaModule } from './prisma/prisma.module';
+import { DatabaseModule } from './database/database.module';
 import { RedisModule } from './redis/redis.module';
 import { QueuesModule } from './queues/queues.module';
 import { AlertsModule } from './alerts/alerts.module';
@@ -53,7 +53,8 @@ import { InventoryModule } from './inventory/inventory.module';
       },
     }),
     ScheduleModule.forRoot(),
-    PrismaModule,
+    // Oracle (TypeORM) application database.
+    DatabaseModule,
     RedisModule,
     AlertsModule,
     ClientsModule,

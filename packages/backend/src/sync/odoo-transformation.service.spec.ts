@@ -1,5 +1,13 @@
+import { ObjectLiteral, Repository } from 'typeorm';
 import { OdooTransformationService } from './odoo-transformation.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { FusionCustomerAccount } from '../database/entities/fusion-customer-account.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -62,37 +70,39 @@ function makeRegister(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma(overrides: Record<string, unknown> = {}) {
+// Per-entity repository mocks. `findUnique`/`findFirst` (Prisma) both map to
+// TypeORM's `findOne`; `findMany` maps to `find`. The model keys are kept so the
+// test bodies read the same as before.
+function makeRepos() {
   return {
     backupOdooOrder: {
-      findUnique: jest.fn().mockResolvedValue(makeBackup()),
+      findOne: jest.fn().mockResolvedValue(makeBackup()),
     },
     storeConfiguration: {
-      findUnique: jest.fn().mockResolvedValue(makeStoreConfig()),
+      findOne: jest.fn().mockResolvedValue(makeStoreConfig()),
     },
     fusionSalesMetadata: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      findMany: jest.fn().mockResolvedValue([makeSalesMeta()]),
+      findOne: jest.fn().mockResolvedValue(null),
+      find: jest.fn().mockResolvedValue([makeSalesMeta()]),
     },
     vendHqRegister: {
-      findMany: jest.fn().mockResolvedValue([makeRegister()]),
+      find: jest.fn().mockResolvedValue([makeRegister()]),
     },
     fusionBusinessUnitMap: {
-      findFirst: jest.fn().mockResolvedValue({ businessUnitId: 300 }),
+      findOne: jest.fn().mockResolvedValue({ businessUnitId: 300n }),
     },
     serviceProviderJournalMeta: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      findMany: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
+      find: jest.fn().mockResolvedValue([]),
     },
     fusionReceiptMethod: {
-      findFirst: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue(null),
     },
     fusionCustomerAccount: {
-      findUnique: jest
+      findOne: jest
         .fn()
         .mockResolvedValue({ customerAccountId: 300000051631461n }),
     },
-    ...overrides,
   };
 }
 
@@ -102,25 +112,37 @@ function makePrisma(overrides: Record<string, unknown> = {}) {
 
 describe('OdooTransformationService', () => {
   let service: OdooTransformationService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let prisma: ReturnType<typeof makeRepos>;
+
+  const asRepo = <T extends ObjectLiteral>(mock: unknown) =>
+    mock as unknown as Repository<T>;
 
   beforeEach(() => {
-    prisma = makePrisma();
-    service = new OdooTransformationService(prisma as unknown as PrismaService);
+    prisma = makeRepos();
+    service = new OdooTransformationService(
+      asRepo<FusionSalesMetadata>(prisma.fusionSalesMetadata),
+      asRepo<VendHqRegister>(prisma.vendHqRegister),
+      asRepo<FusionCustomerAccount>(prisma.fusionCustomerAccount),
+      asRepo<BackupOdooOrder>(prisma.backupOdooOrder),
+      asRepo<StoreConfiguration>(prisma.storeConfiguration),
+      asRepo<FusionBusinessUnitMap>(prisma.fusionBusinessUnitMap),
+      asRepo<FusionReceiptMethod>(prisma.fusionReceiptMethod),
+      asRepo<ServiceProviderJournalMeta>(prisma.serviceProviderJournalMeta),
+    );
     jest.clearAllMocks();
   });
 
   // ── buildOrderPayloads — guard conditions ──────────────────────────────────
 
   it('throws when BackupOdooOrder is not found', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(null);
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(null);
     await expect(
       service.buildOrderPayloads('missing-id', 'CCNTRBHR', 'AE'),
     ).rejects.toThrow('BackupOdooOrder not found: missing-id');
   });
 
   it('throws when StoreConfiguration is not found', async () => {
-    prisma.storeConfiguration.findUnique.mockResolvedValueOnce(null);
+    prisma.storeConfiguration.findOne.mockResolvedValueOnce(null);
     await expect(
       service.buildOrderPayloads('backup-001', 'UNKNOWN', 'AE'),
     ).rejects.toThrow('StoreConfiguration not found for branchCode=UNKNOWN');
@@ -129,7 +151,7 @@ describe('OdooTransformationService', () => {
   // ── InvoiceHeader ──────────────────────────────────────────────────────────
 
   it('builds invoice header from store config', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(makeBackup());
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(makeBackup());
     const result = await service.buildOrderPayloads(
       'backup-001',
       'CCNTRBHR',
@@ -148,7 +170,7 @@ describe('OdooTransformationService', () => {
   });
 
   it('falls back to branchName when warehouseName is absent', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ warehouseName: null }),
     );
     const result = await service.buildOrderPayloads(
@@ -173,7 +195,7 @@ describe('OdooTransformationService', () => {
         productId: 42,
       },
     ];
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
     const result = await service.buildOrderPayloads(
@@ -196,7 +218,7 @@ describe('OdooTransformationService', () => {
       { productName: 'Zero Qty', qty: 0, priceUnit: 50 },
       { productName: 'Normal', qty: 1, priceUnit: 30 },
     ];
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
     const result = await service.buildOrderPayloads(
@@ -209,7 +231,7 @@ describe('OdooTransformationService', () => {
   });
 
   it('synthesises a single line when no order lines present', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderLines: [], amountTotal: 200, amountUntaxed: 180 }),
     );
     const result = await service.buildOrderPayloads(
@@ -225,7 +247,7 @@ describe('OdooTransformationService', () => {
   });
 
   it('synthesises from amountTotal when amountUntaxed is null', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderLines: [], amountTotal: 200, amountUntaxed: null }),
     );
     const result = await service.buildOrderPayloads(
@@ -246,7 +268,7 @@ describe('OdooTransformationService', () => {
         productId: 99,
       },
     ];
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderLines }),
     );
     const result = await service.buildOrderPayloads(
@@ -270,10 +292,10 @@ describe('OdooTransformationService', () => {
   });
 
   it('skips payment when receipt method not configured', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderPayments: [{ paymentName: 'Mystery', amount: 50 }] }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce(null);
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce(null);
     const result = await service.buildOrderPayloads(
       'backup-001',
       'CCNTRBHR',
@@ -283,7 +305,7 @@ describe('OdooTransformationService', () => {
   });
 
   it('skips payment with name "credit on cust"', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Credit on Cust', amount: 50 }],
       }),
@@ -295,17 +317,17 @@ describe('OdooTransformationService', () => {
     );
     expect(result.standardReceipts).toHaveLength(0);
     // fusionReceiptMethod.findFirst should not even be called
-    expect(prisma.fusionReceiptMethod.findFirst).not.toHaveBeenCalled();
+    expect(prisma.fusionReceiptMethod.findOne).not.toHaveBeenCalled();
   });
 
   it('builds a standard receipt for a cash payment', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Cash', amount: 100 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 123n,
       receiptIsCash: true,
       receiptBankCharge: 0,
@@ -326,13 +348,13 @@ describe('OdooTransformationService', () => {
   });
 
   it('throws when no Oracle customer account id is mapped', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Cash', amount: 100 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 123n,
       receiptIsCash: true,
       receiptBankCharge: 0,
@@ -340,22 +362,22 @@ describe('OdooTransformationService', () => {
     });
     // Customer account not in the map → the build must hold the order rather
     // than create an unidentified, unapplicable receipt.
-    prisma.fusionCustomerAccount.findUnique.mockResolvedValueOnce(null);
+    prisma.fusionCustomerAccount.findOne.mockResolvedValueOnce(null);
     await expect(
       service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
     ).rejects.toThrow('No Oracle customer account id mapped');
   });
 
   it('throws when the register has no bank/cash account (Java parity)', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({ orderPayments: [{ paymentName: 'Cash', amount: 80 }] }),
     );
-    prisma.storeConfiguration.findUnique.mockResolvedValueOnce(
+    prisma.storeConfiguration.findOne.mockResolvedValueOnce(
       makeStoreConfig({ cashAccountId: null }),
     );
     // No matching VendHqRegister either → no account available at all.
-    prisma.vendHqRegister.findMany.mockResolvedValueOnce([]);
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.vendHqRegister.find.mockResolvedValueOnce([]);
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 1n,
       receiptIsCash: true,
       receiptBankCharge: 0,
@@ -367,13 +389,13 @@ describe('OdooTransformationService', () => {
   });
 
   it('builds standard and misc receipts for a card payment', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Visa', amount: 200 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 200 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 456n,
       receiptIsCash: false,
       receiptBankCharge: 0.01,
@@ -391,13 +413,13 @@ describe('OdooTransformationService', () => {
   });
 
   it('applies OM Debit Card misc cap at 10', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Debit Card', amount: 5000 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 5000 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 789n,
       receiptIsCash: false,
       receiptBankCharge: 0.01,
@@ -414,13 +436,13 @@ describe('OdooTransformationService', () => {
   });
 
   it('does not cap Debit Card misc in non-OM region', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Debit Card', amount: 5000 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 5000 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 789n,
       receiptIsCash: false,
       receiptBankCharge: 0.01,
@@ -437,13 +459,13 @@ describe('OdooTransformationService', () => {
   // ── ApplyReceipts ─────────────────────────────────────────────────────────
 
   it('creates one apply receipt per standard receipt', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Cash', amount: 100 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 1n,
       receiptIsCash: true,
       receiptBankCharge: 0,
@@ -473,18 +495,18 @@ describe('OdooTransformationService', () => {
   });
 
   it('builds a balanced Dr/Cr journal for a service-provider order', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         customerType: 'TABBY',
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
     // Non-NORMAL bill-to resolves by (customerType, region).
-    prisma.fusionSalesMetadata.findFirst.mockResolvedValueOnce(
+    prisma.fusionSalesMetadata.findOne.mockResolvedValueOnce(
       makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
     );
     // Paired provider rows: CREDIT-row account is debited, DEBIT-row credited.
-    prisma.serviceProviderJournalMeta.findMany.mockResolvedValueOnce([
+    prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
       {
         creditDebit: 'CREDIT',
         ledgerId: 1001n,
@@ -513,7 +535,7 @@ describe('OdooTransformationService', () => {
       },
     ]);
     // Store cost center (SEGMENT4) from the store's own NORMAL metadata row.
-    prisma.fusionSalesMetadata.findMany.mockResolvedValueOnce([
+    prisma.fusionSalesMetadata.find.mockResolvedValueOnce([
       { billToName: 'Central', costCenterCode: '0502' },
     ]);
 
@@ -535,16 +557,16 @@ describe('OdooTransformationService', () => {
   });
 
   it('throws when a service-provider journal lacks a CREDIT/DEBIT account pair', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         customerType: 'TABBY',
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionSalesMetadata.findFirst.mockResolvedValueOnce(
+    prisma.fusionSalesMetadata.findOne.mockResolvedValueOnce(
       makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
     );
-    prisma.serviceProviderJournalMeta.findMany.mockResolvedValueOnce([
+    prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
       { creditDebit: 'CREDIT', ledgerId: 1n, chartOfAccountsId: 2n, account: '3020044' },
     ]);
     await expect(
@@ -555,13 +577,13 @@ describe('OdooTransformationService', () => {
   // ── transactionNumberOverride ─────────────────────────────────────────────
 
   it('uses transactionNumberOverride when provided', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Cash', amount: 50 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 50 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 1n,
       receiptIsCash: true,
       receiptBankCharge: 0,
@@ -580,13 +602,13 @@ describe('OdooTransformationService', () => {
   // ── Cash Rounding ─────────────────────────────────────────────────────────
 
   it('creates cash rounding misc receipt (not standard)', async () => {
-    prisma.backupOdooOrder.findUnique.mockResolvedValueOnce(
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         orderPayments: [{ paymentName: 'Cash Rounding', amount: 0.05 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionReceiptMethod.findFirst.mockResolvedValueOnce({
+    prisma.fusionReceiptMethod.findOne.mockResolvedValueOnce({
       receiptMethodId: 10n,
       receiptIsCash: true,
       receiptBankCharge: 0,

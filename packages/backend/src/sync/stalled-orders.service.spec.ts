@@ -1,23 +1,27 @@
 import { ConfigService } from '@nestjs/config';
-import { AlertSeverity, AlertType, SyncStatus } from '@prisma/client';
+import { FindOperator, Repository } from 'typeorm';
+import { AlertSeverity, AlertType, SyncStatus } from '../database/enums';
+import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { AlertsService } from '../alerts/alerts.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { StalledOrdersService } from './stalled-orders.service';
 
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
 
-function makePrisma() {
+function makeOrderSyncQueueRepo() {
   return {
-    orderSyncQueue: {
-      findMany: jest.fn().mockResolvedValue([]),
-      count: jest.fn().mockResolvedValue(0),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    failedTransaction: {
-      create: jest.fn().mockResolvedValue({}),
-    },
+    find: jest.fn().mockResolvedValue([]),
+    count: jest.fn().mockResolvedValue(0),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+  };
+}
+
+function makeFailedTransactionRepo() {
+  return {
+    create: jest.fn((x) => x),
+    save: jest.fn().mockResolvedValue({}),
   };
 }
 
@@ -63,30 +67,37 @@ function makeStalledOrder(
 
 describe('StalledOrdersService', () => {
   let service: StalledOrdersService;
-  let prisma: ReturnType<typeof makePrisma>;
+  let orderSyncQueueRepo: ReturnType<typeof makeOrderSyncQueueRepo>;
+  let failedTransactionRepo: ReturnType<typeof makeFailedTransactionRepo>;
   let alerts: ReturnType<typeof makeAlerts>;
 
-  beforeEach(() => {
-    prisma = makePrisma();
-    alerts = makeAlerts();
-    service = new StalledOrdersService(
-      prisma as unknown as PrismaService,
+  function build(config = makeConfig(), syncControl = makeSyncControl()) {
+    return new StalledOrdersService(
+      orderSyncQueueRepo as unknown as Repository<OrderSyncQueue>,
+      failedTransactionRepo as unknown as Repository<FailedTransaction>,
       alerts as unknown as AlertsService,
-      makeSyncControl() as never,
-      makeConfig() as unknown as ConfigService,
+      syncControl as never,
+      config as unknown as ConfigService,
     );
+  }
+
+  beforeEach(() => {
+    orderSyncQueueRepo = makeOrderSyncQueueRepo();
+    failedTransactionRepo = makeFailedTransactionRepo();
+    alerts = makeAlerts();
+    service = build();
     jest.clearAllMocks();
   });
 
   describe('detectStalledOrders', () => {
     it('does nothing when there are no stalled orders', async () => {
-      prisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      orderSyncQueueRepo.find.mockResolvedValueOnce([]);
       await service.detectStalledOrders();
       expect(alerts.createAlert).not.toHaveBeenCalled();
     });
 
     it('fires one alert per branch for stalled orders', async () => {
-      prisma.orderSyncQueue.findMany.mockResolvedValueOnce([
+      orderSyncQueueRepo.find.mockResolvedValueOnce([
         makeStalledOrder({ branchCode: 'BR001' }),
         makeStalledOrder({
           id: 'order-002',
@@ -123,16 +134,16 @@ describe('StalledOrdersService', () => {
     });
 
     it('queries for PENDING orders older than the threshold cutoff', async () => {
-      prisma.orderSyncQueue.findMany.mockResolvedValueOnce([]);
+      orderSyncQueueRepo.find.mockResolvedValueOnce([]);
       await service.detectStalledOrders();
 
-      const [callArgs] = prisma.orderSyncQueue.findMany.mock.calls;
+      const [callArgs] = orderSyncQueueRepo.find.mock.calls;
       expect(callArgs[0].where.status).toBe(SyncStatus.PENDING);
-      // createdAt.lt should be in the past (a Date object)
-      expect(callArgs[0].where.createdAt.lt).toBeInstanceOf(Date);
-      expect((callArgs[0].where.createdAt.lt as Date).getTime()).toBeLessThan(
-        Date.now(),
-      );
+      // createdAt should be a LessThan(Date) FindOperator in the past
+      const createdAt = callArgs[0].where.createdAt as FindOperator<Date>;
+      expect(createdAt).toBeInstanceOf(FindOperator);
+      expect(createdAt.value).toBeInstanceOf(Date);
+      expect((createdAt.value as Date).getTime()).toBeLessThan(Date.now());
     });
 
     it('truncates order list to 10 in alert message with overflow note', async () => {
@@ -143,7 +154,7 @@ describe('StalledOrdersService', () => {
           branchCode: 'BR001',
         }),
       );
-      prisma.orderSyncQueue.findMany.mockResolvedValueOnce(manyOrders);
+      orderSyncQueueRepo.find.mockResolvedValueOnce(manyOrders);
       await service.detectStalledOrders();
 
       const [callArg] = alerts.createAlert.mock.calls[0];
@@ -151,7 +162,7 @@ describe('StalledOrdersService', () => {
     });
 
     it('catches and does not re-throw errors from the inner implementation', async () => {
-      prisma.orderSyncQueue.findMany.mockRejectedValueOnce(
+      orderSyncQueueRepo.find.mockRejectedValueOnce(
         new Error('DB connection lost'),
       );
       // Should not throw
@@ -159,7 +170,7 @@ describe('StalledOrdersService', () => {
     });
 
     it('uses odooOrderId when odooOrderNumber is null in alert message', async () => {
-      prisma.orderSyncQueue.findMany.mockResolvedValueOnce([
+      orderSyncQueueRepo.find.mockResolvedValueOnce([
         makeStalledOrder({ odooOrderNumber: null, odooOrderId: 'RAW-001' }),
       ]);
       await service.detectStalledOrders();
@@ -172,19 +183,14 @@ describe('StalledOrdersService', () => {
     it('skips when the service is disabled', async () => {
       const syncControl = makeSyncControl();
       syncControl.isEnabled.mockResolvedValueOnce(false);
-      const svc = new StalledOrdersService(
-        prisma as unknown as PrismaService,
-        alerts as unknown as AlertsService,
-        syncControl as never,
-        makeConfig() as unknown as ConfigService,
-      );
+      const svc = build(makeConfig(), syncControl);
       await svc.cleanupStalePendingOrders();
-      expect(prisma.orderSyncQueue.findMany).not.toHaveBeenCalled();
+      expect(orderSyncQueueRepo.find).not.toHaveBeenCalled();
     });
 
     it('cancels stale requests older than the cancel threshold', async () => {
-      // First findMany call → stale-by-age; second call → exhausted retries.
-      prisma.orderSyncQueue.findMany
+      // First find call → stale-by-age; second call → exhausted retries.
+      orderSyncQueueRepo.find
         .mockResolvedValueOnce([
           makeStalledOrder({
             status: SyncStatus.PENDING,
@@ -196,20 +202,18 @@ describe('StalledOrdersService', () => {
 
       await service.cleanupStalePendingOrders();
 
-      expect(prisma.orderSyncQueue.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'order-001' },
-          data: expect.objectContaining({ status: SyncStatus.FAILED }),
-        }),
+      expect(orderSyncQueueRepo.update).toHaveBeenCalledWith(
+        'order-001',
+        expect.objectContaining({ status: SyncStatus.FAILED }),
       );
       // Audit row recorded
-      expect(prisma.failedTransaction.create).toHaveBeenCalledTimes(1);
+      expect(failedTransactionRepo.save).toHaveBeenCalledTimes(1);
       // Summary alert raised for cancelled requests
       expect(alerts.createAlert).toHaveBeenCalledTimes(1);
     });
 
     it('permanently fails orders that exceed the retry limit', async () => {
-      prisma.orderSyncQueue.findMany
+      orderSyncQueueRepo.find
         .mockResolvedValueOnce([]) // none stale by age
         .mockResolvedValueOnce([
           makeStalledOrder({
@@ -221,13 +225,11 @@ describe('StalledOrdersService', () => {
 
       await service.cleanupStalePendingOrders();
 
-      expect(prisma.orderSyncQueue.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'order-retry' },
-          data: expect.objectContaining({ status: SyncStatus.FAILED }),
-        }),
+      expect(orderSyncQueueRepo.update).toHaveBeenCalledWith(
+        'order-retry',
+        expect.objectContaining({ status: SyncStatus.FAILED }),
       );
-      expect(prisma.failedTransaction.create).toHaveBeenCalledTimes(1);
+      expect(failedTransactionRepo.save).toHaveBeenCalledTimes(1);
       // A summary alert is raised for permanently-failed orders.
       expect(alerts.createAlert).toHaveBeenCalledTimes(1);
       const [alertArg] = alerts.createAlert.mock.calls[0];
@@ -235,35 +237,39 @@ describe('StalledOrdersService', () => {
     });
 
     it('does nothing when there are no eligible orders', async () => {
-      prisma.orderSyncQueue.findMany
+      orderSyncQueueRepo.find
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([]);
       await service.cleanupStalePendingOrders();
-      expect(prisma.orderSyncQueue.update).not.toHaveBeenCalled();
-      expect(prisma.failedTransaction.create).not.toHaveBeenCalled();
+      expect(orderSyncQueueRepo.update).not.toHaveBeenCalled();
+      expect(failedTransactionRepo.save).not.toHaveBeenCalled();
     });
 
     it('queries eligible statuses older than the cancel cutoff', async () => {
-      prisma.orderSyncQueue.findMany
+      orderSyncQueueRepo.find
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([]);
       await service.cleanupStalePendingOrders();
 
-      const [cancelCall] = prisma.orderSyncQueue.findMany.mock.calls[0];
-      expect(cancelCall.where.status.in).toEqual([
+      const [cancelCall] = orderSyncQueueRepo.find.mock.calls[0];
+      const statusOp = cancelCall.where.status as FindOperator<SyncStatus[]>;
+      expect(statusOp).toBeInstanceOf(FindOperator);
+      expect(statusOp.value).toEqual([
         SyncStatus.PENDING,
         SyncStatus.QUEUED_FOR_RETRY,
       ]);
-      expect(cancelCall.where.createdAt.lt).toBeInstanceOf(Date);
+      const createdAt = cancelCall.where.createdAt as FindOperator<Date>;
+      expect(createdAt).toBeInstanceOf(FindOperator);
+      expect(createdAt.value).toBeInstanceOf(Date);
 
-      const [retryCall] = prisma.orderSyncQueue.findMany.mock.calls[1];
-      expect(retryCall.where.syncAttempts.gte).toBe(5);
+      const [retryCall] = orderSyncQueueRepo.find.mock.calls[1];
+      const syncAttempts = retryCall.where.syncAttempts as FindOperator<number>;
+      expect(syncAttempts).toBeInstanceOf(FindOperator);
+      expect(syncAttempts.value).toBe(5);
     });
 
     it('does not re-throw when cleanup fails', async () => {
-      prisma.orderSyncQueue.findMany.mockRejectedValueOnce(
-        new Error('DB down'),
-      );
+      orderSyncQueueRepo.find.mockRejectedValueOnce(new Error('DB down'));
       await expect(
         service.cleanupStalePendingOrders(),
       ).resolves.toBeUndefined();
@@ -272,51 +278,45 @@ describe('StalledOrdersService', () => {
 
   describe('getStalledCount', () => {
     it('returns count from the database', async () => {
-      prisma.orderSyncQueue.count.mockResolvedValueOnce(7);
+      orderSyncQueueRepo.count.mockResolvedValueOnce(7);
       const count = await service.getStalledCount();
       expect(count).toBe(7);
     });
 
     it('queries for PENDING orders older than the cutoff', async () => {
-      prisma.orderSyncQueue.count.mockResolvedValueOnce(0);
+      orderSyncQueueRepo.count.mockResolvedValueOnce(0);
       await service.getStalledCount();
-      const [callArgs] = prisma.orderSyncQueue.count.mock.calls;
+      const [callArgs] = orderSyncQueueRepo.count.mock.calls;
       expect(callArgs[0].where.status).toBe(SyncStatus.PENDING);
-      expect(callArgs[0].where.createdAt.lt).toBeInstanceOf(Date);
+      const createdAt = callArgs[0].where.createdAt as FindOperator<Date>;
+      expect(createdAt).toBeInstanceOf(FindOperator);
+      expect(createdAt.value).toBeInstanceOf(Date);
     });
   });
 
   describe('constructor — threshold configuration', () => {
     it('uses the configured STALE_THRESHOLD_HOURS when valid', async () => {
-      const svc = new StalledOrdersService(
-        prisma as unknown as PrismaService,
-        alerts as unknown as AlertsService,
-        makeSyncControl() as never,
-        makeConfig(12) as unknown as ConfigService,
-      );
-      prisma.orderSyncQueue.count.mockResolvedValueOnce(0);
+      const svc = build(makeConfig(12));
+      orderSyncQueueRepo.count.mockResolvedValueOnce(0);
       await svc.getStalledCount();
-      const [callArgs] = prisma.orderSyncQueue.count.mock.calls;
+      const [callArgs] = orderSyncQueueRepo.count.mock.calls;
       // Threshold of 12 hours → cutoff ≈ 12 * 3600 * 1000 ms ago
       const nowMs = Date.now();
-      const cutoffMs = (callArgs[0].where.createdAt.lt as Date).getTime();
+      const createdAt = callArgs[0].where.createdAt as FindOperator<Date>;
+      const cutoffMs = (createdAt.value as Date).getTime();
       const diffHours = (nowMs - cutoffMs) / (3600 * 1000);
       expect(diffHours).toBeGreaterThan(11.9);
       expect(diffHours).toBeLessThan(12.1);
     });
 
     it('falls back to 6 hours when configured value is 0 or missing', async () => {
-      const svc = new StalledOrdersService(
-        prisma as unknown as PrismaService,
-        alerts as unknown as AlertsService,
-        makeSyncControl() as never,
-        makeConfig(0) as unknown as ConfigService,
-      );
-      prisma.orderSyncQueue.count.mockResolvedValueOnce(0);
+      const svc = build(makeConfig(0));
+      orderSyncQueueRepo.count.mockResolvedValueOnce(0);
       await svc.getStalledCount();
-      const [callArgs] = prisma.orderSyncQueue.count.mock.calls;
+      const [callArgs] = orderSyncQueueRepo.count.mock.calls;
       const nowMs = Date.now();
-      const cutoffMs = (callArgs[0].where.createdAt.lt as Date).getTime();
+      const createdAt = callArgs[0].where.createdAt as FindOperator<Date>;
+      const cutoffMs = (createdAt.value as Date).getTime();
       const diffHours = (nowMs - cutoffMs) / (3600 * 1000);
       expect(diffHours).toBeGreaterThan(5.9);
       expect(diffHours).toBeLessThan(6.1);

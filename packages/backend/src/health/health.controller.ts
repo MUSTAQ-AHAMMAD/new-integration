@@ -2,10 +2,9 @@ import { Controller, Get, Post } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
-  PrismaHealthIndicator,
+  TypeOrmHealthIndicator,
 } from '@nestjs/terminus';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PrismaService } from '../prisma/prisma.service';
 import { HealthService } from './health.service';
 import { Public } from '../auth/public.decorator';
 
@@ -15,26 +14,20 @@ import { Public } from '../auth/public.decorator';
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,
-    private readonly prismaHealth: PrismaHealthIndicator,
-    private readonly prisma: PrismaService,
+    private readonly dbHealth: TypeOrmHealthIndicator,
     private readonly healthService: HealthService,
   ) {}
 
   @Get()
   @HealthCheck()
   check() {
-    return this.health.check([
-      () => this.prismaHealth.pingCheck('database', this.prisma),
-    ]);
+    return this.health.check([() => this.dbHealth.pingCheck('database')]);
   }
 
   @Get('services')
   @ApiOperation({ summary: 'Get latest health status for all services' })
   async getServicesHealth() {
-    return this.prisma.integrationHealthCheck.findMany({
-      orderBy: [{ serviceName: 'asc' }, { createdAt: 'desc' }],
-      distinct: ['serviceName'],
-    });
+    return this.healthService.getLatestHealthPerService();
   }
 
   @Post('check')
@@ -43,10 +36,7 @@ export class HealthController {
   })
   async triggerHealthCheck() {
     await this.healthService.runHealthChecks();
-    return this.prisma.integrationHealthCheck.findMany({
-      orderBy: [{ serviceName: 'asc' }, { createdAt: 'desc' }],
-      distinct: ['serviceName'],
-    });
+    return this.healthService.getLatestHealthPerService();
   }
 
   @Get('sync-status')

@@ -8,7 +8,8 @@
  * consumed by OracleSoapClient.
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   ApplyReceiptRequest,
   InvoiceHeader,
@@ -23,6 +24,14 @@ import { OracleTaxService } from '../clients/oracle/oracle-tax.service';
 import { OracleCustomerService } from '../clients/oracle/oracle-customer.service';
 import { FusionPayloadValidator } from './fusion-payload-validator';
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { VendHqOutlet } from '../database/entities/vend-hq-outlet.entity';
+import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
+import { ServiceProviderJournalMeta } from '../database/entities/service-provider-journal-meta.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
+import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
 
 export interface TransformResult {
   invoiceHeader: InvoiceHeader;
@@ -37,7 +46,22 @@ export class FusionTransformationService {
   private readonly logger = new Logger(FusionTransformationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    @InjectRepository(BackupVendHqSale)
+    private readonly saleRepo: Repository<BackupVendHqSale>,
+    @InjectRepository(VendHqOutlet)
+    private readonly outletRepo: Repository<VendHqOutlet>,
+    @InjectRepository(FusionSalesMetadata)
+    private readonly salesMetaRepo: Repository<FusionSalesMetadata>,
+    @InjectRepository(FusionBusinessUnitMap)
+    private readonly buMapRepo: Repository<FusionBusinessUnitMap>,
+    @InjectRepository(ServiceProviderJournalMeta)
+    private readonly journalMetaRepo: Repository<ServiceProviderJournalMeta>,
+    @InjectRepository(VendHqCredential)
+    private readonly credentialRepo: Repository<VendHqCredential>,
+    @InjectRepository(VendHqRegister)
+    private readonly registerRepo: Repository<VendHqRegister>,
+    @InjectRepository(FusionReceiptMethod)
+    private readonly receiptMethodRepo: Repository<FusionReceiptMethod>,
     private readonly uomService: OracleUomService,
     private readonly taxService: OracleTaxService,
     private readonly customerService: OracleCustomerService,
@@ -70,9 +94,9 @@ export class FusionTransformationService {
     transactionNumberOverride?: string,
   ): Promise<TransformResult> {
     // ── 1. Load raw backup data ──────────────────────────────
-    const sale = await this.prisma.backupVendHqSale.findUnique({
+    const sale = await this.saleRepo.findOne({
       where: { id: saleDbId },
-      include: { backupLineItems: true, backupPayments: true },
+      relations: { backupLineItems: true, backupPayments: true },
     });
     if (!sale) throw new Error(`BackupVendHqSale not found: ${saleDbId}`);
 
@@ -91,22 +115,22 @@ export class FusionTransformationService {
     const [outlet, salesMeta, buMap, journalMeta, credential] =
       await Promise.all([
         outletId
-          ? this.prisma.vendHqOutlet.findFirst({
+          ? this.outletRepo.findOne({
               where: { outletId, region },
             })
-          : this.prisma.vendHqOutlet.findFirst({
+          : this.outletRepo.findOne({
               where: { outletName: sale.outletName ?? undefined, region },
             }),
-        this.prisma.fusionSalesMetadata.findFirst({
+        this.salesMetaRepo.findOne({
           where: { customerType, region },
         }),
-        this.prisma.fusionBusinessUnitMap.findFirst({ where: { region } }),
-        this.prisma.serviceProviderJournalMeta.findFirst({ where: { region } }),
+        this.buMapRepo.findOne({ where: { region } }),
+        this.journalMetaRepo.findOne({ where: { region } }),
         // Per-region VendHQ credential carries the timezoneOffset used to
         // align sale timestamps to the Fusion business-unit timezone.
-        this.prisma.vendHqCredential.findFirst({
+        this.credentialRepo.findOne({
           where: { region, active: true },
-          orderBy: { createdAt: 'asc' },
+          order: { createdAt: 'ASC' },
         }),
       ]);
 
@@ -121,7 +145,7 @@ export class FusionTransformationService {
     // relation FK which may not be populated.
     const resolvedOutletId = outletId ?? outlet?.outletId;
     const registers = resolvedOutletId
-      ? await this.prisma.vendHqRegister.findMany({
+      ? await this.registerRepo.find({
           where: { outletId: resolvedOutletId, region },
         })
       : [];
@@ -229,7 +253,7 @@ export class FusionTransformationService {
       const pmtMethod = payment.paymentMethod ?? '';
       if (pmtMethod.toLowerCase() === 'credit on cust') continue;
 
-      const receiptMethod = await this.prisma.fusionReceiptMethod.findFirst({
+      const receiptMethod = await this.receiptMethodRepo.findOne({
         where: { receiptMethodName: pmtMethod, region },
       });
 

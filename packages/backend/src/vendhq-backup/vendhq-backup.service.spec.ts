@@ -1,5 +1,12 @@
 import axios from 'axios';
-import { SaleStatus } from '@prisma/client';
+import { DataSource, Repository } from 'typeorm';
+import { SaleStatus } from '../database/enums';
+import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
+import { BackupVendHqLineItem } from '../database/entities/backup-vend-hq-line-item.entity';
+import { BackupVendHqPayment } from '../database/entities/backup-vend-hq-payment.entity';
+import { SaleSyncStatus } from '../database/entities/sale-sync-status.entity';
+import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
 import { VendHqSalesBackupService } from './vendhq-backup.service';
 
 // ---------------------------------------------------------------------------
@@ -27,36 +34,59 @@ function makeSale(
   };
 }
 
-function makePrisma() {
+/**
+ * A transaction manager that records the delete/insert calls the service
+ * makes on the child tables inside dataSource.transaction().
+ */
+function makeManager() {
   return {
-    vendHqCredential: {
-      findMany: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    salesIntegrationStatus: {
-      findUnique: jest.fn(),
-      upsert: jest.fn(),
-    },
-    backupVendHqSale: {
-      findMany: jest.fn().mockResolvedValue([]),
-      upsert: jest
-        .fn()
-        .mockResolvedValue({ id: 'sale-db-001', invoiceNumber: 'INV-001' }),
-    },
-    backupVendHqLineItem: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    backupVendHqPayment: {
-      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
-      createMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    saleSyncStatus: {
-      upsert: jest.fn().mockResolvedValue({}),
-    },
-    $transaction: jest
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    insert: jest.fn().mockResolvedValue({}),
+  };
+}
+
+function makeRepos() {
+  const manager = makeManager();
+  const credentials = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  const integrationStatus = {
+    findOne: jest.fn(),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
+  };
+  const sales = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn((x) => x),
+    merge: jest.fn((a, b) => ({ ...a, ...b })),
+    save: jest
       .fn()
-      .mockImplementation((ops: Array<Promise<unknown>>) => Promise.all(ops)),
+      .mockResolvedValue({ id: 'sale-db-001', invoiceNumber: 'INV-001' }),
+  };
+  const lineItems = {};
+  const payments = {};
+  const saleSyncStatus = {
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn((x) => x),
+    save: jest.fn((x) => Promise.resolve(x)),
+  };
+  const dataSource = {
+    transaction: jest.fn((cb: (mgr: unknown) => Promise<unknown>) =>
+      cb(manager),
+    ),
+  };
+  return {
+    credentials,
+    integrationStatus,
+    sales,
+    lineItems,
+    payments,
+    saleSyncStatus,
+    dataSource,
+    manager,
   };
 }
 
@@ -76,20 +106,26 @@ function makeCred(overrides: Record<string, unknown> = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build a service with mocked Prisma and optionally mocked axios
+// Helper: build a service with mocked repositories and optionally mocked axios
 // ---------------------------------------------------------------------------
 
-function makeService(prisma = makePrisma()) {
+function makeService(repos = makeRepos()) {
   const syncControl = {
     isEnabled: jest.fn().mockResolvedValue(true),
     markRunning: jest.fn().mockResolvedValue(undefined),
     markStopped: jest.fn().mockResolvedValue(undefined),
   };
   const service = new VendHqSalesBackupService(
-    prisma as never,
+    repos.credentials as unknown as Repository<VendHqCredential>,
+    repos.integrationStatus as unknown as Repository<SalesIntegrationStatus>,
+    repos.sales as unknown as Repository<BackupVendHqSale>,
+    repos.lineItems as unknown as Repository<BackupVendHqLineItem>,
+    repos.payments as unknown as Repository<BackupVendHqPayment>,
+    repos.saleSyncStatus as unknown as Repository<SaleSyncStatus>,
+    repos.dataSource as unknown as DataSource,
     syncControl as never,
   );
-  return { service, prisma, syncControl };
+  return { service, repos, syncControl };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,22 +153,22 @@ describe('VendHqSalesBackupService', () => {
 
     it('preserves an explicit scheme and trims trailing slashes', () => {
       const { service } = makeService();
-      expect(service.resolveVendHqBaseUrl('https://store.retail.lightspeed.app/')).toBe(
-        'https://store.retail.lightspeed.app',
-      );
+      expect(
+        service.resolveVendHqBaseUrl('https://store.retail.lightspeed.app/'),
+      ).toBe('https://store.retail.lightspeed.app');
     });
   });
 
   describe('isRegionEnabled', () => {
     it('returns true when no SalesIntegrationStatus record exists', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
       await expect(service.isRegionEnabled('SA')).resolves.toBe(true);
     });
 
     it('returns true when status is ENABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'BACKUP',
         status: 'ENABLED',
@@ -141,8 +177,8 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('returns false when status is DISABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'BACKUP',
         status: 'DISABLED',
@@ -153,8 +189,9 @@ describe('VendHqSalesBackupService', () => {
 
   describe('enableRegion', () => {
     it('upserts SalesIntegrationStatus with status ENABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
+      repos.integrationStatus.save.mockResolvedValue({
         id: 'sis-1',
         region: 'KW',
         integMode: 'BACKUP',
@@ -164,11 +201,8 @@ describe('VendHqSalesBackupService', () => {
 
       const result = await service.enableRegion('KW');
 
-      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { region_integMode: { region: 'KW', integMode: 'BACKUP' } },
-          update: { status: 'ENABLED' },
-        }),
+      expect(repos.integrationStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'ENABLED' }),
       );
       expect(result.status).toBe('ENABLED');
     });
@@ -176,8 +210,9 @@ describe('VendHqSalesBackupService', () => {
 
   describe('disableRegion', () => {
     it('upserts SalesIntegrationStatus with status DISABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.upsert.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
+      repos.integrationStatus.save.mockResolvedValue({
         id: 'sis-1',
         region: 'SA',
         integMode: 'BACKUP',
@@ -187,11 +222,8 @@ describe('VendHqSalesBackupService', () => {
 
       const result = await service.disableRegion('SA');
 
-      expect(prisma.salesIntegrationStatus.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { region_integMode: { region: 'SA', integMode: 'BACKUP' } },
-          update: { status: 'DISABLED' },
-        }),
+      expect(repos.integrationStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'DISABLED' }),
       );
       expect(result.status).toBe('DISABLED');
     });
@@ -199,9 +231,9 @@ describe('VendHqSalesBackupService', () => {
 
   describe('getRegionStatus', () => {
     it('returns ENABLED when no status record exists', async () => {
-      const { service, prisma } = makeService();
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
-      prisma.vendHqCredential.findMany.mockResolvedValue([]);
+      const { service, repos } = makeService();
+      repos.integrationStatus.findOne.mockResolvedValue(null);
+      repos.credentials.find.mockResolvedValue([]);
 
       const result = await service.getRegionStatus('OM');
       expect(result.integrationStatus).toBe('ENABLED');
@@ -209,14 +241,14 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('returns credential list with lastSyncVersion and lastSyncAt', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const now = new Date();
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'BACKUP',
         status: 'ENABLED',
       });
-      prisma.vendHqCredential.findMany.mockResolvedValue([
+      repos.credentials.find.mockResolvedValue([
         {
           id: 'cred-001',
           domainName: 'mystore',
@@ -241,57 +273,62 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('skips a sale when incoming version is not newer than stored version', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 3 })] },
       });
 
       // DB already has version 5 — incoming 3 should be skipped
-      prisma.backupVendHqSale.findMany.mockResolvedValue([
+      repos.sales.find.mockResolvedValue([
         { invoiceNumber: 'INV-001', version: 5 },
       ]);
 
       const result = await service.backupRegion(makeCred());
       expect(result.skipped).toBe(1);
       expect(result.saved).toBe(0);
-      expect(prisma.backupVendHqSale.upsert).not.toHaveBeenCalled();
+      expect(repos.sales.save).not.toHaveBeenCalled();
     });
 
     it('upserts a new sale record when it does not exist yet', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 10 })] },
       });
 
       // No existing record
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
 
       const result = await service.backupRegion(makeCred());
       expect(result.saved).toBe(1);
       expect(result.skipped).toBe(0);
-      expect(prisma.backupVendHqSale.upsert).toHaveBeenCalled();
+      expect(repos.sales.save).toHaveBeenCalled();
     });
 
     it('upserts an existing sale when incoming version is higher', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 10 })] },
       });
 
-      // DB has older version
-      prisma.backupVendHqSale.findMany.mockResolvedValue([
+      // Page-level version check says process; per-sale findOne returns existing row
+      repos.sales.find.mockResolvedValue([
         { invoiceNumber: 'INV-001', version: 3 },
       ]);
+      repos.sales.findOne.mockResolvedValue({
+        id: 'sale-db-001',
+        invoiceNumber: 'INV-001',
+        version: 3,
+      });
 
       const result = await service.backupRegion(makeCred());
       expect(result.saved).toBe(1);
-      expect(prisma.backupVendHqSale.upsert).toHaveBeenCalledWith(
+      expect(repos.sales.findOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: {
-            invoiceNumber_region: { invoiceNumber: 'INV-001', region: 'SA' },
-          },
+          where: { invoiceNumber: 'INV-001', region: 'SA' },
         }),
       );
+      expect(repos.sales.save).toHaveBeenCalled();
     });
 
     it('sends the after=lastSyncVersion parameter to the VendHQ API', async () => {
@@ -321,41 +358,39 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('advances lastSyncVersion after a successful run', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: { data: [makeSale({ version: 55 })] },
       });
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred({ lastSyncVersion: 10 }));
 
-      expect(prisma.vendHqCredential.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ lastSyncVersion: 55 }),
-        }),
+      expect(repos.credentials.update).toHaveBeenCalledWith(
+        { id: 'cred-001' },
+        expect.objectContaining({ lastSyncVersion: 55 }),
       );
     });
 
     it('does not push duplicate SaleSyncStatus for the same sale', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       const sale = makeSale({ version: 5 });
       mockAxios.mockResolvedValue({ data: { data: [sale] } });
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      // saleSyncStatus.upsert should be called exactly once per sale
-      expect(prisma.saleSyncStatus.upsert).toHaveBeenCalledTimes(1);
-      expect(prisma.saleSyncStatus.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ status: SaleStatus.PENDING }),
-          update: expect.objectContaining({ status: SaleStatus.PENDING }),
-        }),
+      // saleSyncStatus.save should be called exactly once per sale
+      expect(repos.saleSyncStatus.save).toHaveBeenCalledTimes(1);
+      expect(repos.saleSyncStatus.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: SaleStatus.PENDING }),
       );
     });
 
-    it('persists line items via deleteMany + createMany', async () => {
-      const { service, prisma } = makeService();
+    it('persists line items via delete + insert', async () => {
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: {
           data: [
@@ -369,23 +404,23 @@ describe('VendHqSalesBackupService', () => {
           ],
         },
       });
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupVendHqLineItem.deleteMany).toHaveBeenCalled();
-      expect(prisma.backupVendHqLineItem.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ itemNumber: 'SKU-1', quantity: 2 }),
-            expect.objectContaining({ itemNumber: 'SKU-2', quantity: 1 }),
-          ]),
-        }),
+      expect(repos.manager.delete).toHaveBeenCalled();
+      expect(repos.manager.insert).toHaveBeenCalledWith(
+        BackupVendHqLineItem,
+        expect.arrayContaining([
+          expect.objectContaining({ itemNumber: 'SKU-1', quantity: 2 }),
+          expect.objectContaining({ itemNumber: 'SKU-2', quantity: 1 }),
+        ]),
       );
     });
 
-    it('persists payments via deleteMany + createMany', async () => {
-      const { service, prisma } = makeService();
+    it('persists payments via delete + insert', async () => {
+      const { service, repos } = makeService();
       mockAxios.mockResolvedValue({
         data: {
           data: [
@@ -396,22 +431,21 @@ describe('VendHqSalesBackupService', () => {
           ],
         },
       });
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
 
       await service.backupRegion(makeCred());
 
-      expect(prisma.backupVendHqPayment.deleteMany).toHaveBeenCalled();
-      expect(prisma.backupVendHqPayment.createMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.arrayContaining([
-            expect.objectContaining({ paymentType: 'Cash', amount: 110 }),
-          ]),
-        }),
+      expect(repos.manager.insert).toHaveBeenCalledWith(
+        BackupVendHqPayment,
+        expect.arrayContaining([
+          expect.objectContaining({ paymentType: 'Cash', amount: 110 }),
+        ]),
       );
     });
 
     it('paginates: fetches second page when first page is full', async () => {
-      const { service, prisma } = makeService();
+      const { service, repos } = makeService();
       // First call returns 200 sales (full page), second returns 0 (end)
       const fullPage = Array.from({ length: 200 }, (_, i) =>
         makeSale({
@@ -423,11 +457,12 @@ describe('VendHqSalesBackupService', () => {
       mockAxios
         .mockResolvedValueOnce({ data: { data: fullPage } })
         .mockResolvedValueOnce({ data: { data: [] } });
-      prisma.backupVendHqSale.findMany.mockResolvedValue([]);
-      prisma.backupVendHqSale.upsert.mockImplementation(({ create }) =>
+      repos.sales.find.mockResolvedValue([]);
+      repos.sales.findOne.mockResolvedValue(null);
+      repos.sales.save.mockImplementation((entity: { invoiceNumber: string }) =>
         Promise.resolve({
-          id: `db-${create.invoiceNumber}`,
-          invoiceNumber: create.invoiceNumber,
+          id: `db-${entity.invoiceNumber}`,
+          invoiceNumber: entity.invoiceNumber,
         }),
       );
 
@@ -445,11 +480,9 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('skips a region when integration is DISABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'SA' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'SA' })]);
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'SA',
         integMode: 'BACKUP',
         status: 'DISABLED',
@@ -462,11 +495,9 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('processes a region when integration is ENABLED', async () => {
-      const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'KW' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue({
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'KW' })]);
+      repos.integrationStatus.findOne.mockResolvedValue({
         region: 'KW',
         integMode: 'BACKUP',
         status: 'ENABLED',
@@ -479,11 +510,9 @@ describe('VendHqSalesBackupService', () => {
     });
 
     it('processes a region when no status record exists (default ENABLED)', async () => {
-      const { service, prisma } = makeService();
-      prisma.vendHqCredential.findMany.mockResolvedValue([
-        makeCred({ region: 'AE' }),
-      ]);
-      prisma.salesIntegrationStatus.findUnique.mockResolvedValue(null);
+      const { service, repos } = makeService();
+      repos.credentials.find.mockResolvedValue([makeCred({ region: 'AE' })]);
+      repos.integrationStatus.findOne.mockResolvedValue(null);
       mockAxios.mockResolvedValue({ data: { data: [] } });
 
       await service.runBackupJob();

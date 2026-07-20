@@ -1,32 +1,22 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { AuditLog } from '../database/entities/audit-log.entity';
+import { AuditStatus } from '../database/enums';
 
 export interface AuditSearchParams {
+  /** Free-text match against the external (source) id. */
   orderId?: string;
+  /** Maps to the external system that produced the operation. */
   entityType?: string;
+  /** Maps to the audited operation (e.g. CREATE_INVOICE). */
   action?: string;
   startDate?: string;
   endDate?: string;
+  /** 'success' | 'failed' | 'error' | an exact AuditStatus value. */
   status?: string;
   limit?: number;
   offset?: number;
-}
-
-export interface AuditLogRecord {
-  id: string;
-  action: string;
-  entityType: string;
-  entityId: string;
-  branchCode?: string | null;
-  userId?: string | null;
-  requestPayload: unknown;
-  responsePayload?: unknown;
-  errorMessage?: string | null;
-  statusCode?: number | null;
-  durationMs?: number | null;
-  correlationId?: string | null;
-  createdAt: Date;
 }
 
 interface GroupedCountRow {
@@ -34,119 +24,97 @@ interface GroupedCountRow {
   count: number;
 }
 
-interface AuditTotalsRow {
-  total: number;
-  errors: number;
-}
-
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @InjectRepository(AuditLog)
+    private readonly audit: Repository<AuditLog>,
+  ) {}
 
   async search(params: AuditSearchParams) {
-    const conditions: Prisma.Sql[] = [];
+    const qb = this.audit.createQueryBuilder('a');
 
     if (params.orderId) {
-      conditions.push(Prisma.sql`"entityId" ILIKE ${`%${params.orderId}%`}`);
+      qb.andWhere('UPPER(a.externalId) LIKE UPPER(:orderId)', {
+        orderId: `%${params.orderId}%`,
+      });
     }
-
     if (params.entityType) {
-      conditions.push(Prisma.sql`"entityType" = ${params.entityType}`);
+      qb.andWhere('a.externalSystem = :entityType', {
+        entityType: params.entityType,
+      });
     }
-
     if (params.action) {
-      conditions.push(Prisma.sql`"action" = ${params.action}`);
+      qb.andWhere('a.operation = :action', { action: params.action });
     }
-
     if (params.startDate) {
-      conditions.push(Prisma.sql`"createdAt" >= ${new Date(params.startDate)}`);
+      qb.andWhere('a.createdAt >= :startDate', {
+        startDate: new Date(params.startDate),
+      });
     }
-
     if (params.endDate) {
-      conditions.push(Prisma.sql`"createdAt" <= ${new Date(params.endDate)}`);
+      qb.andWhere('a.createdAt <= :endDate', {
+        endDate: new Date(params.endDate),
+      });
     }
-
     if (params.status) {
-      const normalizedStatus = params.status.toLowerCase();
-      if (normalizedStatus === 'success') {
-        conditions.push(Prisma.sql`COALESCE("statusCode", 0) < 400`);
-      } else if (
-        normalizedStatus === 'failed' ||
-        normalizedStatus === 'error'
-      ) {
-        conditions.push(Prisma.sql`COALESCE("statusCode", 500) >= 400`);
+      const normalized = params.status.toLowerCase();
+      if (normalized === 'success') {
+        qb.andWhere('a.status = :status', { status: AuditStatus.SUCCESS });
+      } else if (normalized === 'failed' || normalized === 'error') {
+        qb.andWhere('a.status = :status', { status: AuditStatus.FAILED });
       } else {
-        conditions.push(
-          Prisma.sql`CAST(COALESCE("statusCode", 0) AS TEXT) = ${params.status}`,
-        );
+        qb.andWhere('a.status = :status', { status: params.status });
       }
     }
 
-    const whereClause = conditions.length
-      ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
-      : Prisma.empty;
-    const limit = params.limit ?? 50;
-    const offset = params.offset ?? 0;
-
     this.logger.debug('Searching audit log entries');
 
-    return this.prisma.$queryRaw<AuditLogRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "AuditLog"
-      ${whereClause}
-      ORDER BY "createdAt" DESC
-      LIMIT ${limit}
-      OFFSET ${offset}
-    `);
+    return qb
+      .orderBy('a.createdAt', 'DESC')
+      .take(params.limit ?? 50)
+      .skip(params.offset ?? 0)
+      .getMany();
   }
 
   async getEntry(id: string) {
-    const [entry] = await this.prisma.$queryRaw<AuditLogRecord[]>(Prisma.sql`
-      SELECT *
-      FROM "AuditLog"
-      WHERE "id" = ${id}
-      LIMIT 1
-    `);
-
+    const entry = await this.audit.findOne({ where: { id } });
     if (!entry) {
       throw new NotFoundException(`Audit log entry ${id} not found`);
     }
-
     return entry;
   }
 
   async getStats() {
-    const [actions, entityTypes, totals] = await Promise.all([
-      this.prisma.$queryRaw<GroupedCountRow[]>(Prisma.sql`
-        SELECT "action" AS "key", COUNT(*)::int AS "count"
-        FROM "AuditLog"
-        GROUP BY "action"
-        ORDER BY "action" ASC
-      `),
-      this.prisma.$queryRaw<GroupedCountRow[]>(Prisma.sql`
-        SELECT "entityType" AS "key", COUNT(*)::int AS "count"
-        FROM "AuditLog"
-        GROUP BY "entityType"
-        ORDER BY "entityType" ASC
-      `),
-      this.prisma.$queryRaw<AuditTotalsRow[]>(Prisma.sql`
-        SELECT
-          COUNT(*)::int AS "total",
-          COALESCE(SUM(CASE WHEN COALESCE("statusCode", 0) >= 400 THEN 1 ELSE 0 END), 0)::int AS "errors"
-        FROM "AuditLog"
-      `),
+    const [actions, entityTypes, total, errors] = await Promise.all([
+      this.audit
+        .createQueryBuilder('a')
+        .select('a.operation', 'key')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('a.operation')
+        .orderBy('a.operation', 'ASC')
+        .getRawMany<GroupedCountRow>(),
+      this.audit
+        .createQueryBuilder('a')
+        .select('a.externalSystem', 'key')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('a.externalSystem')
+        .orderBy('a.externalSystem', 'ASC')
+        .getRawMany<GroupedCountRow>(),
+      this.audit.count(),
+      this.audit.count({ where: { status: AuditStatus.FAILED } }),
     ]);
 
-    const total = totals[0]?.total ?? 0;
-    const errors = totals[0]?.errors ?? 0;
-
     return {
-      byAction: actions.map((row) => ({ action: row.key, count: row.count })),
+      byAction: actions.map((row) => ({
+        action: row.key,
+        count: Number(row.count),
+      })),
       byEntityType: entityTypes.map((row) => ({
         entityType: row.key,
-        count: row.count,
+        count: Number(row.count),
       })),
       errorRate: total === 0 ? 0 : Number((errors / total).toFixed(4)),
       total,
