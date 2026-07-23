@@ -28,6 +28,7 @@ import { BackupVendHqLineItem } from '../database/entities/backup-vend-hq-line-i
 import { BackupVendHqPayment } from '../database/entities/backup-vend-hq-payment.entity';
 import { SaleSyncStatus } from '../database/entities/sale-sync-status.entity';
 import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
+import { generateId } from '../database/id.util';
 import { SalesIntegrationStatus } from '../database/entities/sales-integration-status.entity';
 import { SaleStatus } from '../database/enums';
 import { SyncControlService } from '../sync/sync-control.service';
@@ -441,6 +442,7 @@ export class VendHqSalesBackupService {
 
     // 4. Collect all child records for the processed sales
     const allLineItems: Array<{
+      id: string;
       invoiceNumber: string;
       lineNumber: number;
       itemNumber: string | null;
@@ -456,6 +458,7 @@ export class VendHqSalesBackupService {
       saleId: string;
     }> = [];
     const allPayments: Array<{
+      id: string;
       invoiceNumber: string;
       outletName: string | null;
       registerName: string | null;
@@ -490,6 +493,9 @@ export class VendHqSalesBackupService {
       for (let idx = 0; idx < lineItems.length; idx++) {
         const li = lineItems[idx];
         allLineItems.push({
+          // Bulk insert bypasses @BeforeInsert — assign the PK or every row
+          // fails ORA-01400 on the NOT NULL id (same fix as the Odoo backup).
+          id: generateId(),
           invoiceNumber: inv,
           lineNumber: idx + 1,
           itemNumber: li.sku ?? null,
@@ -512,6 +518,7 @@ export class VendHqSalesBackupService {
       for (const pmt of payments) {
         const pmtName = pmt.name ?? pmt.payment_type_id ?? 'Unknown';
         allPayments.push({
+          id: generateId(),
           invoiceNumber: inv,
           outletName: sale.outlet_name ?? null,
           registerName: sale.register_name ?? null,

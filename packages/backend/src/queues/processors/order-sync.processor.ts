@@ -44,6 +44,15 @@ import {
   toBigIntOrNull,
 } from '../../common/utils/bigint-utils';
 
+/**
+ * Oracle invoicing moved from per-order to per-(branch, day, customer type,
+ * credit flag) aggregation — see DailyAggregationService. Set the
+ * PER_ORDER_INVOICING=true env var to restore the legacy
+ * one-invoice-per-order behaviour; nothing else changes.
+ */
+const perOrderInvoicingDisabled = (): boolean =>
+  process.env.PER_ORDER_INVOICING !== 'true';
+
 @Processor(QUEUE_NAMES.ORDER_SYNC)
 export class OrderSyncProcessor {
   private readonly logger = new Logger(OrderSyncProcessor.name);
@@ -316,37 +325,45 @@ export class OrderSyncProcessor {
         `[${odooOrderId}] ✅ Step 4/14: Status updated to PROCESSING (attempt ${order.syncAttempts + 1})`,
       );
 
-      // ── 4. Resolve payment method (warn-only) ─────────────────
+      // ── 4. Check payment methods against FusionReceiptMethod (warn-only) ──
+      // Java parity: the POS payment name is used VERBATIM as the lookup key
+      // into FUSION_RECEIPT_METHOD (name, region) — there is no invented
+      // "DEFAULT" mapping. Here we pre-check the order's real payment names so
+      // an unconfigured method surfaces as an actionable alert instead of a
+      // silently skipped receipt at transformation time.
       this.logger.log(
-        `[${odooOrderId}] Step 5/14: Resolving payment method...`,
+        `[${odooOrderId}] Step 5/14: Checking payment method mappings...`,
       );
-      const paymentMethodName = order.isRefund
-        ? 'REFUND'
-        : order.branchName?.trim()
-          ? `${order.branchName.trim()}-DEFAULT`
-          : 'DEFAULT';
-
-      this.logger.debug(
-        `[${odooOrderId}]   Payment method name: ${paymentMethodName}`,
-      );
-
-      const resolvedMapping =
-        await this.paymentMappingService.resolvePaymentMethod(
-          'ODOO',
-          paymentMethodName,
-        );
-      const fallbackAlert =
-        resolvedMapping === null
-          ? `Payment method "${paymentMethodName}" has no Oracle mapping — integration will continue without a receipt method`
-          : null;
-
-      if (resolvedMapping) {
-        this.logger.log(
-          `[${odooOrderId}] ✅ Step 5/14: Payment method resolved: ${JSON.stringify(resolvedMapping)}`,
-        );
-      } else {
+      let fallbackAlert: string | null = null;
+      try {
+        const { paymentNames, unmapped } =
+          await this.odooTransformationService.findUnmappedPaymentNames(
+            order.odooOrderNumber,
+            storeRegion,
+          );
+        if (unmapped.length > 0) {
+          fallbackAlert =
+            `Payment method(s) ${unmapped.map((n) => `"${n}"`).join(', ')} ` +
+            `not configured in FusionReceiptMethod for region ${storeRegion} — ` +
+            `their receipts will be skipped`;
+          this.logger.warn(`[${odooOrderId}] ⚠️  Step 5/14: ${fallbackAlert}`);
+          // Track the unmapped pair once (admin approval worklist + alert).
+          for (const name of unmapped) {
+            await this.paymentMappingService
+              .resolvePaymentMethod('ODOO', name)
+              .catch(() => null);
+          }
+        } else {
+          this.logger.log(
+            `[${odooOrderId}] ✅ Step 5/14: All payment methods mapped ` +
+              `(${paymentNames.length ? paymentNames.join(', ') : 'no payments recorded'})`,
+          );
+        }
+      } catch (pmErr) {
         this.logger.warn(
-          `[${odooOrderId}] ⚠️  Step 5/14: No payment mapping found for "${paymentMethodName}" - will proceed without receipt method`,
+          `[${odooOrderId}] ⚠️  Step 5/14: Payment mapping check failed (non-fatal): ${
+            pmErr instanceof Error ? pmErr.message : String(pmErr)
+          }`,
         );
       }
 
@@ -391,6 +408,38 @@ export class OrderSyncProcessor {
       this.logger.log(
         `[${odooOrderId}] ✅ Step 6/14: Not a duplicate, proceeding with sync`,
       );
+
+      // ── Daily aggregation hand-off ───────────────────────────────────────
+      // Invoicing is no longer per order. Oracle receives ONE invoice per
+      // (branch, business day, customer type, credit flag), built by
+      // DailyAggregationService and posted by DailyInvoiceService — matching the
+      // legacy Java integration. The per-order steps above still run because
+      // they validate the order and resolve its store/region, but the Oracle
+      // push below is now owned by the daily job, which marks these rows SYNCED
+      // once the aggregated invoice is accepted.
+      //
+      // Refunds are the exception: they never aggregate and continue down the
+      // credit-memo path via RefundTracking (handled by CreditMemoService).
+      if (perOrderInvoicingDisabled() && !order.isRefund) {
+        // Leave the status untouched. A queued job can outlive the daily run
+        // that already invoiced this order, and forcing PENDING here would undo
+        // the SYNCED state the aggregation just set.
+        if (order.status === SyncStatus.SYNCED) {
+          this.logger.log(
+            `[${odooOrderId}] Already covered by aggregated invoice ` +
+              `${order.oracleInvoiceNumber ?? 'unknown'} — nothing to do.`,
+          );
+          return;
+        }
+        // Step 4 already flipped the row to PROCESSING; hand it back as PENDING
+        // so it is visibly awaiting the daily run rather than stuck mid-flight.
+        await this.orders.update(order.id, { status: SyncStatus.PENDING });
+        this.logger.log(
+          `[${odooOrderId}] ⏸  Held for daily aggregation — invoice will be ` +
+            `created for ${order.branchCode} on its business day, not per order.`,
+        );
+        return;
+      }
 
       // ── 6. Resolve backup source and build Oracle payloads ─────
       //
@@ -590,54 +639,54 @@ export class OrderSyncProcessor {
             invoiceResult =
               await this.soapClient.createSimpleInvoice(invoiceHeader);
           } catch (invoiceError) {
-          const errorMessage =
-            invoiceError instanceof Error
-              ? invoiceError.message
-              : String(invoiceError);
-          this.logger.error(
-            `[${odooOrderId}] ❌ Oracle invoice creation failed:\n` +
-              `  Error: ${errorMessage}\n` +
-              `  Invoice Header: ${JSON.stringify(
-                {
-                  billToCustomerName: invoiceHeader.billToCustomerName,
-                  billToLocation: invoiceHeader.billToLocation,
-                  billToAccountNumber: invoiceHeader.billToAccountNumber,
-                  businessUnit: invoiceHeader.businessUnit,
-                  transactionSource: invoiceHeader.transactionSource,
-                  transactionType: invoiceHeader.transactionType,
-                  trxDate: invoiceHeader.trxDate?.toISOString(),
-                  saleDate: invoiceHeader.saleDate?.toISOString(),
-                  invoiceCurrencyCode: invoiceHeader.invoiceCurrencyCode,
-                  conversionRateType: invoiceHeader.conversionRateType,
-                  lineCount: invoiceHeader.invoiceLines.length,
-                },
-                null,
-                2,
-              )}`,
-          );
-          // Store failed invoice attempt
-          await this.invoiceHeaders.save(
-            this.invoiceHeaders.create({
-              status: 'ERROR',
-              message: errorMessage,
-              requestDate: new Date(),
-              billToCustName: invoiceHeader.billToCustomerName,
-              billToLocation: invoiceHeader.billToLocation,
-              billToAccNumber:
-                invoiceHeader.billToAccountNumber != null
-                  ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
-                  : null,
-              businessUnit: invoiceHeader.businessUnit,
-              txnSource: invoiceHeader.transactionSource,
-              txnType: invoiceHeader.transactionType,
-              txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
-              glDate: invoiceHeader.saleDate,
-              currencyCode: invoiceHeader.invoiceCurrencyCode,
-              totalAmount: order.totalAmount,
-              region: effectiveRegion,
-            }),
-          );
-          throw new Error(`Oracle invoice creation failed: ${errorMessage}`);
+            const errorMessage =
+              invoiceError instanceof Error
+                ? invoiceError.message
+                : String(invoiceError);
+            this.logger.error(
+              `[${odooOrderId}] ❌ Oracle invoice creation failed:\n` +
+                `  Error: ${errorMessage}\n` +
+                `  Invoice Header: ${JSON.stringify(
+                  {
+                    billToCustomerName: invoiceHeader.billToCustomerName,
+                    billToLocation: invoiceHeader.billToLocation,
+                    billToAccountNumber: invoiceHeader.billToAccountNumber,
+                    businessUnit: invoiceHeader.businessUnit,
+                    transactionSource: invoiceHeader.transactionSource,
+                    transactionType: invoiceHeader.transactionType,
+                    trxDate: invoiceHeader.trxDate?.toISOString(),
+                    saleDate: invoiceHeader.saleDate?.toISOString(),
+                    invoiceCurrencyCode: invoiceHeader.invoiceCurrencyCode,
+                    conversionRateType: invoiceHeader.conversionRateType,
+                    lineCount: invoiceHeader.invoiceLines.length,
+                  },
+                  null,
+                  2,
+                )}`,
+            );
+            // Store failed invoice attempt
+            await this.invoiceHeaders.save(
+              this.invoiceHeaders.create({
+                status: 'ERROR',
+                message: errorMessage,
+                requestDate: new Date(),
+                billToCustName: invoiceHeader.billToCustomerName,
+                billToLocation: invoiceHeader.billToLocation,
+                billToAccNumber:
+                  invoiceHeader.billToAccountNumber != null
+                    ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+                    : null,
+                businessUnit: invoiceHeader.businessUnit,
+                txnSource: invoiceHeader.transactionSource,
+                txnType: invoiceHeader.transactionType,
+                txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+                glDate: invoiceHeader.saleDate,
+                currencyCode: invoiceHeader.invoiceCurrencyCode,
+                totalAmount: order.totalAmount,
+                region: effectiveRegion,
+              }),
+            );
+            throw new Error(`Oracle invoice creation failed: ${errorMessage}`);
           }
         }
 
@@ -703,95 +752,95 @@ export class OrderSyncProcessor {
         // Persist the invoice audit rows + inventory txns only when we actually
         // created the invoice this run. On reuse (dup check A) they already exist.
         if (!existingInvoiceLine) {
-        const auditHeader = await this.invoiceHeaders.save(
-          this.invoiceHeaders.create({
-            status: normalizedInvoiceStatus,
-            requestDate: new Date(),
-            billToCustName: invoiceHeader.billToCustomerName,
-            billToLocation: invoiceHeader.billToLocation,
-            billToAccNumber:
-              invoiceHeader.billToAccountNumber != null
-                ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
-                : null,
-            businessUnit: invoiceHeader.businessUnit,
-            paymentTermsName: invoiceHeader.paymentTermsName,
-            txnSource: invoiceHeader.transactionSource,
-            txnType: invoiceHeader.transactionType,
-            txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
-            glDate: invoiceHeader.saleDate,
-            currencyCode: invoiceHeader.invoiceCurrencyCode,
-            txnNumber: txnNumber, // ✅ Store the actual transaction number (BigInt)
-            customerTxnId: toBigIntOrNull(invoiceResult.customerTrxId),
-            totalAmount: order.totalAmount, // Store total amount for reference
-            region: effectiveRegion,
-          }),
-        );
-
-        await this.invoiceLines.save(
-          invoiceHeader.invoiceLines.map((il) =>
-            this.invoiceLines.create({
+          const auditHeader = await this.invoiceHeaders.save(
+            this.invoiceHeaders.create({
               status: normalizedInvoiceStatus,
               requestDate: new Date(),
-              invoiceNumber: txnNumber ? String(txnNumber) : null,
-              lineNumber: il.lineNumber,
-              itemNumber: il.itemNumber ?? null,
-              description: il.description,
-              uom: il.uomCode ?? null,
-              quantity: il.quantity,
-              currencyCode: invoiceHeader.invoiceCurrencyCode,
-              taxCode: il.taxClassificationCode ?? null,
-              salesOrder: il.salesOrder ?? null,
-              salesOrderLine: Number(il.salesOrderLine) || null,
-              region: effectiveRegion,
-              headerId: auditHeader.id,
-            }),
-          ),
-        );
-
-        // ── 8b. Create Inventory Transactions for Each Line ───────
-        this.logger.log(
-          `[${odooOrderId}] Step 8b/14: Creating ${invoiceHeader.invoiceLines.length} inventory transaction(s)...`,
-        );
-
-        const inventoryTxns = invoiceHeader.invoiceLines
-          .filter((il) => il.itemNumber && il.quantity > 0) // Only create for valid items with quantity
-          .map((il) =>
-            this.invTxns.create({
-              status: 'SUCCESS',
-              requestDate: new Date(),
-              organizationName: invoiceHeader.businessUnit,
-              itemNumber: il.itemNumber!,
-              txnSourceName: invoiceHeader.transactionSource,
-              subInventory: null, // Could be enriched from store config if needed
-              txnUom: il.uomCode || 'Ea',
+              billToCustName: invoiceHeader.billToCustomerName,
+              billToLocation: invoiceHeader.billToLocation,
+              billToAccNumber:
+                invoiceHeader.billToAccountNumber != null
+                  ? numberToBigInt(Number(invoiceHeader.billToAccountNumber))
+                  : null,
+              businessUnit: invoiceHeader.businessUnit,
+              paymentTermsName: invoiceHeader.paymentTermsName,
+              txnSource: invoiceHeader.transactionSource,
+              txnType: invoiceHeader.transactionType,
               txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
-              txnQty: il.quantity,
+              glDate: invoiceHeader.saleDate,
+              currencyCode: invoiceHeader.invoiceCurrencyCode,
+              txnNumber: txnNumber, // ✅ Store the actual transaction number (BigInt)
+              customerTxnId: toBigIntOrNull(invoiceResult.customerTrxId),
+              totalAmount: order.totalAmount, // Store total amount for reference
               region: effectiveRegion,
-              integMode: `${effectiveRegion}-ORDER-SYNC`,
             }),
           );
 
-        if (inventoryTxns.length > 0) {
-          try {
-            await this.invTxns.save(inventoryTxns);
-            this.logger.log(
-              `[${odooOrderId}] ✅ Step 8b/14: Created ${inventoryTxns.length} inventory transaction(s)`,
+          await this.invoiceLines.save(
+            invoiceHeader.invoiceLines.map((il) =>
+              this.invoiceLines.create({
+                status: normalizedInvoiceStatus,
+                requestDate: new Date(),
+                invoiceNumber: txnNumber ? String(txnNumber) : null,
+                lineNumber: il.lineNumber,
+                itemNumber: il.itemNumber ?? null,
+                description: il.description,
+                uom: il.uomCode ?? null,
+                quantity: il.quantity,
+                currencyCode: invoiceHeader.invoiceCurrencyCode,
+                taxCode: il.taxClassificationCode ?? null,
+                salesOrder: il.salesOrder ?? null,
+                salesOrderLine: Number(il.salesOrderLine) || null,
+                region: effectiveRegion,
+                headerId: auditHeader.id,
+              }),
+            ),
+          );
+
+          // ── 8b. Create Inventory Transactions for Each Line ───────
+          this.logger.log(
+            `[${odooOrderId}] Step 8b/14: Creating ${invoiceHeader.invoiceLines.length} inventory transaction(s)...`,
+          );
+
+          const inventoryTxns = invoiceHeader.invoiceLines
+            .filter((il) => il.itemNumber && il.quantity > 0) // Only create for valid items with quantity
+            .map((il) =>
+              this.invTxns.create({
+                status: 'SUCCESS',
+                requestDate: new Date(),
+                organizationName: invoiceHeader.businessUnit,
+                itemNumber: il.itemNumber!,
+                txnSourceName: invoiceHeader.transactionSource,
+                subInventory: null, // Could be enriched from store config if needed
+                txnUom: il.uomCode || 'Ea',
+                txnDate: invoiceHeader.trxDate || invoiceHeader.saleDate,
+                txnQty: il.quantity,
+                region: effectiveRegion,
+                integMode: `${effectiveRegion}-ORDER-SYNC`,
+              }),
             );
-          } catch (invTxnError) {
-            // Log error but don't fail the entire sync
-            this.logger.warn(
-              `[${odooOrderId}] ⚠️  Inventory transaction creation failed (non-critical): ${
-                invTxnError instanceof Error
-                  ? invTxnError.message
-                  : String(invTxnError)
-              }`,
+
+          if (inventoryTxns.length > 0) {
+            try {
+              await this.invTxns.save(inventoryTxns);
+              this.logger.log(
+                `[${odooOrderId}] ✅ Step 8b/14: Created ${inventoryTxns.length} inventory transaction(s)`,
+              );
+            } catch (invTxnError) {
+              // Log error but don't fail the entire sync
+              this.logger.warn(
+                `[${odooOrderId}] ⚠️  Inventory transaction creation failed (non-critical): ${
+                  invTxnError instanceof Error
+                    ? invTxnError.message
+                    : String(invTxnError)
+                }`,
+              );
+            }
+          } else {
+            this.logger.log(
+              `[${odooOrderId}] ⏭️  Step 8b/14: No valid items for inventory transactions`,
             );
           }
-        } else {
-          this.logger.log(
-            `[${odooOrderId}] ⏭️  Step 8b/14: No valid items for inventory transactions`,
-          );
-        }
         } // end if (!existingInvoiceLine)
 
         // ── 9. Push Standard Receipts ─────────────────────────────
@@ -1125,9 +1174,7 @@ export class OrderSyncProcessor {
           ? { warnings: validationWarnings }
           : null) as never,
         oracleInvoiceNumber: order.isRefund ? null : oracleInvoiceNumber,
-        oracleCreditMemoNumber: order.isRefund
-          ? oracleCreditMemoNumber
-          : null,
+        oracleCreditMemoNumber: order.isRefund ? oracleCreditMemoNumber : null,
       });
 
       if (syncJobId) await this.incrementSyncJobCounters(syncJobId, 'success');

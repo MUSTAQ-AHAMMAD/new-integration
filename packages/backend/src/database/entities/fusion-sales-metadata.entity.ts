@@ -12,7 +12,10 @@ import { generateId } from '../id.util';
 import { bigintTransformer, booleanTransformer } from '../transformers';
 
 @Entity({ name: 'FusionSalesMetadata' })
-@Unique(['billToName', 'region', 'customerType'])
+// Java key: (SUBINVENTORY, CUSTOMER_TYPE, REGION). Keying on billToName
+// collapsed the per-branch service-provider rows (every branch shares e.g.
+// billToName 'Hungerstation' but has its own site number).
+@Unique(['subinventory', 'region', 'customerType'])
 @Index(['region'])
 @Index(['customerType'])
 export class FusionSalesMetadata {

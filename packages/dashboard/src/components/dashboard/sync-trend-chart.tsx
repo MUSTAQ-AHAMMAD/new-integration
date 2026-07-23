@@ -14,7 +14,7 @@ export function SyncTrendChart() {
 
   const chartData = data?.map((item) => ({
     status: item.status,
-    count: item._count.id,
+    count: item.count,
   })) || [];
 
   return (

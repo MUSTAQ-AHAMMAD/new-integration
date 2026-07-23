@@ -51,6 +51,7 @@ interface NavGroup {
 
 const topItems: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/integration-run', label: 'Integration Run', icon: Play },
   { href: '/region-integration', label: 'Region Integration', icon: Globe },
   { href: '/sync-jobs', label: 'Sync Jobs', icon: RefreshCw },
   { href: '/orders', label: 'Order Manager', icon: ShoppingCart },

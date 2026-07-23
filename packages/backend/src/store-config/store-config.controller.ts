@@ -16,6 +16,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ObjectLiteral, Repository } from 'typeorm';
 import { Response } from 'express';
+import { StoreConfigSeederService } from './store-config-seeder.service';
 import { StoreConfigService } from './store-config.service';
 import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
@@ -23,6 +24,7 @@ import { StoreConfiguration } from '../database/entities/store-configuration.ent
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
+import { ValidationStatus } from '../database/enums';
 
 @ApiTags('store-config')
 @Controller('store-config')
@@ -30,6 +32,7 @@ import { RolesGuard } from '../auth/roles.guard';
 export class StoreConfigController {
   constructor(
     private readonly service: StoreConfigService,
+    private readonly seeder: StoreConfigSeederService,
     @InjectRepository(StoreConfiguration)
     private readonly stores: Repository<StoreConfiguration>,
     @InjectRepository(BackupOdooOrder)
@@ -110,6 +113,46 @@ export class StoreConfigController {
   @ApiOperation({ summary: 'Validate store configuration' })
   validate(@Param('branchCode') branchCode: string) {
     return this.service.validateConfig(branchCode);
+  }
+
+  @Post('seed-region')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary:
+      'Bulk-provision StoreConfiguration for every eligible outlet in a region ' +
+      'from reference data (outlet config + sales metadata + registers). Pass ' +
+      '{ dryRun: true } to preview. Omit region to seed all regions.',
+  })
+  async seedRegion(@Body() body: { region?: string; dryRun?: boolean }) {
+    const reports = await this.seeder.seedRegion(body?.region, {
+      dryRun: body?.dryRun ?? false,
+    });
+    return {
+      dryRun: body?.dryRun ?? false,
+      regions: reports.length,
+      totals: {
+        created: reports.reduce((s, r) => s + r.created, 0),
+        updated: reports.reduce((s, r) => s + r.updated, 0),
+        skipped: reports.reduce((s, r) => s + r.skipped, 0),
+        needsReview: reports.reduce((s, r) => s + r.needsReview, 0),
+      },
+      reports,
+    };
+  }
+
+  @Post('repair-auto-created')
+  @Roles('ADMIN')
+  @ApiOperation({
+    summary:
+      'Re-resolve PENDING/PARTIAL store configurations with name-first matching ' +
+      '(outlet config region → own sales metadata → own register accounts), ' +
+      'repairing rows auto-created with borrowed accounts or a mislabelled ' +
+      'region. Pass { dryRun: true } to preview.',
+  })
+  repairAutoCreated(@Body() body?: { dryRun?: boolean }) {
+    return this.service.repairAutoCreatedConfigs({
+      dryRun: body?.dryRun ?? false,
+    });
   }
 
   @Post('populate/all-branches')
@@ -269,16 +312,16 @@ export class StoreConfigController {
       configsFound: results.filter((r) => r.hasConfig).length,
       configsMissing: results.filter((r) => !r.hasConfig).length,
       configsValid: results.filter(
-        (r) => r.hasConfig && r.configStatus === 'VALIDATED',
+        (r) => r.hasConfig && r.configStatus === ValidationStatus.VALIDATED,
       ).length,
       configsPartial: results.filter(
-        (r) => r.hasConfig && r.configStatus === 'PARTIAL',
+        (r) => r.hasConfig && r.configStatus === ValidationStatus.PARTIAL,
       ).length,
       configsInvalid: results.filter(
-        (r) => r.hasConfig && r.configStatus === 'INVALID',
+        (r) => r.hasConfig && r.configStatus === ValidationStatus.INVALID,
       ).length,
       configsPending: results.filter(
-        (r) => r.hasConfig && r.configStatus === 'PENDING',
+        (r) => r.hasConfig && r.configStatus === ValidationStatus.PENDING,
       ).length,
       missingBankAccountId: results.filter(
         (r) => r.hasConfig && !r.hasBankAccountId,

@@ -44,7 +44,13 @@ export default function PaymentMappingsPage() {
       // Payment mappings share the same generic admin endpoint under 'payment-mappings'
       const result = await api.adminImportCsv('payment-mappings', file);
       toast.success(`Imported ${result.imported} mappings (${result.skipped} skipped)`);
-      if (result.errors.length > 0) toast.warning(`${result.errors.length} rows had errors`);
+      if (result.errors.length > 0) {
+        console.warn('CSV import errors for payment-mappings:', result.errors);
+        toast.warning(
+          `${result.errors.length} row(s) had errors — first: ${result.errors[0]}`,
+          { duration: 12000 },
+        );
+      }
       qc.invalidateQueries({ queryKey: ['payment-mappings'] });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Import failed');

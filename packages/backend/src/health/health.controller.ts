@@ -21,7 +21,12 @@ export class HealthController {
   @Get()
   @HealthCheck()
   check() {
-    return this.health.check([() => this.dbHealth.pingCheck('database')]);
+    // The app DB is a remote Oracle instance; the default 1s ping timeout flaps
+    // 503 whenever a heavy cron (e.g. item-sync) is holding pool connections,
+    // even though the app is serving fine. 8s reflects real network latency.
+    return this.health.check([
+      () => this.dbHealth.pingCheck('database', { timeout: 8000 }),
+    ]);
   }
 
   @Get('services')

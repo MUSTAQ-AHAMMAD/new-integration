@@ -7,9 +7,11 @@ import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { ConfigurationBackup } from '../database/entities/configuration-backup.entity';
 import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
 import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import { StoreConfigController } from './store-config.controller';
+import { StoreConfigSeederService } from './store-config-seeder.service';
 import { StoreConfigService } from './store-config.service';
 import { BatchOperationsService } from './batch-operations.service';
 
@@ -18,6 +20,7 @@ import { BatchOperationsService } from './batch-operations.service';
     AlertsModule,
     TypeOrmModule.forFeature([
       StoreConfiguration,
+      OutletIntegrationConfig,
       FusionSalesMetadata,
       FusionBusinessUnitMap,
       VendHqRegister,
@@ -28,7 +31,7 @@ import { BatchOperationsService } from './batch-operations.service';
     ]),
   ],
   controllers: [StoreConfigController],
-  providers: [StoreConfigService, BatchOperationsService],
-  exports: [StoreConfigService, BatchOperationsService],
+  providers: [StoreConfigService, BatchOperationsService, StoreConfigSeederService],
+  exports: [StoreConfigService, BatchOperationsService, StoreConfigSeederService],
 })
 export class StoreConfigModule {}

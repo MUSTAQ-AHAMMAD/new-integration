@@ -1,7 +1,8 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ObjectLiteral, Repository } from 'typeorm';
+import { IsNull, ObjectLiteral, Repository } from 'typeorm';
+import { generateId } from '../database/id.util';
 import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
 import { FusionCredential } from '../database/entities/fusion-credential.entity';
 import { FusionCustomerAccount } from '../database/entities/fusion-customer-account.entity';
@@ -39,6 +40,24 @@ function str(row: Record<string, unknown>, name: string): string {
   const v = col(row, name);
   // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return v != null ? String(v) : '';
+}
+
+/**
+ * Returns the first non-empty value among the given columns, or '' if all are
+ * empty. Used for NOT NULL keys that have a natural fallback (e.g. an item whose
+ * ITEM_ID is null but SKU is set). Oracle treats '' as NULL, so a plain str()
+ * on a null source column would fail a NOT NULL constraint (ORA-01400).
+ */
+function firstStr(row: Record<string, unknown>, ...names: string[]): string {
+  for (const name of names) {
+    const v = col(row, name);
+    if (v != null) {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      const s = String(v).trim();
+      if (s !== '') return s;
+    }
+  }
+  return '';
 }
 
 function num(row: Record<string, unknown>, name: string): number {
@@ -196,7 +215,9 @@ const MAPPINGS: OracleTableMapping[] = [
       region: str(r, 'REGION'),
       customerType: str(r, 'CUSTOMER_TYPE'),
     }),
-    conflictColumns: ['billToName', 'region', 'customerType'],
+    // Java key — one row per (outlet, customer type, region). Keying on
+    // billToName collapsed per-branch service-provider rows into one.
+    conflictColumns: ['subinventory', 'region', 'customerType'],
   },
   // SERVICE_PROVIDER_JOURNAL_META → ServiceProviderJournalMeta
   {
@@ -346,7 +367,10 @@ const MAPPINGS: OracleTableMapping[] = [
       requestId: optInt32(r, 'REQUEST_ID'),
       status: optStr(r, 'STATUS'),
       message: optStr(r, 'MESSAGE'),
-      itemId: str(r, 'ITEM_ID'),
+      // ~1,590 items have a null ITEM_ID but a valid SKU. Since the whole
+      // downstream path keys items by SKU (productCode), fall back to SKU so
+      // those items still import and are usable; last resort is the handle.
+      itemId: firstStr(r, 'ITEM_ID', 'SKU', 'HANDLE'),
       // Fusion SOURCE_ID exceeds Int32; null out-of-range values (field is
       // informational and unread — mirrors ItemSyncService's own handling).
       sourceId: optInt32(r, 'SOURCE_ID'),
@@ -355,7 +379,8 @@ const MAPPINGS: OracleTableMapping[] = [
       itemType: optStr(r, 'ITEM_TYPE'),
       uomName: optStr(r, 'UOM_NAME'),
       active: bool(r, 'ACTIVE'),
-      name: str(r, 'NAME'),
+      // NAME is NOT NULL but ~71 rows have none — fall back to SKU/description.
+      name: firstStr(r, 'NAME', 'SKU', 'DESCRIPTION') || 'Unnamed item',
       description: optStr(r, 'DESCRIPTION'),
       sku: optStr(r, 'SKU'),
       brandId: optStr(r, 'BRAND_ID'),
@@ -428,6 +453,71 @@ export class OracleNativeService {
    * Extracts a human-readable identifier from an Oracle row for error messages.
    * Tries common ID/name/code columns to help identify which row failed.
    */
+  /**
+   * Assigns the client-generated primary key before an upsert.
+   *
+   * Entities migrated off Prisma keep a string PK filled in by a `@BeforeInsert`
+   * hook, but TypeORM's `upsert()` goes through the InsertQueryBuilder and never
+   * fires entity listeners — every insert would fail with
+   * `ORA-01400: cannot insert NULL into (..."id")`.
+   *
+   * The existing row's id is reused when the conflict target already matches, so
+   * re-running an import never re-keys a row (which would break FK references).
+   */
+  private async ensurePrimaryKey(
+    repo: Repository<ObjectLiteral>,
+    data: Record<string, unknown>,
+    conflictColumns: string[],
+  ): Promise<void> {
+    const primary = repo.metadata.primaryColumns;
+    // Only applies to a single, app-generated string PK. Numeric/identity or
+    // composite keys are left to the database.
+    if (primary.length !== 1) return;
+    const pk = primary[0].propertyName;
+    if (primary[0].isGenerated || data[pk] != null) return;
+
+    const where = Object.fromEntries(
+      conflictColumns.map((c) => [c, data[c] ?? IsNull()]),
+    );
+    const existing = await repo.findOne({
+      where,
+      select: { [pk]: true },
+    });
+    data[pk] = existing?.[pk] ?? generateId();
+  }
+
+  /**
+   * Returns the NOT NULL, non-defaulted columns whose mapped value is empty.
+   * Oracle treats '' as NULL, so these would fail ORA-01400 on insert. The PK
+   * (filled by ensurePrimaryKey) and auto-managed date/version columns are
+   * excluded.
+   */
+  private missingRequiredColumns(
+    repo: Repository<ObjectLiteral>,
+    data: Record<string, unknown>,
+  ): string[] {
+    const pk = new Set(repo.metadata.primaryColumns.map((c) => c.propertyName));
+    const missing: string[] = [];
+    for (const col of repo.metadata.columns) {
+      if (col.isNullable) continue;
+      if (col.default !== undefined) continue;
+      if (
+        col.isGenerated ||
+        col.isCreateDate ||
+        col.isUpdateDate ||
+        col.isVersion ||
+        pk.has(col.propertyName)
+      ) {
+        continue;
+      }
+      const v = data[col.propertyName];
+      if (v === null || v === undefined || v === '') {
+        missing.push(col.propertyName);
+      }
+    }
+    return missing;
+  }
+
   private getRowIdentifier(
     row: Record<string, unknown>,
     _mapping: OracleTableMapping,
@@ -601,8 +691,22 @@ export class OracleNativeService {
           const outcomes = await Promise.allSettled(
             chunk.map((row) =>
               // Resolve inside so mapRow errors are captured too.
-              Promise.resolve().then(() => {
+              Promise.resolve().then(async () => {
                 const data = mapping.mapRow(row);
+                // Turn the opaque ORA-01400 (Oracle stores '' as NULL, so a
+                // NOT NULL column fed an empty value is rejected) into a clear,
+                // actionable skip reason naming the exact column.
+                const missing = this.missingRequiredColumns(repo, data);
+                if (missing.length > 0) {
+                  throw new Error(
+                    `source row has empty required column(s): ${missing.join(', ')}`,
+                  );
+                }
+                await this.ensurePrimaryKey(
+                  repo,
+                  data,
+                  mapping.conflictColumns,
+                );
                 return repo.upsert(data, mapping.conflictColumns);
               }),
             ),
@@ -741,21 +845,23 @@ export class OracleNativeService {
       const res = await connection.execute<Record<string, unknown>>(q, [], {
         outFormat: oracledb.OUT_FORMAT_OBJECT,
       });
+      // Oracle scalar columns arrive as string/number; anything else is a
+      // driver anomaly and the row is skipped rather than stringified badly.
+      const scalar = (v: unknown): string | null =>
+        typeof v === 'string' || typeof v === 'number' ? String(v) : null;
       for (const row of res.rows ?? []) {
-        const acct = row['ACCT'];
-        const cid = row['CID'];
-        const region = row['REGION'];
+        const acct = scalar(row['ACCT']);
+        const cid = scalar(row['CID']);
+        const region = scalar(row['REGION']);
         if (acct == null || cid == null || region == null) continue;
-        const key = `${String(acct)}|${String(region)}`;
-        const entry =
-          map.get(key) ??
-          {
-            accountNumber: BigInt(String(acct)),
-            region: String(region),
-            name: row['NAME'] != null ? String(row['NAME']) : null,
-            counts: new Map<string, number>(),
-          };
-        const cidStr = String(cid);
+        const key = `${acct}|${region}`;
+        const entry = map.get(key) ?? {
+          accountNumber: BigInt(acct),
+          region,
+          name: scalar(row['NAME']),
+          counts: new Map<string, number>(),
+        };
+        const cidStr = cid;
         const cnt = Number(row['CNT'] ?? 1);
         entry.counts.set(cidStr, (entry.counts.get(cidStr) ?? 0) + cnt);
         map.set(key, entry);
@@ -787,11 +893,14 @@ export class OracleNativeService {
         region: entry.region,
         customerName: entry.name,
       };
+      const conflictColumns = ['accountNumber', 'region'];
       try {
-        await this.fusionCustomerAccountRepo.upsert(data, [
-          'accountNumber',
-          'region',
-        ]);
+        await this.ensurePrimaryKey(
+          this.fusionCustomerAccountRepo,
+          data,
+          conflictColumns,
+        );
+        await this.fusionCustomerAccountRepo.upsert(data, conflictColumns);
         imported++;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

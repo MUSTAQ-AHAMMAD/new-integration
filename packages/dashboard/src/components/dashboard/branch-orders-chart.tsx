@@ -15,7 +15,7 @@ export function BranchOrdersChart() {
   });
 
   const branchTotals = data?.reduce<Record<string, number>>((accumulator, item) => {
-    accumulator[item.branchCode] = (accumulator[item.branchCode] || 0) + item._count.id;
+    accumulator[item.branchCode] = (accumulator[item.branchCode] || 0) + item.count;
     return accumulator;
   }, {}) ?? {};
 

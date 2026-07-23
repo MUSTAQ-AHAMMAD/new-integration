@@ -7,6 +7,7 @@ import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
 import { FusionSalesMetadata } from '../database/entities/fusion-sales-metadata.entity';
+import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import { AlertSeverity, AlertType, ValidationStatus } from '../database/enums';
@@ -39,6 +40,8 @@ export class StoreConfigService {
     private readonly stores: Repository<StoreConfiguration>,
     @InjectRepository(FusionSalesMetadata)
     private readonly salesMetadata: Repository<FusionSalesMetadata>,
+    @InjectRepository(OutletIntegrationConfig)
+    private readonly outletConfigs: Repository<OutletIntegrationConfig>,
     @InjectRepository(FusionBusinessUnitMap)
     private readonly businessUnitMaps: Repository<FusionBusinessUnitMap>,
     @InjectRepository(VendHqRegister)
@@ -124,42 +127,129 @@ export class StoreConfigService {
     metadata: FusionSalesMetadata | null;
     region: string | null;
     nameMatched: boolean;
+    regionSource:
+      | 'OUTLET_CONFIG'
+      | 'METADATA_NAME'
+      | 'REGISTER_NAME'
+      | 'ORDER_HINT'
+      | 'NONE';
   }> {
     const target = this.normalizeName(branchName);
+
+    // 1. OutletIntegrationConfig is the authoritative region source (mirrors the
+    //    Java system, where the outlet row drives the whole integration). The
+    //    order's own region field is unreliable (stores are frequently
+    //    mislabelled, e.g. a Saudi mall tagged region BH).
+    let outletRegion: string | null = null;
+    if (target) {
+      const outlets = await this.outletConfigs.find();
+      const outlet = outlets.find(
+        (o) => this.normalizeName(o.outletName) === target,
+      );
+      outletRegion = outlet?.region?.trim() || null;
+    }
+
+    // 2. Register name-match as a secondary region witness (registers are
+    //    per-store, so a name hit pins the store to its real region).
+    let registerRegion: string | null = null;
+    if (target && !outletRegion) {
+      const registers = await this.registers.find({
+        where: { bankAccountId: Not(IsNull()), deletedAt: IsNull() },
+      });
+      const byName = registers.filter(
+        (r) => this.normalizeName(r.registerName) === target,
+      );
+      if (byName.length > 0) {
+        registerRegion =
+          byName.find((r) => r.region === hintedRegion)?.region ??
+          byName[0].region ??
+          null;
+      }
+    }
+
+    const preferredRegion =
+      outletRegion ?? registerRegion ?? hintedRegion ?? null;
+
     const normals = await this.salesMetadata.find({
       where: { customerType: 'NORMAL' },
     });
 
     if (target) {
-      const byName = normals.filter(
-        (m) => this.normalizeName(m.billToName) === target,
+      // Java key first: SUBINVENTORY == outlet/branch name. billToName is only
+      // the customer's display name ("AL Wehdah Mall" for branch WEHDA), so it
+      // is merely the fallback for rows imported without a subinventory.
+      const bySub = normals.filter(
+        (m) => this.normalizeName(m.subinventory) === target,
       );
-      if (byName.length === 1) {
+      const byName =
+        bySub.length > 0
+          ? bySub
+          : normals.filter((m) => this.normalizeName(m.billToName) === target);
+      if (byName.length > 0) {
+        // Same store name may exist in multiple regions — prefer the
+        // authoritative region, then the hinted one.
+        const chosen =
+          (preferredRegion
+            ? byName.find((m) => m.region === preferredRegion)
+            : undefined) ??
+          (hintedRegion
+            ? byName.find((m) => m.region === hintedRegion)
+            : undefined) ??
+          byName[0];
         return {
-          metadata: byName[0],
-          region: byName[0].region,
+          metadata: chosen,
+          region: outletRegion ?? chosen.region,
           nameMatched: true,
+          regionSource: outletRegion ? 'OUTLET_CONFIG' : 'METADATA_NAME',
         };
-      }
-      if (byName.length > 1) {
-        // Same store name in multiple regions — prefer the hinted region.
-        const preferred = hintedRegion
-          ? byName.find((m) => m.region === hintedRegion)
-          : undefined;
-        const chosen = preferred ?? byName[0];
-        return { metadata: chosen, region: chosen.region, nameMatched: true };
       }
     }
 
-    // No name match — fall back to a region-only match (may be another store's row).
-    const byRegion = hintedRegion
-      ? (normals.find((m) => m.region === hintedRegion) ?? null)
+    // No metadata name match — resolve region from the best witness we have and
+    // fall back to a region-only metadata match (may be another store's row).
+    const region = preferredRegion;
+    const byRegion = region
+      ? (normals.find((m) => m.region === region) ?? null)
       : null;
     return {
       metadata: byRegion,
-      region: hintedRegion ?? byRegion?.region ?? null,
+      region,
       nameMatched: false,
+      regionSource: outletRegion
+        ? 'OUTLET_CONFIG'
+        : registerRegion
+          ? 'REGISTER_NAME'
+          : hintedRegion
+            ? 'ORDER_HINT'
+            : 'NONE',
     };
+  }
+
+  /**
+   * Resolves the store's OWN register (matched by normalised name) so bank/cash
+   * accounts are per-store, exactly like the Java system where accounts hang off
+   * the register, never off "any register in the region". Returns null when the
+   * store has no name-matched register — callers must flag that for review
+   * instead of silently borrowing another store's accounts.
+   */
+  private async resolveRegisterByName(
+    branchName: string | null | undefined,
+    region: string | null,
+  ): Promise<VendHqRegister | null> {
+    const target = this.normalizeName(branchName);
+    if (!target) return null;
+    const registers = await this.registers.find({
+      where: {
+        bankAccountId: Not(IsNull()),
+        cashAccountId: Not(IsNull()),
+        deletedAt: IsNull(),
+      },
+    });
+    const byName = registers.filter(
+      (r) => this.normalizeName(r.registerName) === target,
+    );
+    if (byName.length === 0) return null;
+    return byName.find((r) => r.region === region) ?? byName[0];
   }
 
   /**
@@ -241,6 +331,7 @@ export class StoreConfigService {
       metadata: fusionMetadata,
       region: resolvedRegion,
       nameMatched,
+      regionSource,
     } = await this.resolveStoreMetadata(branchName, hintedRegion);
     const region = resolvedRegion ?? hintedRegion ?? 'AE';
 
@@ -255,21 +346,26 @@ export class StoreConfigService {
       );
     }
 
-    // Try to get bank/cash account IDs from FusionBusinessUnitMap or other sources
     const businessUnitMap = await this.businessUnitMaps.findOne({
       where: { region },
     });
 
-    // Try to get bank/cash account IDs from VendHqRegister for this region
-    const register = await this.registers.findOne({
-      where: {
-        region,
-        bankAccountId: Not(IsNull()),
-        cashAccountId: Not(IsNull()),
-        deletedAt: IsNull(),
-      },
-      order: { createdAt: 'DESC' },
-    });
+    // Bank/cash accounts hang off THIS store's register (matched by name), never
+    // off an arbitrary same-region register — Java parity. Only when the store
+    // has no register at all do we borrow a region row, and that is flagged.
+    let register = await this.resolveRegisterByName(branchName, region);
+    const registerNameMatched = register != null;
+    if (!register) {
+      register = await this.registers.findOne({
+        where: {
+          region,
+          bankAccountId: Not(IsNull()),
+          cashAccountId: Not(IsNull()),
+          deletedAt: IsNull(),
+        },
+        order: { createdAt: 'DESC' },
+      });
+    }
 
     const bankAccountId = register?.bankAccountId
       ? Number(register.bankAccountId)
@@ -284,6 +380,12 @@ export class StoreConfigService {
         'Bank or cash account IDs missing - receipt creation will fail',
       );
     }
+    if (!registerNameMatched && register) {
+      validationErrors.push(
+        `Bank/cash accounts borrowed from register "${register.registerName}" ` +
+          '(no register matches this store name) - review before go-live',
+      );
+    }
     if (!fusionMetadata) {
       validationErrors.push(
         'No FusionSalesMetadata found for store - using defaults',
@@ -291,6 +393,12 @@ export class StoreConfigService {
     } else if (!nameMatched) {
       validationErrors.push(
         'FusionSalesMetadata matched by region only (not store name) - bill-to/business unit may be wrong; review',
+      );
+    }
+    if (regionSource === 'ORDER_HINT' || regionSource === 'NONE') {
+      validationErrors.push(
+        `Region "${region}" taken from the order data (source=${regionSource}) - ` +
+          'not confirmed by outlet config, metadata or register; review',
       );
     }
 
@@ -325,9 +433,14 @@ export class StoreConfigService {
           invoiceCurrencyCode: this.currencyForRegion(region),
           region,
           isActive: true,
+          // Fully name-resolved (this store's own metadata + its own register
+          // accounts + confirmed region) → VALIDATED, matching the seeder.
+          // Anything borrowed or guessed stays PENDING/PARTIAL for review.
           validationStatus:
             bankAccountId && cashAccountId
-              ? ValidationStatus.PENDING
+              ? validationErrors.length === 0
+                ? ValidationStatus.VALIDATED
+                : ValidationStatus.PENDING
               : ValidationStatus.PARTIAL,
           validationErrors:
             validationErrors.length > 0 ? validationErrors : null,
@@ -352,6 +465,170 @@ export class StoreConfigService {
     });
 
     return config;
+  }
+
+  /**
+   * Re-resolves auto-created / unreviewed store configurations with the
+   * name-first resolution (outlet config region → own metadata → own register),
+   * repairing rows that were created with an arbitrary same-region register or
+   * a region mislabelled by the order data (e.g. a Saudi mall tagged BH).
+   * Manually validated rows are never touched.
+   */
+  async repairAutoCreatedConfigs(opts: { dryRun?: boolean } = {}): Promise<{
+    dryRun: boolean;
+    examined: number;
+    repaired: number;
+    unchanged: number;
+    results: Array<{
+      branchCode: string;
+      branchName: string;
+      action: 'REPAIRED' | 'UNCHANGED';
+      changes: Record<string, { from: unknown; to: unknown }>;
+      issues: string[];
+    }>;
+  }> {
+    const candidates = await this.stores.find({
+      where: [
+        { validationStatus: ValidationStatus.PENDING },
+        { validationStatus: ValidationStatus.PARTIAL },
+      ],
+    });
+
+    const results: Array<{
+      branchCode: string;
+      branchName: string;
+      action: 'REPAIRED' | 'UNCHANGED';
+      changes: Record<string, { from: unknown; to: unknown }>;
+      issues: string[];
+    }> = [];
+
+    for (const config of candidates) {
+      const {
+        metadata,
+        region: resolvedRegion,
+        nameMatched,
+        regionSource,
+      } = await this.resolveStoreMetadata(config.branchName, config.region);
+      const region = resolvedRegion ?? config.region;
+      const register = await this.resolveRegisterByName(
+        config.branchName,
+        region,
+      );
+
+      const issues: string[] = [];
+      if (!nameMatched) issues.push('metadata not name-matched');
+      if (!register) issues.push('no name-matched register');
+      if (regionSource === 'ORDER_HINT' || regionSource === 'NONE')
+        issues.push(`region unconfirmed (source=${regionSource})`);
+
+      const businessUnitMap = region
+        ? await this.businessUnitMaps.findOne({ where: { region } })
+        : null;
+
+      const next: Partial<StoreConfiguration> = {};
+      if (region && region !== config.region) next.region = region;
+      if (nameMatched && metadata) {
+        const bu = metadata.businessUnit || businessUnitMap?.businessUnitName;
+        if (bu && bu !== config.oracleBusinessUnit)
+          next.oracleBusinessUnit = bu;
+        if (
+          metadata.billToName &&
+          metadata.billToName !== config.billToSiteName
+        )
+          next.billToSiteName = metadata.billToName;
+        if (
+          metadata.siteNumber &&
+          metadata.siteNumber !== config.billToLocation
+        )
+          next.billToLocation = metadata.siteNumber;
+        if (
+          metadata.txnSource &&
+          metadata.txnSource !== config.transactionSource
+        )
+          next.transactionSource = metadata.txnSource;
+        if (metadata.txnType && metadata.txnType !== config.transactionType)
+          next.transactionType = metadata.txnType;
+        if (metadata.billToAccount != null) {
+          const opUnit = BigInt(metadata.billToAccount);
+          if (opUnit !== config.oracleOperatingUnitId)
+            next.oracleOperatingUnitId = opUnit;
+        }
+      }
+      if (register) {
+        if (
+          register.bankAccount &&
+          register.bankAccount !== config.bankAccountName
+        )
+          next.bankAccountName = register.bankAccount;
+        if (
+          register.cashAccount &&
+          register.cashAccount !== config.cashAccountName
+        )
+          next.cashAccountName = register.cashAccount;
+        const bankId = register.bankAccountId
+          ? Number(register.bankAccountId)
+          : null;
+        const cashId = register.cashAccountId
+          ? Number(register.cashAccountId)
+          : null;
+        if (bankId != null && bankId !== config.bankAccountId)
+          next.bankAccountId = bankId;
+        if (cashId != null && cashId !== config.cashAccountId)
+          next.cashAccountId = cashId;
+      }
+      const currency = this.currencyForRegion(region);
+      if (currency !== config.invoiceCurrencyCode)
+        next.invoiceCurrencyCode = currency;
+
+      const fullyResolved =
+        nameMatched && register != null && issues.length === 0;
+      const nextStatus = fullyResolved
+        ? ValidationStatus.VALIDATED
+        : config.validationStatus;
+      if (nextStatus !== config.validationStatus)
+        next.validationStatus = nextStatus;
+
+      const changed = Object.keys(next).length > 0;
+      if (changed) {
+        next.validationErrors = issues.length > 0 ? issues : null;
+        if (!opts.dryRun) {
+          await this.stores.update(
+            { branchCode: config.branchCode },
+            next as never,
+          );
+          this.clearCache(config.branchCode);
+        }
+      }
+
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+      for (const [key, to] of Object.entries(next)) {
+        if (key === 'validationErrors') continue;
+        changes[key] = {
+          from: (config as unknown as Record<string, unknown>)[key],
+          to,
+        };
+      }
+      results.push({
+        branchCode: config.branchCode,
+        branchName: config.branchName,
+        action: changed ? 'REPAIRED' : 'UNCHANGED',
+        changes,
+        issues,
+      });
+    }
+
+    const repaired = results.filter((r) => r.action === 'REPAIRED').length;
+    this.logger.log(
+      `Store-config repair ${opts.dryRun ? '(dry-run) ' : ''}— ` +
+        `${repaired} repaired of ${results.length} examined.`,
+    );
+    return {
+      dryRun: opts.dryRun ?? false,
+      examined: results.length,
+      repaired,
+      unchanged: results.length - repaired,
+      results,
+    };
   }
 
   /**

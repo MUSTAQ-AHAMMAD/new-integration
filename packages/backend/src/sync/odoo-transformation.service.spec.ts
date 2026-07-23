@@ -501,10 +501,14 @@ describe('OdooTransformationService', () => {
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    // Non-NORMAL bill-to resolves by (customerType, region).
-    prisma.fusionSalesMetadata.findOne.mockResolvedValueOnce(
-      makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
-    );
+    // Non-NORMAL bill-to resolves by (subinventory, customerType, region).
+    prisma.fusionSalesMetadata.find.mockResolvedValueOnce([
+      makeSalesMeta({
+        billToName: 'Tabby',
+        customerType: 'TABBY',
+        subinventory: 'Central',
+      }),
+    ]);
     // Paired provider rows: CREDIT-row account is debited, DEBIT-row credited.
     prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
       {
@@ -522,6 +526,9 @@ describe('OdooTransformationService', () => {
         extraSegment3: null,
         jeSource: 'Vend',
         jeCategory: 'Vend',
+        // The journal posts the provider COMMISSION (total × rate), not the
+        // gross sale — without a rate no journal is built.
+        bankChargeRate: 0.05,
       },
       {
         creditDebit: 'DEBIT',
@@ -563,9 +570,13 @@ describe('OdooTransformationService', () => {
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
-    prisma.fusionSalesMetadata.findOne.mockResolvedValueOnce(
-      makeSalesMeta({ billToName: 'Tabby', customerType: 'TABBY' }),
-    );
+    prisma.fusionSalesMetadata.find.mockResolvedValueOnce([
+      makeSalesMeta({
+        billToName: 'Tabby',
+        customerType: 'TABBY',
+        subinventory: 'Central',
+      }),
+    ]);
     prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
       { creditDebit: 'CREDIT', ledgerId: 1n, chartOfAccountsId: 2n, account: '3020044' },
     ]);

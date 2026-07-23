@@ -47,6 +47,14 @@ export class SyncControlService implements OnModuleInit {
         enabled: true,
       },
       {
+        serviceName: 'daily-invoice',
+        displayName: 'Daily Invoice Aggregation',
+        description:
+          'Posts one Oracle invoice per branch, business day, customer type ' +
+          'and credit flag at 03:00, catching up to 7 days',
+        enabled: true,
+      },
+      {
         serviceName: 'ibq-backup',
         displayName: 'IBQ Backup Service',
         description: 'Fetches orders from IBQ API every 15 minutes',
@@ -144,6 +152,63 @@ export class SyncControlService implements OnModuleInit {
   /**
    * Mark a sync service as running
    */
+  /**
+   * Atomically acquires a cross-process run lock for a service.
+   *
+   * Unlike the in-process boolean guards it replaces, this is a single
+   * compare-and-set UPDATE, so two backend instances (or api + worker) cannot
+   * both win. The lock auto-expires after `leaseMs` using `lastRunAt` as the
+   * lease timestamp, so a crashed holder never blocks the job forever.
+   *
+   * @returns true if this caller now holds the lock.
+   */
+  async acquireLock(
+    serviceName: string,
+    region?: string,
+    leaseMs = 30 * 60 * 1000,
+  ): Promise<boolean> {
+    const leaseCutoff = new Date(Date.now() - leaseMs);
+    // WHERE isRunning = false OR the lease has expired.
+    const result = await this.syncControlRepo
+      .createQueryBuilder()
+      .update(SyncControl)
+      .set({ isRunning: true, lastRunAt: new Date(), lastStatus: 'RUNNING' })
+      .where('serviceName = :serviceName', { serviceName })
+      .andWhere(region ? 'region = :region' : 'region IS NULL', { region })
+      .andWhere('("isRunning" = 0 OR "lastRunAt" < :leaseCutoff)', {
+        leaseCutoff,
+      })
+      .execute();
+
+    const acquired = (result.affected ?? 0) > 0;
+    if (acquired) {
+      this.syncControlRepo
+        .increment(
+          { serviceName, region: region ?? IsNull() },
+          'runCount',
+          1,
+        )
+        .catch(() => undefined);
+    } else {
+      this.logger.warn(
+        `Could not acquire run lock for "${serviceName}"${region ? ` (${region})` : ''} — another run holds it`,
+      );
+    }
+    return acquired;
+  }
+
+  /** Releases a lock acquired by acquireLock. */
+  async releaseLock(
+    serviceName: string,
+    region?: string,
+    status: 'SUCCESS' | 'ERROR' = 'SUCCESS',
+  ): Promise<void> {
+    await this.syncControlRepo.update(
+      { serviceName, region: region ?? IsNull() },
+      { isRunning: false, lastStatus: status, lastRunAt: new Date() },
+    );
+  }
+
   async markRunning(serviceName: string, region?: string): Promise<void> {
     await this.syncControlRepo.update(
       {
@@ -217,21 +282,77 @@ export class SyncControlService implements OnModuleInit {
    * Get all sync control records, optionally filtered by region
    */
   async listAll(region?: string) {
-    return this.syncControlRepo.find({
+    const rows = await this.syncControlRepo.find({
       where: region ? { region } : {},
       order: { region: 'ASC', displayName: 'ASC' },
     });
+    // Enrich each row with its next scheduled fire time so operators can see
+    // "when does this run next" without inspecting cron strings.
+    return rows.map((r) => ({
+      ...r,
+      nextRunAt: this.nextRunAt(r.serviceName),
+    }));
+  }
+
+  /**
+   * Cron expression per scheduled service, kept here so the control API can
+   * report next-fire times. Must stay in sync with the @Cron decorators.
+   */
+  private static readonly SCHEDULES: Record<string, string> = {
+    'odoo-backup': '0 */15 * * * *',
+    'ibq-backup': '0 */15 * * * *',
+    'vendhq-backup': '0 */10 * * * *',
+    'vendhq-to-oracle': '0 */10 * * * *',
+    'pipeline-scheduler': '0 */5 * * * *',
+    'item-sync': '0 0 * * * *',
+    'fusion-inv-to-vendhq': '0 */30 * * * *',
+    'stalled-orders': '0 0 1 * * *',
+    'daily-invoice': '0 0 3 * * *',
+  };
+
+  /**
+   * Computes the next fire time for the fixed-interval / fixed-time crons above.
+   * Handles the two shapes actually used: `0 * /N * * * *` (every N min) and
+   * `0 0 H * * *` (daily at H). Returns null for anything else.
+   */
+  nextRunAt(serviceName: string): Date | null {
+    const cron = SyncControlService.SCHEDULES[serviceName];
+    if (!cron) return null;
+    const parts = cron.split(' ');
+    if (parts.length !== 6) return null;
+    const [, min, hour] = parts;
+    const now = new Date();
+    const next = new Date(now.getTime());
+    next.setSeconds(0, 0);
+
+    const everyN = /^\*\/(\d+)$/.exec(min);
+    if (everyN && hour === '*') {
+      const n = Number(everyN[1]);
+      const add = n - (now.getMinutes() % n || n);
+      next.setMinutes(now.getMinutes() + (add === 0 ? n : add));
+      return next;
+    }
+    // Daily at a fixed hour: "0 0 H * * *"
+    if (min === '0' && /^\d+$/.test(hour)) {
+      next.setMinutes(0);
+      next.setHours(Number(hour));
+      if (next <= now) next.setDate(next.getDate() + 1);
+      return next;
+    }
+    return null;
   }
 
   /**
    * Get single sync control record
    */
   async getOne(serviceName: string, region?: string) {
-    return this.syncControlRepo.findOne({
+    const row = await this.syncControlRepo.findOne({
       where: {
         serviceName,
         region: region ?? IsNull(),
       },
     });
+    if (!row) return row;
+    return { ...row, nextRunAt: this.nextRunAt(row.serviceName) };
   }
 }

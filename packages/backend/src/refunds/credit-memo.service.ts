@@ -1,14 +1,21 @@
-import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { AuditOperation, AuditStatus } from '../database/enums';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
+import { OracleClient } from '../clients/oracle/oracle.client';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { RefundTracking } from '../database/entities/refund-tracking.entity';
-import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { StoreConfigService } from '../store-config/store-config.service';
 import { SyncStatus } from '../database/enums';
 import { IdempotencyService } from '../sync/idempotency.service';
 import { OdooTransformationService } from '../sync/odoo-transformation.service';
@@ -44,12 +51,14 @@ export class CreditMemoService {
     private readonly refunds: Repository<RefundTracking>,
     @InjectRepository(OrderSyncQueue)
     private readonly orders: Repository<OrderSyncQueue>,
-    @InjectRepository(StoreConfiguration)
-    private readonly stores: Repository<StoreConfiguration>,
+    private readonly storeConfigService: StoreConfigService,
     @InjectRepository(BackupOdooOrder)
     private readonly backups: Repository<BackupOdooOrder>,
     private readonly odooTransformation: OdooTransformationService,
     private readonly oracleClient: OracleSoapClient,
+    private readonly restClient: OracleClient,
+    @InjectRepository(FusionInvoiceHeader)
+    private readonly invoiceHeaders: Repository<FusionInvoiceHeader>,
     private readonly idempotency: IdempotencyService,
     @Optional() private readonly circuitBreaker?: CircuitBreakerService,
   ) {
@@ -58,10 +67,7 @@ export class CreditMemoService {
     this.enabled =
       process.env.CREDIT_MEMO_AUTO_PUSH_ENABLED !== 'false' &&
       process.env.PIPELINE_ENABLED !== 'false';
-    this.batchSize = parseInt(
-      process.env.CREDIT_MEMO_BATCH_SIZE || '50',
-      10,
-    );
+    this.batchSize = parseInt(process.env.CREDIT_MEMO_BATCH_SIZE || '50', 10);
   }
 
   /**
@@ -73,7 +79,10 @@ export class CreditMemoService {
   async runAutoPush(): Promise<void> {
     if (!this.enabled || this.isRunning) return;
 
-    if (this.circuitBreaker && (await this.circuitBreaker.isAnyOpen('oracle:'))) {
+    if (
+      this.circuitBreaker &&
+      (await this.circuitBreaker.isAnyOpen('oracle:'))
+    ) {
       this.logger.warn(
         '⛔ Oracle circuit breaker is OPEN — skipping credit-memo auto-push.',
       );
@@ -155,10 +164,12 @@ export class CreditMemoService {
         );
       }
 
-      const storeConfig = await this.stores.findOne({
-        where: { branchCode },
-        select: { region: true },
-      });
+      // Auto-create the store configuration when missing, exactly like the
+      // order-sync path — a refund for a branch we have reference data for
+      // (outlet config / sales metadata / register) must not hard-fail on a
+      // missing StoreConfiguration row.
+      const storeConfig =
+        await this.storeConfigService.getOrCreateStoreConfig(branchCode);
       const region = storeConfig?.region ?? branchCode;
 
       // ── Idempotency: skip if this refund was already posted ─────────────
@@ -201,7 +212,65 @@ export class CreditMemoService {
         },
       );
 
-      const response = await this.oracleClient.createCreditMemo(header);
+      // Create via the REST resource (the SOAP AutoInvoice path is rejected by
+      // the pod for credit memos). Resolve the store's revenue account first.
+      const revenueAccount = await this.resolveRevenueAccount(
+        branchCode,
+        region,
+        header.billToCustomerName,
+      );
+      // Items unknown to Oracle's catalog would fail the whole memo with
+      // AR-857618 ("The item you entered ... doesn't exist"). ItemNumber is
+      // optional on Manual-source credit-memo lines — the distribution carries
+      // the revenue account — so fall back to a description-only line for any
+      // item Oracle doesn't know rather than losing the refund.
+      const itemKnown = new Map<string, boolean>();
+      for (const l of header.creditMemoLines) {
+        const item = l.itemNumber?.trim();
+        if (item && !itemKnown.has(item)) {
+          itemKnown.set(
+            item,
+            await this.restClient.itemExists(item).catch(() => false),
+          );
+        }
+      }
+      const restResult = await this.restClient.createCreditMemoViaRest({
+        businessUnit: header.businessUnit,
+        billToCustomerNumber: header.billToAccountNumber,
+        currency: header.invoiceCurrencyCode,
+        transactionDate: (header.memoDate instanceof Date
+          ? header.memoDate
+          : new Date(String(header.memoDate))
+        )
+          .toISOString()
+          .slice(0, 10),
+        transactionType: header.transactionType,
+        lines: header.creditMemoLines.map((l, i) => {
+          const qty = Math.abs(l.quantity || 1);
+          const price = Math.abs(l.unitSellingPrice || 0);
+          const item = l.itemNumber?.trim();
+          const knownItem = item && itemKnown.get(item) ? item : undefined;
+          if (item && !knownItem) {
+            this.logger.warn(
+              `[${refund.refundOrderNumber}] item "${item}" not in Oracle ` +
+                `catalog — credit-memo line ${i + 1} sent as description-only.`,
+            );
+          }
+          return {
+            lineNumber: l.lineNumber ?? i + 1,
+            description: l.description ?? `Refund line ${i + 1}`,
+            quantityCredit: -qty,
+            unitSellingPrice: price,
+            itemNumber: knownItem,
+            revenueAccount,
+            amount: -this.round2(qty * price),
+          };
+        }),
+      });
+      const response = {
+        transactionNumber: restResult.transactionNumber,
+        customerTrxId: restResult.customerTransactionId,
+      };
 
       // Best-effort: apply the memo to the invoice it credits. The memo already
       // exists in Oracle, so an application failure must NOT fail the push — it
@@ -231,8 +300,8 @@ export class CreditMemoService {
         targetSystem: 'ORACLE',
         operation: AuditOperation.CREATE_CREDIT_MEMO,
         status: AuditStatus.SUCCESS,
-        requestPayload: header as unknown as object,
-        responsePayload: response as unknown as object,
+        requestPayload: header,
+        responsePayload: response,
         oracleResponseId: response.transactionNumber,
         processingDurationMs: Date.now() - startedAt,
       });
@@ -250,6 +319,68 @@ export class CreditMemoService {
       const message = err instanceof Error ? err.message : String(err);
       return this.markFailed(refund.id, base, message, Date.now() - startedAt);
     }
+  }
+
+  private revenueAccountCache = new Map<string, string>();
+
+  private round2(v: number): number {
+    return Math.round((v + Number.EPSILON) * 100) / 100;
+  }
+
+  /**
+   * Resolves the Revenue GL account a credit memo should book to.
+   *
+   * A credit memo reverses the same revenue Oracle booked on the store's sales,
+   * so we take a real invoice's revenue account as a template and substitute the
+   * store's own cost centre (segment 4). This self-configures from live Oracle
+   * data — no hard-coded chart-of-accounts — and is cached per branch.
+   */
+  private async resolveRevenueAccount(
+    branchCode: string,
+    region: string,
+    branchName: string,
+  ): Promise<string> {
+    const cached = this.revenueAccountCache.get(branchCode);
+    if (cached) return cached;
+
+    // Template: any recent successful invoice's revenue account for the region.
+    const refInvoice = await this.invoiceHeaders.findOne({
+      where: { region, status: 'SUCCESS', customerTxnId: Not(IsNull()) },
+      order: { requestDate: 'DESC' },
+      select: { customerTxnId: true },
+    });
+    if (!refInvoice?.customerTxnId) {
+      throw new Error(
+        `No successful invoice in region ${region} to derive a revenue account ` +
+          `from — post at least one sales invoice before crediting.`,
+      );
+    }
+    const template = await this.restClient.getInvoiceRevenueAccount(
+      String(refInvoice.customerTxnId),
+    );
+    if (!template) {
+      throw new Error(
+        `Could not read a revenue account from invoice ${refInvoice.customerTxnId}.`,
+      );
+    }
+
+    // Substitute segment 4 (cost centre) with this store's own.
+    const costCenter =
+      await this.odooTransformation.resolveStoreCostCenterPublic(
+        branchName,
+        region,
+      );
+    const segments = template.split('-');
+    if (costCenter && segments.length >= 5) {
+      segments[3] = costCenter;
+    }
+    const account = segments.join('-');
+    this.revenueAccountCache.set(branchCode, account);
+    this.logger.log(
+      `[${branchCode}] credit-memo revenue account resolved: ${account} ` +
+        `(template ${template}, cost centre ${costCenter ?? 'template default'})`,
+    );
+    return account;
   }
 
   /**
