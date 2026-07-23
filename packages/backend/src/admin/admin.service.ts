@@ -98,23 +98,26 @@ export const ENTITY_MAP: Record<string, EntityClass> = {
 };
 
 /**
- * Builds a lookup from UPPER_SNAKE_CASE (external CSV headers) to the camelCase
- * field names used by the entities. Also passes camelCase keys through verbatim.
- * Example: "RECEIPT_METHOD_ID" → "receiptMethodId".
+ * Builds a lookup from external CSV headers to the camelCase field names used
+ * by the entities. Matching is tolerant of header style: case and separators
+ * (underscores, dashes, spaces) are ignored, so "RECEIPT_METHOD_ID",
+ * "receipt_method_id", "Receipt Method Id" and "receiptMethodId" all map to
+ * "receiptMethodId". System columns (id/createdAt/updatedAt) are included so
+ * re-imports of exported CSVs normalise them for stripping. Headers that match
+ * no field are passed through verbatim (and rejected by the caller).
  */
 export function buildKeyNormalizer(
   fieldNames: Iterable<string>,
 ): (key: string) => string {
-  const upperToLower = new Map<string, string>();
+  const canon = (k: string) => k.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const lookup = new Map<string, string>();
   for (const camel of fieldNames) {
-    const upper = camel
-      .replace(/([A-Z])/g, '_$1')
-      .toUpperCase()
-      .replace(/^_/, '');
-    upperToLower.set(upper, camel);
-    upperToLower.set(camel, camel);
+    lookup.set(canon(camel), camel);
   }
-  return (key: string) => upperToLower.get(key) ?? key;
+  for (const sys of ['id', 'createdAt', 'updatedAt']) {
+    if (!lookup.has(canon(sys))) lookup.set(canon(sys), sys);
+  }
+  return (key: string) => lookup.get(canon(key)) ?? key;
 }
 
 /**

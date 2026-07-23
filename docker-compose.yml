@@ -217,6 +217,11 @@ services:
       ORACLE_DB_ROLE: ${ORACLE_DB_ROLE:-}
       ORACLE_DB_THICK_MODE: ${ORACLE_DB_THICK_MODE:-false}
       ORACLE_DB_INSTANT_CLIENT_DIR: ${ORACLE_DB_INSTANT_CLIENT_DIR:-}
+      # App DB (TypeORM/Oracle) — other APP_DB_* values come from the
+      # packages/backend/.env inside the image (dotenv), but the Instant Client
+      # path there is a Windows host path. Env vars set here win over dotenv,
+      # so pin the Linux path bundled in the image.
+      APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
     ports:
       - '3001:3001'
     depends_on:
@@ -287,6 +292,11 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_pass}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
       LOG_LEVEL: debug
+      # See backend service: override the Windows Instant Client path from the
+      # baked-in packages/backend/.env with the Linux path bundled in the image.
+      APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
+      ORACLE_DB_THICK_MODE: ${ORACLE_DB_THICK_MODE:-false}
+      ORACLE_DB_INSTANT_CLIENT_DIR: ${ORACLE_DB_INSTANT_CLIENT_DIR:-}
     depends_on:
       postgres:
         condition: service_healthy

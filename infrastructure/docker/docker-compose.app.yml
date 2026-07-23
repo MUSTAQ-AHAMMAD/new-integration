@@ -59,6 +59,11 @@ services:
       # Point the app at the Redis sidecar regardless of REDIS_HOST in .env.
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # The .env may carry a Windows Instant Client path (for running the backend
+      # directly on the host); inside the Linux container the image bundles the
+      # client at /opt/instantclient — always override.
+      APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
+      ORACLE_DB_INSTANT_CLIENT_DIR: /opt/instantclient
     ports:
       - '3001:3001'
     depends_on:
@@ -88,6 +93,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
+      ORACLE_DB_INSTANT_CLIENT_DIR: /opt/instantclient
     depends_on:
       redis:
         condition: service_healthy

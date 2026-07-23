@@ -200,7 +200,13 @@ export default function StoresPage() {
     try {
       const result = await api.adminImportCsv('store-configs', file);
       toast.success(`Imported ${result.imported} stores (${result.skipped} skipped)`);
-      if (result.errors.length > 0) toast.warning(`${result.errors.length} rows had errors`);
+      if (result.errors.length > 0) {
+        console.warn('CSV import errors for store-configs:', result.errors);
+        toast.warning(
+          `${result.errors.length} row(s) had errors — first: ${result.errors[0]}`,
+          { duration: 12000 },
+        );
+      }
       refresh();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Import failed');

@@ -69,6 +69,7 @@ describe('StoreConfigService', () => {
   let service: StoreConfigService;
   let stores: ReturnType<typeof makeStoresRepo>;
   let salesMetadata: ReturnType<typeof makeRepo>;
+  let outletConfigs: ReturnType<typeof makeRepo>;
   let businessUnitMaps: ReturnType<typeof makeRepo>;
   let registers: ReturnType<typeof makeRepo>;
   let odooOrders: ReturnType<typeof makeRepo>;
@@ -78,6 +79,7 @@ describe('StoreConfigService', () => {
   beforeEach(() => {
     stores = makeStoresRepo();
     salesMetadata = makeRepo();
+    outletConfigs = makeRepo();
     businessUnitMaps = makeRepo();
     registers = makeRepo();
     odooOrders = makeRepo();
@@ -86,6 +88,9 @@ describe('StoreConfigService', () => {
     service = new StoreConfigService(
       stores as unknown as Repository<StoreConfiguration>,
       salesMetadata as unknown as Repository<FusionSalesMetadata>,
+      outletConfigs as unknown as ConstructorParameters<
+        typeof StoreConfigService
+      >[2],
       businessUnitMaps as unknown as Repository<FusionBusinessUnitMap>,
       registers as unknown as Repository<VendHqRegister>,
       odooOrders as unknown as Repository<BackupOdooOrder>,

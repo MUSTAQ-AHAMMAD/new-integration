@@ -47,6 +47,7 @@ import {
   toApiDatetime,
   RawOdooOrderFields,
 } from '../common/odoo-utils';
+import { generateId } from '../database/id.util';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
 import { BackupOdooOrderPayment } from '../database/entities/backup-odoo-order-payment.entity';
@@ -360,87 +361,17 @@ export class OdooBackupService {
       return;
     }
 
-    // Pre-load all active StoreConfiguration records so we can resolve the
-    // canonical branchCode for each Odoo order's numeric branch_id without
-    // issuing a separate DB query per order.
-    const branchIdMap = await this.loadBranchIdMap();
-
     for (const cred of credentials) {
       const runAt = new Date();
       try {
-        const result = await this.backupOrdersForCredential(cred, {
+        await this.backupAndIngestForCredential(cred, {
           startDate: cred.lastSyncAt?.toISOString(),
-          limit: undefined, // fetch all pages
         });
 
-        // Ingest backed-up orders into the OrderSyncQueue.
-        let ingested = 0;
-        let ingestSkipped = 0;
-        for (const order of result.orders) {
-          try {
-            const payload = normalizeOrderForIngestion(order);
-            if (!payload) {
-              this.logger.warn(
-                `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
-                  `normalizeOrderForIngestion returned null (missing Odoo fields branch_id or date_order)`,
-              );
-              ingestSkipped++;
-              continue;
-            }
-
-            // ── Resolve canonical branchCode from StoreConfiguration ──────────
-            // normalizeOrderForIngestion sets branchCode = String(branch_id) which
-            // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
-            // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
-            // the real branchCode so validation and Oracle transformation work correctly.
-            const odooBranchId =
-              order.branch_id != null
-                ? Array.isArray(order.branch_id)
-                  ? order.branch_id[0]
-                  : order.branch_id
-                : null;
-            const storeEntry =
-              odooBranchId != null
-                ? branchIdMap.get(BigInt(odooBranchId))
-                : null;
-            const resolvedBranchCode =
-              storeEntry?.branchCode ?? payload.branchCode;
-            // Prefer region from credential; fall back to StoreConfiguration.region
-            const resolvedRegion = cred.region || storeEntry?.region || null;
-
-            // Look up the BackupOdooOrder record we just upserted so we can link
-            // the queue entry back to the raw backup for transformation.
-            const backupOrder = await this.orders.findOne({
-              where: { orderId: order.id },
-              select: { id: true },
-            });
-
-            await this.orderSyncService.ingestOrder({
-              ...payload,
-              branchCode: resolvedBranchCode,
-              region: resolvedRegion ?? undefined,
-              odooBackupOrderId: backupOrder?.id,
-            });
-            ingested++;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            this.logger.warn(
-              `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
-            );
-            ingestSkipped++;
-          }
-        }
-
         // Advance the per-credential watermark after the ingestion loop so that
-        // any backup failure (backupOrdersForCredential throwing) prevents the
+        // any backup failure (backupAndIngestForCredential throwing) prevents the
         // watermark from advancing and the orders are re-fetched on the next run.
         await this.credentials.update({ id: cred.id }, { lastSyncAt: runAt });
-
-        this.logger.log(
-          `Odoo credential backup+ingest done for region=${cred.region}: ` +
-            `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
-            `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
-        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error(
@@ -448,6 +379,102 @@ export class OdooBackupService {
         );
       }
     }
+  }
+
+  /**
+   * Pulls orders from one OdooCredential into the backup tables AND ingests
+   * them into the OrderSyncQueue with canonical branch codes. Shared by the
+   * 15-minute cron (watermark-driven) and the operator-triggered integration
+   * run (explicit date range). Does NOT advance the credential watermark.
+   */
+  async backupAndIngestForCredential(
+    cred: OdooCredential,
+    params: { startDate?: string; endDate?: string; limit?: number },
+  ): Promise<{
+    saved: number;
+    skipped: number;
+    ingested: number;
+    ingestSkipped: number;
+    total: number;
+  }> {
+    // Pre-load all active StoreConfiguration records so we can resolve the
+    // canonical branchCode for each Odoo order's numeric branch_id without
+    // issuing a separate DB query per order.
+    const branchIdMap = await this.loadBranchIdMap();
+
+    const result = await this.backupOrdersForCredential(cred, {
+      startDate: params.startDate,
+      endDate: params.endDate,
+      limit: params.limit, // undefined → fetch all pages
+    });
+
+    // Ingest backed-up orders into the OrderSyncQueue.
+    let ingested = 0;
+    let ingestSkipped = 0;
+    for (const order of result.orders) {
+      try {
+        const payload = normalizeOrderForIngestion(order);
+        if (!payload) {
+          this.logger.warn(
+            `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
+              `normalizeOrderForIngestion returned null (missing Odoo fields branch_id or date_order)`,
+          );
+          ingestSkipped++;
+          continue;
+        }
+
+        // ── Resolve canonical branchCode from StoreConfiguration ──────────
+        // normalizeOrderForIngestion sets branchCode = String(branch_id) which
+        // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
+        // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
+        // the real branchCode so validation and Oracle transformation work correctly.
+        const odooBranchId =
+          order.branch_id != null
+            ? Array.isArray(order.branch_id)
+              ? order.branch_id[0]
+              : order.branch_id
+            : null;
+        const storeEntry =
+          odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
+        const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+        // Prefer region from credential; fall back to StoreConfiguration.region
+        const resolvedRegion = cred.region || storeEntry?.region || null;
+
+        // Look up the BackupOdooOrder record we just upserted so we can link
+        // the queue entry back to the raw backup for transformation.
+        const backupOrder = await this.orders.findOne({
+          where: { orderId: order.id },
+          select: { id: true },
+        });
+
+        await this.orderSyncService.ingestOrder({
+          ...payload,
+          branchCode: resolvedBranchCode,
+          region: resolvedRegion ?? undefined,
+          odooBackupOrderId: backupOrder?.id,
+        });
+        ingested++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
+        );
+        ingestSkipped++;
+      }
+    }
+
+    this.logger.log(
+      `Odoo credential backup+ingest done for region=${cred.region}: ` +
+        `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+        `ingest.queued=${ingested} ingest.skipped=${ingestSkipped}`,
+    );
+    return {
+      saved: result.saved,
+      skipped: result.skipped,
+      ingested,
+      ingestSkipped,
+      total: result.orders.length,
+    };
   }
 
   /**
@@ -1029,18 +1056,57 @@ export class OdooBackupService {
         normalised['amount_total'] = normalised['amount_paid'];
       }
 
-      // IBQ unified API v2: merge sibling `lines` and `payments` arrays into the order.
-      // These arrays sit at the same level as `order` in the response structure:
-      // { order: {...}, lines: [...], payments: [...] }
-      // upsertOrder expects them nested inside the order object, so we merge them here.
-      if (hasIbqStructure) {
-        if (Array.isArray(raw['lines'])) {
-          normalised['lines'] = raw['lines'];
-        }
-        if (Array.isArray(raw['payments'])) {
-          // Map IBQ's `payments` array to `statement_ids` which upsertOrder recognizes.
-          normalised['statement_ids'] = raw['payments'];
-        }
+      // IBQ unified API: lines and payments sit as siblings of `order`, named
+      // `order_lines` and `order_payment_lines` (NOT `lines`/`payments`), with
+      // their own field names. Merge them into the order and map the fields to
+      // what upsertOrder reads, or every order stores as a header-only line with
+      // no payment. Verified against live ibraqperfumes.odoo.com data.
+      const rawLines = raw['order_lines'] ?? raw['lines'];
+      if (Array.isArray(rawLines)) {
+        normalised['lines'] = rawLines.map((l) => {
+          const line = (typeof l === 'object' && l ? l : {}) as Record<
+            string,
+            unknown
+          >;
+          return {
+            id: line['order_line_id'] ?? line['id'],
+            product_id: line['product_id'],
+            product_code:
+              line['product_barcode'] ??
+              line['product_code'] ??
+              line['default_code'],
+            product_barcode: line['product_barcode'],
+            name: line['product_name'] ?? line['name'],
+            qty: line['qty'],
+            price_unit: line['price_unit'],
+            price_subtotal:
+              line['price_subtotal_without_tax'] ?? line['price_subtotal'],
+            price_subtotal_incl:
+              line['price_subtotal_with_tax'] ?? line['price_subtotal_incl'],
+            discount: line['discount'],
+            product_uom_id: line['base_uom_id'],
+            // POS-style payloads carry tax_id (singular tuple array); unified
+            // API uses tax_ids — keep whichever is present so TAX_NAME survives.
+            tax_ids: line['tax_ids'] ?? line['tax_id'],
+          };
+        });
+      }
+
+      const rawPayments = raw['order_payment_lines'] ?? raw['payments'];
+      if (Array.isArray(rawPayments)) {
+        normalised['statement_ids'] = rawPayments.map((p) => {
+          const pay = (typeof p === 'object' && p ? p : {}) as Record<
+            string,
+            unknown
+          >;
+          return {
+            id: pay['id'],
+            amount: pay['amount'],
+            currency_id: pay['currency_id'] ?? pay['currency'],
+            payment_method_code: pay['payment_method'],
+            name: pay['payment_method'],
+          };
+        });
       }
 
       return normalised as unknown as OdooOrder;
@@ -1253,6 +1319,10 @@ export class OdooBackupService {
         const lineName = typeof line.name === 'string' ? line.name : null;
 
         return {
+          // Bulk insert goes through the InsertQueryBuilder, which never fires
+          // the entity's @BeforeInsert id hook — assign the key here or every
+          // row fails with ORA-01400 on the NOT NULL "id" column.
+          id: generateId(),
           orderId: order.id,
           lineId,
           productId,
@@ -1323,6 +1393,8 @@ export class OdooBackupService {
           typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
 
         return {
+          // See the note on order lines: bulk insert bypasses @BeforeInsert.
+          id: generateId(),
           orderId: order.id,
           paymentId: pmtId,
           paymentName,

@@ -62,10 +62,13 @@ import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
     ]),
   ],
   controllers: [
-    AdminController,
+    // Specific admin sub-resources MUST be registered before AdminController,
+    // whose catch-all `:table` / `:table/:id` routes would otherwise shadow
+    // e.g. GET /admin/sync-control/:serviceName → "Unknown table: sync-control".
     SyncControlController,
     AdminDiagnosticsController,
     RegisterAccountsController,
+    AdminController,
   ],
   providers: [AdminService, OracleNativeService, RegisterAccountsService],
   exports: [OracleNativeService],

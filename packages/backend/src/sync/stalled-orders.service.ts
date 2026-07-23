@@ -349,7 +349,10 @@ export class StalledOrdersService {
       .save(
         this.failedTransactionRepo.create({
           orderSyncQueueId: orderId,
-          originalPayload: null,
+          // originalPayload is NOT NULL; a stalled-order cleanup has no source
+          // payload, so record a small marker object instead of null (which
+          // Oracle rejects with ORA-01400, silently losing the audit row).
+          originalPayload: { orderId, cancelledByCleanup: true, reason },
           errorType,
           errorMessage: reason,
           retryCount: attempts,

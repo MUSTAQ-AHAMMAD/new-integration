@@ -138,6 +138,17 @@ export const api = {
   getHealthStatus: () => apiRequest<HealthCheck[]>('/dashboard/health'),
   getNegativeInventory: () => apiRequest<InventoryItem[]>('/dashboard/negative-inventory'),
   getWebhookEvents: (limit = 100) => apiRequest<WebhookEvent[]>(`/dashboard/webhook-events?limit=${limit}`),
+  // ── Integration run: pull Odoo → one invoice/store/day → full Oracle cycle ──
+  startIntegrationRun: (data: { region: string; startDate: string; endDate: string }) =>
+    apiRequest<IntegrationRunJob>('/sync/integration-run', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  listIntegrationRuns: (limit?: number) =>
+    apiRequest<IntegrationRunJob[]>(`/sync/integration-run${limit ? `?limit=${limit}` : ''}`),
+  getIntegrationRun: (id: string) =>
+    apiRequest<IntegrationRunJob>(`/sync/integration-run/${id}`),
+
   createSyncJob: (data: CreateSyncJobDto) => apiRequest<SyncJob>('/sync/jobs', { method: 'POST', body: JSON.stringify(data) }),
   listSyncJobs: (status?: string) => apiRequest<SyncJob[]>(`/sync/jobs${status ? `?status=${status}` : ''}`),
   getSyncJob: (id: string) => apiRequest<SyncJob>(`/sync/jobs/${id}`),
@@ -467,7 +478,7 @@ export interface DashboardOverview {
 
 export interface SyncTrendItem {
   status: string;
-  _count: { id: number };
+  count: number;
 }
 
 export interface FailedTransaction {
@@ -491,7 +502,7 @@ export interface FailedTransaction {
 export interface BranchOrderStats {
   branchCode: string;
   status: string;
-  _count: { id: number };
+  count: number;
 }
 
 export interface AuditLogItem {
@@ -550,6 +561,57 @@ export interface SyncJob {
   createdBy: string;
   errorMessage: string | null;
   errorDetails: unknown;
+}
+
+export interface IntegrationRunOutcome {
+  branchCode: string;
+  businessDay: string;
+  groupKey: string;
+  customerType: string;
+  status: 'CREATED' | 'SKIPPED' | 'FAILED';
+  transactionNumber?: string;
+  sourceOrderCount: number;
+  invoiceLineCount: number;
+  standardReceipts: number;
+  miscReceipts: number;
+  journals: number;
+  inventoryTransactions?: number;
+  excludedOrders?: Array<{ orderNumber: string; reason: string }>;
+  error?: string;
+}
+
+export interface IntegrationRunScope {
+  kind: 'INTEGRATION_RUN';
+  region: string;
+  startDate: string;
+  endDate: string;
+  phase: 'PENDING' | 'PULL' | 'POST' | 'DONE';
+  pull: {
+    credentials: number;
+    saved: number;
+    skipped: number;
+    ingested: number;
+    ingestSkipped: number;
+  };
+  post: {
+    daysPlanned: number;
+    daysDone: number;
+    invoicesCreated: number;
+    invoicesFailed: number;
+    invoicesSkipped: number;
+    standardReceipts: number;
+    miscReceipts: number;
+    journals: number;
+    inventoryTransactions: number;
+  };
+  results: IntegrationRunOutcome[];
+  events: Array<{ at: string; phase: string; message: string }>;
+}
+
+export interface IntegrationRunJob extends Omit<SyncJob, 'scopeValue'> {
+  scopeValue: IntegrationRunScope;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface OrderQueueEntry {

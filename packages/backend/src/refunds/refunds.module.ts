@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
 import { ClientsModule } from '../clients/clients.module';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
 import { RefundTracking } from '../database/entities/refund-tracking.entity';
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
+import { StoreConfigModule } from '../store-config/store-config.module';
 import { SyncModule } from '../sync/sync.module';
 import { CreditMemoService } from './credit-memo.service';
 import { RefundsController } from './refunds.controller';
@@ -20,9 +22,11 @@ import { RefundsService } from './refunds.service';
       OrderSyncQueue,
       StoreConfiguration,
       BackupOdooOrder,
+      FusionInvoiceHeader,
     ]),
     SyncModule,
     ClientsModule,
+    StoreConfigModule,
   ],
   controllers: [RefundsController],
   providers: [RefundsService, CreditMemoService],

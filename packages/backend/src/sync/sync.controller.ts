@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Logger,
+  BadRequestException,
   NotFoundException,
   Param,
   Post,
@@ -36,6 +37,11 @@ import { OrderSyncService } from './order-sync.service';
 import { OrderEnrichmentService } from './order-enrichment.service';
 import { SyncService } from './sync.service';
 import { AutoFixService } from './auto-fix.service';
+import { DailyInvoiceService } from './daily-invoice.service';
+import { DailyAggregationService } from './daily-aggregation.service';
+import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
+import { IntegrationRunService } from './integration-run.service';
+import { ReadinessService } from './readiness.service';
 
 @ApiTags('sync')
 @Controller('sync')
@@ -44,6 +50,11 @@ export class SyncController {
 
   constructor(
     private readonly syncService: SyncService,
+    private readonly dailyInvoiceService: DailyInvoiceService,
+    private readonly dailyAggregationService: DailyAggregationService,
+    private readonly dailyInvoiceScheduler: DailyInvoiceSchedulerService,
+    private readonly integrationRun: IntegrationRunService,
+    private readonly readinessService: ReadinessService,
     private readonly orderSyncService: OrderSyncService,
     private readonly odooBackupService: OdooBackupService,
     private readonly ibqBackupService: IbqBackupService,
@@ -206,6 +217,157 @@ export class SyncController {
       branchCode,
       parseLimit(limit, 1000),
     );
+  }
+
+  @Get('daily-invoice/readiness/:region')
+  @ApiOperation({
+    summary:
+      'Preflight go/no-go for a region: reference data, store configs, Oracle ' +
+      'reachability and outlet gating. ready=false lists the exact blockers.',
+  })
+  async regionReadiness(@Param('region') region: string) {
+    return this.readinessService.checkRegion(region);
+  }
+
+  // ── Operator integration run: pull (Odoo) → post (one invoice/store/day) ──
+
+  @Post('integration-run')
+  @ApiOperation({
+    summary:
+      'Start a full integration run for a region + date range: pull the Odoo ' +
+      'orders into the backup tables, then post one Oracle invoice per store ' +
+      'per business day with the complete cycle (receipts, applications, ' +
+      'journals, inventory). Returns the tracking job immediately; watch it ' +
+      'via GET /sync/integration-run/:id or the "integrationRun" websocket event.',
+  })
+  async startIntegrationRun(
+    @Body()
+    body: {
+      region: string;
+      startDate: string;
+      endDate: string;
+    },
+  ) {
+    return this.integrationRun.startRun({
+      region: body?.region,
+      startDate: body?.startDate,
+      endDate: body?.endDate,
+    });
+  }
+
+  @Get('integration-run')
+  @ApiOperation({ summary: 'List recent integration runs (newest first)' })
+  listIntegrationRuns(@Query('limit') limit?: string) {
+    return this.integrationRun.listRuns(limit ? Number(limit) : undefined);
+  }
+
+  @Get('integration-run/:id')
+  @ApiOperation({
+    summary:
+      'Live status of one integration run — counters, per-day Oracle results ' +
+      'and the event log.',
+  })
+  async getIntegrationRun(@Param('id') id: string) {
+    const job = await this.integrationRun.getRun(id);
+    if (!job) {
+      throw new BadRequestException(`Integration run ${id} not found`);
+    }
+    return job;
+  }
+
+  @Post('daily-invoice/run-now')
+  @ApiOperation({
+    summary:
+      'Run the scheduled daily invoicing immediately for every active region, ' +
+      'using the same catch-up window the 03:00 cron would use.',
+  })
+  async runDailyInvoicingNow() {
+    const results = await this.dailyInvoiceScheduler.run();
+    return {
+      ok: results.every((r) => r.status !== 'FAILED'),
+      created: results.filter((r) => r.status === 'CREATED').length,
+      failed: results.filter((r) => r.status === 'FAILED').length,
+      results,
+    };
+  }
+
+  @Post('daily-invoice')
+  @ApiOperation({
+    summary:
+      'Post aggregated daily invoices to Oracle — one invoice per branch, ' +
+      'business day, customer type and credit flag. Re-running a day is safe: ' +
+      'lines already posted are skipped.',
+  })
+  async postDailyInvoices(
+    @Body()
+    body: {
+      branchCode?: string;
+      region?: string;
+      startDate: string;
+      days?: number;
+      trigger?: 'MANUAL' | 'AUTOMATIC';
+    },
+  ) {
+    if (!body?.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(body.startDate)) {
+      throw new BadRequestException(
+        'startDate is required in YYYY-MM-DD form (store-local business day).',
+      );
+    }
+    const results = await this.dailyInvoiceService.postRange({
+      branchCode: body.branchCode,
+      region: body.region,
+      startDate: body.startDate,
+      days: body.days,
+      // Operator-triggered: MANUAL outlets only, per OUTLETS_INTEGRATION_CONFIG.
+      trigger: body.trigger ?? 'MANUAL',
+    });
+    return {
+      ok: results.every((r) => r.status !== 'FAILED'),
+      created: results.filter((r) => r.status === 'CREATED').length,
+      failed: results.filter((r) => r.status === 'FAILED').length,
+      results,
+    };
+  }
+
+  @Get('daily-invoice/preview/:branchCode/:businessDay')
+  @ApiOperation({
+    summary:
+      'Dry run — show the invoice groups that WOULD be posted for a branch/day ' +
+      'without sending anything to Oracle.',
+  })
+  async previewDailyInvoices(
+    @Param('branchCode') branchCode: string,
+    @Param('businessDay') businessDay: string,
+  ) {
+    const groups = await this.dailyAggregationService.buildDailyGroups(
+      branchCode,
+      businessDay,
+    );
+    return {
+      branchCode,
+      businessDay,
+      groupCount: groups.length,
+      groups: groups.map((g) => ({
+        groupKey: g.groupKey,
+        customerType: g.customerType,
+        isCredit: g.isCredit,
+        sourceOrderCount: g.sourceOrderNumbers.length,
+        sourceOrderNumbers: g.sourceOrderNumbers,
+        invoiceLineCount: g.invoiceHeader.invoiceLines.length,
+        alreadyPostedLines: g.alreadyPostedLines,
+        invoiceTotal: g.invoiceHeader.invoiceLines.reduce(
+          (sum, l) => sum + l.quantity * l.unitSellingPrice,
+          0,
+        ),
+        billTo: g.invoiceHeader.billToCustomerName,
+        standardReceipts: g.standardReceipts.map((r) => ({
+          receiptNumber: r.receiptNumber,
+          amount: r.receiptAmount,
+        })),
+        miscReceipts: g.miscReceipts.length,
+        journals: g.journalHeaders.length,
+      })),
+    };
   }
 
   @Post('fetch-odoo')

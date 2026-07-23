@@ -38,7 +38,16 @@ export function buildOracleDataSourceOptions(): OracleConnectionOptions {
     username: process.env.APP_DB_USERNAME ?? '',
     password: process.env.APP_DB_PASSWORD ?? '',
     connectString: `${host}:${port}/${serviceName}`,
-    schema: process.env.APP_DB_SCHEMA || undefined,
+    // Deliberately NOT setting `schema` when it matches the connecting user.
+    // TypeORM aliases the MERGE target of an upsert as "<schema>.<Table>", a
+    // single quoted identifier that blows past this DB's 30-byte limit
+    // (ORA-00972) for all but the shortest table names. Unqualified names
+    // already resolve to the owner's schema, so qualification buys nothing.
+    schema:
+      process.env.APP_DB_SCHEMA &&
+      process.env.APP_DB_SCHEMA !== process.env.APP_DB_USERNAME
+        ? process.env.APP_DB_SCHEMA
+        : undefined,
     // Oracle 12.1 = 30-byte identifier limit; truncate generated names.
     namingStrategy: new OracleNamingStrategy(),
     // Entities are discovered by NestJS via autoLoadEntities; the glob is used by

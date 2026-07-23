@@ -81,6 +81,11 @@ export class OdooTransformationService {
     return toSafeNumber(value);
   }
 
+  /** Round a computed journal amount to 2dp (Oracle rejects long mantissas). */
+  private round2Journal(value: number): number {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
   /** Normalise a store/mall name for matching (strip spacing, punctuation, case). */
   private normalizeName(s: string | null | undefined): string {
     return (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -88,8 +93,19 @@ export class OdooTransformationService {
 
   /**
    * Resolves the FusionSalesMetadata bill-to record for an order.
-   * - Non-NORMAL customerType (delivery platforms) → match by (customerType, region).
-   * - NORMAL → match the store's mall by normalised branchName == billToName.
+   *
+   * Java parity: the lookup key is (SUBINVENTORY = outlet name, CUSTOMER_TYPE,
+   * REGION) — SUBINVENTORY is the branch code, while BILL_TO_NAME is the Oracle
+   * customer's display name ("AL JUBAIL MALL" for branch JUBAIL), so matching
+   * on billToName finds nothing (or, worse, a region fallback used to pick an
+   * arbitrary other store's bill-to account).
+   *
+   * - Primary: normalised subinventory == branchName within (customerType, region).
+   * - NORMAL fallback: normalised billToName == branchName (stores whose
+   *   bill-to IS the branch code, and rows imported without a subinventory).
+   * - Non-NORMAL fallback: any (customerType, region) row — the platform
+   *   customer/account is shared across branches; only the site is per-branch,
+   *   so this is flagged but still usable.
    * Returns null when no record matches (caller flags the branch as unmapped).
    */
   private async resolveBillToMetadata(
@@ -97,18 +113,34 @@ export class OdooTransformationService {
     region: string,
     branchName: string,
   ) {
-    if (customerType && customerType.toUpperCase() !== 'NORMAL') {
-      const byType = await this.salesMetadataRepo.findOne({
-        where: { customerType, region },
-      });
-      if (byType) return byType;
-    }
-    const candidates = await this.salesMetadataRepo.find({
-      where: { region, customerType: 'NORMAL' },
-    });
+    const typeUpper = (customerType || 'NORMAL').trim().toUpperCase();
     const target = this.normalizeName(branchName);
+
+    const regionRows = await this.salesMetadataRepo.find({ where: { region } });
+    const ofType = regionRows.filter(
+      (r) => (r.customerType ?? '').trim().toUpperCase() === typeUpper,
+    );
+
+    const bySubinventory = ofType.find(
+      (r) => this.normalizeName(r.subinventory) === target,
+    );
+    if (bySubinventory) return bySubinventory;
+
+    if (typeUpper !== 'NORMAL') {
+      const fallback = ofType[0] ?? null;
+      if (fallback) {
+        this.logger.warn(
+          `No ${typeUpper} FusionSalesMetadata row with subinventory ` +
+            `"${branchName}" in ${region} — using the region's shared ` +
+            `${typeUpper} bill-to (site ${fallback.siteNumber ?? '?'}). ` +
+            `Re-import FUSION_SALES_METADATA to restore per-branch sites.`,
+        );
+      }
+      return fallback;
+    }
+
     return (
-      candidates.find((c) => this.normalizeName(c.billToName) === target) ?? null
+      ofType.find((c) => this.normalizeName(c.billToName) === target) ?? null
     );
   }
 
@@ -148,7 +180,114 @@ export class OdooTransformationService {
     const row = await this.customerAccountRepo.findOne({
       where: { accountNumber: parsed, region },
     });
-    return row ? bigIntToNumber(row.customerAccountId, 'customerAccountId') : null;
+    return row
+      ? bigIntToNumber(row.customerAccountId, 'customerAccountId')
+      : null;
+  }
+
+  /**
+   * Checks the order's REAL payment names against FusionReceiptMethod for the
+   * store's region (exact-string lookup, mirroring the Java system — there is
+   * deliberately no default receipt method). Returns which names have no
+   * mapping so the caller can surface a configuration alert; 'Credit On Cust'
+   * is excluded because it intentionally posts no receipt.
+   */
+  async findUnmappedPaymentNames(
+    orderName: string,
+    region: string,
+  ): Promise<{ paymentNames: string[]; unmapped: string[] }> {
+    const backup = await this.backupOrderRepo.findOne({
+      where: { orderName },
+      relations: { orderPayments: true },
+    });
+    const paymentNames = [
+      ...new Set(
+        (backup?.orderPayments ?? [])
+          .map((p) => p.paymentName?.trim())
+          .filter((n): n is string => !!n),
+      ),
+    ];
+    const unmapped: string[] = [];
+    for (const name of paymentNames) {
+      if (name.toLowerCase() === 'credit on cust') continue;
+      const method = await this.receiptMethodRepo.findOne({
+        where: { receiptMethodName: name, region },
+      });
+      if (!method) unmapped.push(name);
+    }
+    return { paymentNames, unmapped };
+  }
+
+  // ── Accessors for DailyAggregationService ────────────────────────────────
+  // The daily aggregation path needs the same lookups, but keyed on a group of
+  // orders rather than one. They are exposed here rather than duplicated so the
+  // two paths can never drift apart on bill-to / register / account resolution.
+
+  /** @see resolveBillToMetadata */
+  async resolveBillToForAggregate(
+    customerType: string,
+    region: string,
+    branchName: string,
+  ) {
+    return this.resolveBillToMetadata(customerType, region, branchName);
+  }
+
+  /**
+   * Resolves the register holding the Oracle bank/cash account ids, preferring
+   * the POS register recorded on the order and falling back to the store name.
+   * Matching the register (not just the store) keeps receipts for a multi-till
+   * outlet remitting to the correct account.
+   */
+  async resolveRegisterForAggregate(
+    registerName: string | null | undefined,
+    branchName: string,
+    region: string,
+  ) {
+    const registers = await this.registerRepo.find({ where: { region } });
+    const byRegister = registerName
+      ? registers.find(
+          (r) =>
+            this.normalizeName(r.registerName) ===
+            this.normalizeName(registerName),
+        )
+      : undefined;
+    return (
+      byRegister ??
+      registers.find(
+        (r) =>
+          this.normalizeName(r.registerName) === this.normalizeName(branchName),
+      ) ??
+      null
+    );
+  }
+
+  /** @see resolveCustomerAccountId */
+  async resolveCustomerAccountForAggregate(
+    accountNumber: string,
+    region: string,
+  ): Promise<number | null> {
+    return this.resolveCustomerAccountId(accountNumber, region);
+  }
+
+  /** @see buildJournalHeaders */
+  async buildJournalHeadersForAggregate(
+    serviceProvider: string,
+    region: string,
+    branchName: string,
+    branchCode: string,
+    invoiceHeader: InvoiceHeader,
+    saleDate: Date,
+    txnNumber: string,
+  ): Promise<JournalHeader[]> {
+    return this.buildJournalHeaders(
+      serviceProvider,
+      region,
+      branchName,
+      branchCode,
+      invoiceHeader,
+      saleDate,
+      txnNumber,
+    );
   }
 
   /**
@@ -228,14 +367,16 @@ export class OdooTransformationService {
       billToAccountNumber: String(
         bigIntToNumber(salesMeta.billToAccount, 'billToAccount'),
       ), // Convert BigInt to string
-      businessUnit: storeConfig.oracleBusinessUnit,
+      // Java parity: BU / txn source / txn type come from the store's
+      // FUSION_SALES_METADATA row; StoreConfiguration is only the fallback.
+      businessUnit: salesMeta.businessUnit || storeConfig.oracleBusinessUnit,
       // Prefer warehouse name (outlet name from old integration); fall back to branch name
       outletName: backup.warehouseName ?? backup.branchName ?? undefined,
       saleDate,
       trxDate: saleDate, // Transaction date same as sale date
       paymentTermsName: storeConfig.paymentTermsName,
-      transactionSource: storeConfig.transactionSource,
-      transactionType: storeConfig.transactionType,
+      transactionSource: salesMeta.txnSource || storeConfig.transactionSource,
+      transactionType: salesMeta.txnType || storeConfig.transactionType,
       invoiceCurrencyCode: storeConfig.invoiceCurrencyCode,
       conversionRateType: 'Corporate',
       conversionRate: 1, // Default to 1 for Corporate rate type
@@ -279,6 +420,7 @@ export class OdooTransformationService {
         memoLineName: isDiscount ? 'Discount Item' : undefined,
         description: productName,
         quantity: isDiscount && total > 0 ? 1 : qty,
+        // UOM/tax code intentionally omitted here too — see DailyAggregation.
         unitSellingPrice: unitPrice,
         currencyCode: invoiceHeader.invoiceCurrencyCode,
         salesOrder: orderNumber,
@@ -351,7 +493,8 @@ export class OdooTransformationService {
       const rawAccountId = isCash
         ? (register?.cashAccountId ?? storeConfig.cashAccountId ?? null)
         : (register?.bankAccountId ?? storeConfig.bankAccountId ?? null);
-      const numericAccountId = rawAccountId == null ? null : Number(rawAccountId);
+      const numericAccountId =
+        rawAccountId == null ? null : Number(rawAccountId);
 
       const pmtAmount = this.convertDecimal(payment.amount ?? 0);
       const lowerMethod = pmtMethod.toLowerCase();
@@ -424,7 +567,8 @@ export class OdooTransformationService {
           bankAccountName: register?.bankAccount ?? storeConfig.bankAccountName,
           // Real Oracle receivable-activity name from metadata (the hardcoded
           // 'Bank Charges' is not a valid activity in every BU).
-          receivableActivityName: salesMeta.recActivityNameBank ?? 'Bank Charges',
+          receivableActivityName:
+            salesMeta.recActivityNameBank ?? 'Bank Charges',
           orgId: bigIntToNumber(buMap?.businessUnitId ?? 0n, 'businessUnitId'),
           receiptAmount: -miscAmount,
         });
@@ -548,7 +692,8 @@ export class OdooTransformationService {
     const memoDate =
       backup?.dateOrder instanceof Date
         ? backup.dateOrder
-        : opts.refundDate ?? new Date(String(backup?.dateOrder ?? new Date()));
+        : (opts.refundDate ??
+          new Date(String(backup?.dateOrder ?? new Date())));
 
     // ── 3. Resolve the bill-to (same rules as the invoice path) ──────────────
     const customerType = backup?.customerType ?? 'NORMAL';
@@ -664,6 +809,14 @@ export class OdooTransformationService {
 
   /** The store's own cost-center code (journal SEGMENT4), from its NORMAL
    *  FusionSalesMetadata row — NOT the platform bill-to's. Null if unmapped. */
+  /** Public accessor for the credit-memo path's revenue-account resolution. */
+  async resolveStoreCostCenterPublic(
+    branchName: string,
+    region: string,
+  ): Promise<string | null> {
+    return this.resolveStoreCostCenter(branchName, region);
+  }
+
   private async resolveStoreCostCenter(
     branchName: string,
     region: string,
@@ -697,7 +850,8 @@ export class OdooTransformationService {
     txnNumber: string,
   ): Promise<JournalHeader[]> {
     // NORMAL retail sales don't post a service-provider journal.
-    if (!serviceProvider || serviceProvider.toUpperCase() === 'NORMAL') return [];
+    if (!serviceProvider || serviceProvider.toUpperCase() === 'NORMAL')
+      return [];
 
     const metaRows = await this.journalMetaRepo.find({
       where: { serviceProvider, region },
@@ -718,6 +872,27 @@ export class OdooTransformationService {
       0,
     );
     if (!(total > 0)) return [];
+
+    // The GL journal posts the service-provider COMMISSION, not the gross sale.
+    // Legacy: bankCharge = orderTotal × bankChargeRate; a fixed-freight override
+    // replaces it when configured. Posting the full invoice total (the previous
+    // behaviour) overstated GL by orders of magnitude for delivery-platform sales.
+    const bankChargeRate =
+      creditMeta.bankChargeRate ?? debitMeta.bankChargeRate;
+    const fixedFreight =
+      creditMeta.fixedFreightCharge ?? debitMeta.fixedFreightCharge;
+    const commission =
+      fixedFreight && fixedFreight > 0
+        ? fixedFreight
+        : this.round2Journal(total * (bankChargeRate ?? 0));
+    if (!(commission > 0)) {
+      this.logger.warn(
+        `Service provider "${serviceProvider}" (region ${region}) has no ` +
+          `bankChargeRate/fixedFreightCharge configured — no GL journal posted ` +
+          `for invoice total ${total}.`,
+      );
+      return [];
+    }
 
     const costCenter = await this.resolveStoreCostCenter(branchName, region);
     if (!costCenter) {
@@ -767,21 +942,27 @@ export class OdooTransformationService {
       {
         ...common,
         ...segmentsFor(debitMeta.account),
-        enteredDrAmount: total,
-        accountedDr: total,
+        enteredDrAmount: commission,
+        accountedDr: commission,
       },
       {
         ...common,
         ...segmentsFor(creditMeta.account),
-        enteredCrAmount: total,
-        accountedCr: total,
+        enteredCrAmount: commission,
+        accountedCr: commission,
       },
     ];
 
     // Balance guard: never post an unbalanced batch (Oracle would reject it, and
     // an unbalanced GL entry is a data-integrity hazard).
-    const drSum = journalLines.reduce((s, l) => s + (l.enteredDrAmount ?? 0), 0);
-    const crSum = journalLines.reduce((s, l) => s + (l.enteredCrAmount ?? 0), 0);
+    const drSum = journalLines.reduce(
+      (s, l) => s + (l.enteredDrAmount ?? 0),
+      0,
+    );
+    const crSum = journalLines.reduce(
+      (s, l) => s + (l.enteredCrAmount ?? 0),
+      0,
+    );
     if (Math.abs(drSum - crSum) > 0.001) {
       throw new Error(
         `Journal for "${serviceProvider}" txn ${txnNumber} does not balance ` +

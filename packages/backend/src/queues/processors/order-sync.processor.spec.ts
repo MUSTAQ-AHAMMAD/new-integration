@@ -113,9 +113,14 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
   let mockSoapClient: jest.Mocked<Partial<OracleSoapClient>>;
   let mockOracleClient: { itemExists: jest.Mock };
   let mockTransformation: jest.Mocked<Partial<FusionTransformationService>>;
+  let mockOdooTransformation: { findUnmappedPaymentNames: jest.Mock };
   let mockEnrichment: { enrichOrder: jest.Mock };
 
   beforeEach(() => {
+    // These tests exercise the per-order invoicing path (enrichment → Oracle
+    // push → SYNCED), which in production is superseded by the daily
+    // aggregation hand-off. Enable it explicitly for the suite.
+    process.env.PER_ORDER_INVOICING = 'true';
     orders = makeRepoMock<OrderSyncQueue>();
     failedTransactions = makeRepoMock<FailedTransaction>();
     invoiceHeaders = makeRepoMock<FusionInvoiceHeader>();
@@ -180,6 +185,13 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
         id: 'pm-1',
         isActive: true,
       }),
+    };
+
+    // Step 5 checks the order's real payment names against FusionReceiptMethod.
+    mockOdooTransformation = {
+      findUnmappedPaymentNames: jest
+        .fn()
+        .mockResolvedValue({ paymentNames: ['Cash'], unmapped: [] }),
     };
 
     mockAlerts = {
@@ -285,16 +297,21 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
       mockSoapClient as unknown as OracleSoapClient,
       mockOracleClient as unknown as import('../../clients/oracle/oracle.client').OracleClient,
       mockTransformation as unknown as FusionTransformationService,
-      {} as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
+      mockOdooTransformation as unknown as import('../../sync/odoo-transformation.service').OdooTransformationService,
       mockEnrichment as unknown as import('../../sync/order-enrichment.service').OrderEnrichmentService,
     );
   });
 
+  afterEach(() => {
+    delete process.env.PER_ORDER_INVOICING;
+  });
+
   describe('payment method null handling', () => {
-    it('continues processing when resolvePaymentMethod returns null', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
-        null,
-      );
+    it('continues processing when a payment method has no receipt-method mapping', async () => {
+      mockOdooTransformation.findUnmappedPaymentNames.mockResolvedValue({
+        paymentNames: ['MYSTERY PAY'],
+        unmapped: ['MYSTERY PAY'],
+      });
 
       await processor.handleOrderSync(makeJob());
 
@@ -304,12 +321,18 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
           (c[1] as { status?: SyncStatus }).status === SyncStatus.SYNCED,
       );
       expect(updateCall).toBeDefined();
+      // The unmapped pair is tracked for the admin approval worklist.
+      expect(mockPaymentMapping.resolvePaymentMethod).toHaveBeenCalledWith(
+        'ODOO',
+        'MYSTERY PAY',
+      );
     });
 
     it('does not mark the order as FAILED when payment method is unmapped', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
-        null,
-      );
+      mockOdooTransformation.findUnmappedPaymentNames.mockResolvedValue({
+        paymentNames: ['MYSTERY PAY'],
+        unmapped: ['MYSTERY PAY'],
+      });
 
       await processor.handleOrderSync(makeJob());
 
@@ -323,19 +346,36 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     });
 
     it('records a fallback warning in the audit log when payment method is unmapped', async () => {
-      (mockPaymentMapping.resolvePaymentMethod as jest.Mock).mockResolvedValue(
-        null,
-      );
+      mockOdooTransformation.findUnmappedPaymentNames.mockResolvedValue({
+        paymentNames: ['MYSTERY PAY'],
+        unmapped: ['MYSTERY PAY'],
+      });
 
       await processor.handleOrderSync(makeJob());
 
       expect(mockIdempotency.recordOperation).toHaveBeenCalledWith(
         expect.objectContaining({
           responsePayload: expect.objectContaining({
-            paymentFallback: expect.stringContaining('no Oracle mapping'),
+            paymentFallback: expect.stringContaining(
+              'not configured in FusionReceiptMethod',
+            ),
           }),
         }),
       );
+    });
+
+    it('is non-fatal when the payment mapping pre-check itself fails', async () => {
+      mockOdooTransformation.findUnmappedPaymentNames.mockRejectedValue(
+        new Error('backup table unavailable'),
+      );
+
+      await processor.handleOrderSync(makeJob());
+
+      const updateCall = (orders.update as jest.Mock).mock.calls.find(
+        (c: unknown[]) =>
+          (c[1] as { status?: SyncStatus }).status === SyncStatus.SYNCED,
+      );
+      expect(updateCall).toBeDefined();
     });
   });
 

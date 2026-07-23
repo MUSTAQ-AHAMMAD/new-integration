@@ -10,6 +10,8 @@ export enum JobType {
   PAYMENT_SYNC = 'PAYMENT_SYNC',
   CONFIG_SYNC = 'CONFIG_SYNC',
   REFUND_SYNC = 'REFUND_SYNC',
+  /** Operator-triggered region+date-range run: Odoo pull → daily invoices → full Oracle cycle. */
+  INTEGRATION_RUN = 'INTEGRATION_RUN',
 }
 
 export enum ScopeType {

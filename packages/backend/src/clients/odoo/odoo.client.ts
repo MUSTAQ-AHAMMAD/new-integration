@@ -562,6 +562,55 @@ export class OdooClient {
         normalised['amount_total'] = normalised['amount_paid'];
       }
 
+      // The live IBQ-unified API returns lines and payments as SIBLINGS of
+      // `order` (results[].order / .order_lines / .order_payment_lines), not
+      // embedded in the order. Merge them in (mapping the IBQ field names to the
+      // shapes the backup/ingest code reads) so orders keep their item and
+      // payment detail — otherwise every order collapses to a header-only line
+      // with no receipt.
+      const rawLines = raw['order_lines'] ?? inner['order_lines'];
+      if (Array.isArray(rawLines) && normalised['lines'] == null) {
+        normalised['lines'] = rawLines.map((l) => {
+          const line = (typeof l === 'object' && l ? l : {}) as Record<
+            string,
+            unknown
+          >;
+          return {
+            id: line['order_line_id'] ?? line['id'],
+            product_id: line['product_id'],
+            product_code: line['product_barcode'] ?? line['product_code'],
+            product_barcode: line['product_barcode'],
+            name: line['product_name'] ?? line['name'],
+            qty: line['qty'],
+            price_unit: line['price_unit'],
+            price_subtotal:
+              line['price_subtotal_without_tax'] ?? line['price_subtotal'],
+            price_subtotal_incl:
+              line['price_subtotal_with_tax'] ?? line['price_subtotal_incl'],
+            product_uom_id: line['base_uom_id'],
+            tax_ids: line['tax_ids'],
+          };
+        });
+      }
+
+      const rawPayments =
+        raw['order_payment_lines'] ?? inner['order_payment_lines'];
+      if (Array.isArray(rawPayments) && normalised['statement_ids'] == null) {
+        normalised['statement_ids'] = rawPayments.map((p) => {
+          const pay = (typeof p === 'object' && p ? p : {}) as Record<
+            string,
+            unknown
+          >;
+          return {
+            id: pay['id'],
+            amount: pay['amount'],
+            currency_id: pay['currency_id'] ?? pay['currency'],
+            payment_method_code: pay['payment_method'],
+            name: pay['payment_method'],
+          };
+        });
+      }
+
       return normalised as unknown as T;
     });
   }

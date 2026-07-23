@@ -35,16 +35,24 @@ export function useRealtimeUpdates() {
       void queryClient.invalidateQueries({ queryKey: ['health'] });
     };
 
+    // Live progress of an operator integration run (pull → post → cycle).
+    const handleIntegrationRun = () => {
+      void queryClient.invalidateQueries({ queryKey: ['integration-run'] });
+      void queryClient.invalidateQueries({ queryKey: ['integration-runs'] });
+    };
+
     socket.on('orderStatus', handleOrderStatus);
     socket.on('syncJobUpdate', handleSyncJobUpdate);
     socket.on('alert', handleAlert);
     socket.on('healthUpdate', handleHealthUpdate);
+    socket.on('integrationRun', handleIntegrationRun);
 
     return () => {
       socket.off('orderStatus', handleOrderStatus);
       socket.off('syncJobUpdate', handleSyncJobUpdate);
       socket.off('alert', handleAlert);
       socket.off('healthUpdate', handleHealthUpdate);
+      socket.off('integrationRun', handleIntegrationRun);
     };
   }, [queryClient]);
 }

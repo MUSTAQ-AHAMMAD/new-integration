@@ -198,7 +198,13 @@ export function GenericAdminTable({
       const result = await api.adminImportCsv(table, file);
       toast.success(`Imported ${result.imported} records (${result.skipped} skipped)`);
       if (result.errors.length > 0) {
-        toast.warning(`${result.errors.length} rows had errors`);
+        // Show the first error in full (it explains WHY rows were skipped, e.g.
+        // unknown CSV headers) and log the rest for inspection.
+        console.warn(`CSV import errors for ${table}:`, result.errors);
+        toast.warning(
+          `${result.errors.length} row(s) had errors — first: ${result.errors[0]}`,
+          { duration: 12000 },
+        );
       }
       qc.invalidateQueries({ queryKey: ['admin', table] });
     } catch (err: unknown) {

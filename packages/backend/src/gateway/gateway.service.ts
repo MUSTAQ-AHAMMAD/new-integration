@@ -24,4 +24,15 @@ export class GatewayService {
   emitHealthUpdate(data: { service: string; status: string }) {
     this.gateway.server?.emit('healthUpdate', data);
   }
+
+  /** Live progress of an operator integration run (pull → post → cycle). */
+  emitIntegrationRun(data: {
+    jobId: string;
+    status: string;
+    phase: string;
+    message: string;
+    counters?: Record<string, number>;
+  }) {
+    this.gateway.server?.emit('integrationRun', data);
+  }
 }
