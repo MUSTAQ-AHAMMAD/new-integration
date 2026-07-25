@@ -32,6 +32,36 @@ export class DashboardController {
     return this.service.getOrdersByBranch();
   }
 
+  @Get('region-status')
+  @ApiOperation({
+    summary:
+      'Per-region status board: last Odoo sync + fetched orders/revenue, ' +
+      'last Oracle push + invoices/revenue, and failed-order count.',
+  })
+  getRegionStatus() {
+    return this.service.getRegionStatus();
+  }
+
+  @Get('store-revenue')
+  @ApiOperation({
+    summary:
+      'Per-store revenue from the Odoo backup (orders + Σ amountTotal), sorted ' +
+      'by revenue — reflects Integration Run data.',
+  })
+  getStoreRevenue() {
+    return this.service.getStoreRevenue();
+  }
+
+  @Get('executive-summary')
+  @ApiOperation({
+    summary:
+      'Management KPIs: revenue completeness (Odoo vs Oracle + gap), value at ' +
+      'risk, refund exposure, region freshness and store estate.',
+  })
+  getExecutiveSummary() {
+    return this.service.getExecutiveSummary();
+  }
+
   @Get('recent-activity')
   @ApiOperation({ summary: 'Get recent audit log activity' })
   getRecentActivity(@Query('limit') limit?: string) {

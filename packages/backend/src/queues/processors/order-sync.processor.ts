@@ -429,6 +429,14 @@ export class OrderSyncProcessor {
             `[${odooOrderId}] Already covered by aggregated invoice ` +
               `${order.oracleInvoiceNumber ?? 'unknown'} — nothing to do.`,
           );
+          // Count as done for this job, else the counter never reaches
+          // totalRecords and the job hangs in PENDING forever.
+          if (syncJobId)
+            await this.incrementSyncJobCounters(syncJobId, 'success');
+          this.gateway.emitOrderStatus({
+            orderId: odooOrderId,
+            status: 'SYNCED',
+          });
           return;
         }
         // Step 4 already flipped the row to PROCESSING; hand it back as PENDING
@@ -438,6 +446,16 @@ export class OrderSyncProcessor {
           `[${odooOrderId}] ⏸  Held for daily aggregation — invoice will be ` +
             `created for ${order.branchCode} on its business day, not per order.`,
         );
+        // A held order IS fully handled by THIS per-order job (it is deferred to
+        // the daily run by design), so it must advance the job counter — without
+        // this the job never completes. Counted as 'skipped' (not Oracle-synced
+        // per order); the daily job marks it SYNCED when it invoices.
+        if (syncJobId)
+          await this.incrementSyncJobCounters(syncJobId, 'skipped');
+        this.gateway.emitOrderStatus({
+          orderId: odooOrderId,
+          status: 'SKIPPED',
+        });
         return;
       }
 
@@ -1454,11 +1472,15 @@ export class OrderSyncProcessor {
 
     if (job.processedRecords >= job.totalRecords && job.totalRecords > 0) {
       let finalStatus: JobStatus;
-      if (job.failedCount === 0 && job.skippedCount === 0) {
+      if (job.failedCount === 0) {
+        // Nothing failed — every order was synced, skipped (unpaid/cancelled) or
+        // held for daily aggregation. All are normal outcomes, so the job is done.
         finalStatus = JobStatus.COMPLETED;
-      } else if (job.successCount > 0) {
+      } else if (job.successCount > 0 || job.skippedCount > 0) {
+        // Some orders progressed and some failed.
         finalStatus = JobStatus.PARTIAL;
       } else {
+        // Every order that was attempted failed.
         finalStatus = JobStatus.FAILED;
       }
 

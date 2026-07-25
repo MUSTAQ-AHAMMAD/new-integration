@@ -190,9 +190,23 @@ services:
       target: development
     container_name: integration_backend
     restart: unless-stopped
+    # Run compiled output WITHOUT nest --watch. Integration runs execute as
+    # in-memory tasks; under `pnpm dev` any file change in the watched tree
+    # (e.g. an ad-hoc `*.tmp.js` written into the container) hot-reloads the
+    # process and silently kills an in-flight run, stranding its job at
+    # PROCESSING. Build once at startup, then run node dist/main so nothing
+    # restarts the API mid-run.
+    command: ['sh', '-c', 'pnpm run build && node --enable-source-maps dist/main']
     environment:
       NODE_ENV: development
       PORT: 3001
+      # node-oracledb thick mode runs DB calls on libuv's thread pool; its
+      # default size (4) caps concurrent Oracle ops regardless of pool size.
+      # Match it to the DB pool so parallel order upserts truly run in parallel.
+      UV_THREADPOOL_SIZE: "16"
+      APP_DB_POOL_MIN: "16"
+      APP_DB_POOL_MAX: "16"
+      ODOO_INGEST_CONCURRENCY: "12"
       # Direct PostgreSQL connection (bypassing PgBouncer for development)
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
@@ -284,6 +298,11 @@ services:
     command: ['sh', '-c', 'pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
+      # See backend: raise libuv thread pool so thick-mode Oracle ops parallelize.
+      UV_THREADPOOL_SIZE: "16"
+      APP_DB_POOL_MIN: "16"
+      APP_DB_POOL_MAX: "16"
+      ODOO_INGEST_CONCURRENCY: "12"
       # Direct PostgreSQL connection (bypassing PgBouncer for development)
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db

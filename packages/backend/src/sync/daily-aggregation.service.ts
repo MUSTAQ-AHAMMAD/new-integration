@@ -38,6 +38,7 @@ import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit
 import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
 import { FusionReceiptMethod } from '../database/entities/fusion-receipt-method.entity';
 import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 import { OracleClient } from '../clients/oracle/oracle.client';
@@ -75,6 +76,8 @@ export interface DailyInvoiceGroup {
   /** Stable identity of the group — also the daily idempotency scope. */
   groupKey: string;
   branchCode: string;
+  /** Human-readable store name for the UI. */
+  branchName: string | null;
   region: string;
   /** Store-local calendar day, YYYY-MM-DD. */
   businessDay: string;
@@ -155,9 +158,62 @@ export class DailyAggregationService {
     private readonly invoiceLineRepo: Repository<FusionInvoiceLine>,
     @InjectRepository(VendHqItemMeta)
     private readonly itemMetaRepo: Repository<VendHqItemMeta>,
+    @InjectRepository(VendHqTaxMeta)
+    private readonly taxMetaRepo: Repository<VendHqTaxMeta>,
     private readonly transformation: OdooTransformationService,
     private readonly oracleClient: OracleClient,
   ) {}
+
+  /**
+   * Region → VAT rate (fraction, e.g. 0.15), resolved once and cached.
+   * The rate is derived from VendHqTaxMeta: the meta carries no numeric rate
+   * column, so it is parsed from the "…-N%" suffix of the row's Fusion name
+   * (falling back to the tax name). Operator choice: one rate per region, folded
+   * into each invoice line's unit price so the Oracle total includes VAT.
+   */
+  private readonly regionVatRateCache = new Map<string, number>();
+
+  private async resolveRegionVatRate(region: string): Promise<number> {
+    const key = region.trim().toUpperCase();
+    const cached = this.regionVatRateCache.get(key);
+    if (cached !== undefined) return cached;
+
+    const rows = await this.taxMetaRepo.find({ where: { region: key } });
+    const parseRate = (name: string | null): number | null => {
+      const m = name?.match(/(\d+(?:\.\d+)?)\s*%/);
+      if (!m) return null;
+      const pct = Number(m[1]);
+      return Number.isFinite(pct) && pct > 0 ? pct / 100 : null;
+    };
+    const rates = [
+      ...new Set(
+        rows
+          .map((r) => parseRate(r.fusionName) ?? parseRate(r.taxName))
+          .filter((r): r is number => r != null),
+      ),
+    ];
+
+    let rate = 0;
+    if (rates.length === 1) {
+      rate = rates[0];
+    } else if (rates.length > 1) {
+      // "One rate per region" is ambiguous here (e.g. SA lists both 5% and 15%).
+      // Use the highest and warn so the operator can prune the meta to one row.
+      rate = Math.max(...rates);
+      this.logger.warn(
+        `Region ${key} has multiple VAT rates in VendHqTaxMeta ` +
+          `(${rates.map((r) => `${r * 100}%`).join(', ')}) — using ${rate * 100}%. ` +
+          `Keep a single rate per region to make this deterministic.`,
+      );
+    } else {
+      this.logger.warn(
+        `No parseable VAT rate in VendHqTaxMeta for region ${key} — ` +
+          `invoice lines will be posted without tax (0%).`,
+      );
+    }
+    this.regionVatRateCache.set(key, rate);
+    return rate;
+  }
 
   /**
    * Returns the UTC instants bounding a store-local calendar day.
@@ -265,9 +321,22 @@ export class DailyAggregationService {
     }
 
     // ── Group ────────────────────────────────────────────────────────────────
+    // Odoo POS orders carry no `customer_type`, so a delivery-platform sale is
+    // recognised from its payment method (e.g. TABBY / TAMARA) against the
+    // region's configured providers. A matched order then forms its own invoice
+    // group, bills to the platform account and posts a commission GL journal;
+    // ordinary retail stays NORMAL.
+    const providerNames =
+      await this.transformation.getServiceProviderNames(region);
     const buckets = new Map<string, BackupOdooOrder[]>();
     for (const order of eligible) {
-      const customerType = (order.customerType ?? 'NORMAL').trim() || 'NORMAL';
+      const derivedProvider = this.transformation.deriveServiceProvider(
+        order,
+        providerNames,
+      );
+      const customerType =
+        derivedProvider ??
+        ((order.customerType ?? 'NORMAL').trim() || 'NORMAL');
       const isCredit = (order.orderPayments ?? []).some(
         (p) => (p.paymentName ?? '').toLowerCase() === 'credit on cust',
       );
@@ -327,6 +396,9 @@ export class DailyAggregationService {
 
     const buMap = await this.businessUnitMapRepo.findOne({ where: { region } });
     const uomCodes = await this.loadUomCodes(region);
+    // VAT rate for this region (folded into each line's unit price below so the
+    // Oracle invoice total is tax-inclusive). 0 when no rate is configured.
+    const vatRate = await this.resolveRegionVatRate(region);
     // Subinventory that stock is issued from — the store's metadata value, e.g.
     // "RYDAVNUMAL". Absent → inventory relief is skipped for the whole group.
     const subinventory = salesMeta.subinventory?.trim() || null;
@@ -413,30 +485,15 @@ export class DailyAggregationService {
         fallbackLineNo += 1;
         const sourceLineNo = line.lineId ?? fallbackLineNo;
 
-        const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
-        if (priorInvoice) {
-          alreadyPostedLines += 1;
-          existingTransactionNumber ??= priorInvoice;
-          continue;
-        }
-
         const itemNumber = line.productCode?.trim();
         const uomCode = itemNumber ? (uomCodes.get(itemNumber) ?? null) : null;
 
-        invoiceHeader.invoiceLines.push(
-          this.buildLine(
-            line,
-            orderNumber,
-            sourceLineNo,
-            invoiceHeader.invoiceLines.length + 1,
-            invoiceHeader.invoiceCurrencyCode,
-            uomCode,
-          ),
-        );
-
-        // Plan an inventory issue for lines that name a real item and carry a
-        // resolvable UOM. Discount pseudo-lines and description-only lines have
-        // no item to relieve. The subinventory comes from the store's metadata.
+        // Plan the inventory issue for EVERY line that names a real item —
+        // even lines whose invoice was already posted. Inventory is deduped
+        // per line at post time (sourceLineRef), so this never double-pushes,
+        // but it does mean an interrupted run that posted the invoice but not
+        // the inventory can still relieve stock on retry (no stranded stock).
+        // One issue per line — never aggregated by item.
         if (itemNumber && uomCode && subinventory && qty > 0) {
           inventoryPlans.push({
             itemNumber,
@@ -448,6 +505,27 @@ export class DailyAggregationService {
             salesOrderLine: sourceLineNo,
           });
         }
+
+        const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
+        if (priorInvoice) {
+          // Invoice line already posted — don't re-add it to the invoice
+          // header, but its inventory plan (above) still stands for retry.
+          alreadyPostedLines += 1;
+          existingTransactionNumber ??= priorInvoice;
+          continue;
+        }
+
+        invoiceHeader.invoiceLines.push(
+          this.buildLine(
+            line,
+            orderNumber,
+            sourceLineNo,
+            invoiceHeader.invoiceLines.length + 1,
+            invoiceHeader.invoiceCurrencyCode,
+            uomCode,
+            vatRate,
+          ),
+        );
       }
 
       if (invoiceHeader.invoiceLines.length > linesBefore) {
@@ -479,17 +557,29 @@ export class DailyAggregationService {
       contributingOrders.push(...orders);
     }
 
+    // Service-provider (delivery-platform) groups post ONLY the invoice + the
+    // commission journal — no receipts. The platform settles the receivable
+    // later, so there is no till receipt to record (per requirement). A NORMAL
+    // retail group is settled at the till and does get its receipts.
+    const providerNames =
+      await this.transformation.getServiceProviderNames(region);
+    const isServiceProviderGroup = providerNames.has(
+      customerType.toUpperCase(),
+    );
+
     const { standardReceipts, miscReceipts, applyReceipts } =
-      await this.buildAggregatedReceipts(
-        contributingOrders,
-        storeConfig,
-        region,
-        invoiceHeader,
-        salesMeta,
-        buMap,
-        saleDate,
-        isCredit,
-      );
+      isServiceProviderGroup
+        ? { standardReceipts: [], miscReceipts: [], applyReceipts: [] }
+        : await this.buildAggregatedReceipts(
+            contributingOrders,
+            storeConfig,
+            region,
+            invoiceHeader,
+            salesMeta,
+            buMap,
+            saleDate,
+            isCredit,
+          );
 
     const journalHeaders =
       await this.transformation.buildJournalHeadersForAggregate(
@@ -505,6 +595,7 @@ export class DailyAggregationService {
     return {
       groupKey: `${storeConfig.branchCode}|${groupKey}`,
       branchCode: storeConfig.branchCode,
+      branchName: storeConfig.branchName ?? null,
       region,
       businessDay,
       customerType,
@@ -713,6 +804,7 @@ export class DailyAggregationService {
     lineNumber: number,
     currencyCode: string,
     uomCode: string | null,
+    vatRate = 0,
   ): InvoiceLine {
     let qty = Number(line.qty ?? 1);
     const total =
@@ -724,13 +816,22 @@ export class DailyAggregationService {
 
     // Sign lives in the quantity, never in the unit price (legacy parity) —
     // a negative line (discount / promotion) posts as negative quantity.
-    const unitPrice =
+    const baseUnitPrice =
       line.priceUnit != null
         ? Math.abs(toSafeNumber(line.priceUnit))
         : qty !== 0
           ? Math.abs(total / qty)
           : 0;
     if (total < 0 && qty > 0) qty = -qty;
+
+    // Fold the region VAT into the unit price so the Oracle invoice total is
+    // tax-inclusive (operator choice: middleware computes tax, one rate per
+    // region). Odoo priceUnit is ex-tax, so this never double-counts. Rounded to
+    // 4dp to avoid float noise while keeping the qty×price total accurate.
+    const unitPrice =
+      vatRate > 0
+        ? Math.round(baseUnitPrice * (1 + vatRate) * 10000) / 10000
+        : baseUnitPrice;
 
     const productName = line.productName ?? '';
     // Discount/promotion lines: the legacy feed names the product

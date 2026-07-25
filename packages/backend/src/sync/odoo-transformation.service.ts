@@ -207,15 +207,76 @@ export class OdooTransformationService {
           .filter((n): n is string => !!n),
       ),
     ];
+    // Service-provider payments (TABBY/TAMARA/…) intentionally post NO receipt —
+    // the sale bills the platform on account — so they must not be flagged as
+    // "unmapped" (that raised a false PAYMENT_METHOD_DISCOVERED alert). Excluded
+    // here alongside 'Credit On Cust', which likewise posts no receipt.
+    const providerNames = await this.getServiceProviderNames(region);
     const unmapped: string[] = [];
     for (const name of paymentNames) {
       if (name.toLowerCase() === 'credit on cust') continue;
+      if (providerNames.has(name.toUpperCase())) continue;
       const method = await this.receiptMethodRepo.findOne({
         where: { receiptMethodName: name, region },
       });
       if (!method) unmapped.push(name);
     }
     return { paymentNames, unmapped };
+  }
+
+  /**
+   * The canonical service-provider names configured for a region (the distinct
+   * ServiceProviderJournalMeta.serviceProvider values, upper-cased). Used to
+   * classify an Odoo order as a delivery-platform sale from its payment method,
+   * since the Odoo POS payload carries no `customer_type` field — the provider
+   * only shows up as a payment name (e.g. "TABBY", "TAMARA").
+   */
+  async getServiceProviderNames(region: string): Promise<Set<string>> {
+    const rows = await this.journalMetaRepo.find({
+      where: { region },
+      select: { serviceProvider: true },
+    });
+    return new Set(
+      rows
+        .map((r) => (r.serviceProvider ?? '').trim().toUpperCase())
+        .filter((n) => n.length > 0),
+    );
+  }
+
+  /**
+   * Derives the service provider (delivery platform) for an order from its
+   * payment names, given the region's configured provider set (see
+   * getServiceProviderNames). Returns the canonical provider name when any
+   * payment matches — picking the provider that settled the largest amount when
+   * several are present — or null for an ordinary retail sale.
+   *
+   * This is what makes a service-provider order route to its own invoice group,
+   * platform bill-to and commission GL journal, replacing the missing
+   * `customer_type` signal from Odoo.
+   */
+  deriveServiceProvider(
+    order: BackupOdooOrder,
+    providerNames: Set<string>,
+  ): string | null {
+    if (providerNames.size === 0) return null;
+    const byProvider = new Map<string, number>();
+    for (const payment of order.orderPayments ?? []) {
+      const name = (payment.paymentName ?? '').trim().toUpperCase();
+      if (!providerNames.has(name)) continue;
+      const amount = Math.abs(toSafeNumber(payment.amount ?? 0));
+      byProvider.set(name, (byProvider.get(name) ?? 0) + amount);
+    }
+    if (byProvider.size === 0) return null;
+    // Prefer the provider that settled the most; ties fall to the first seen.
+    let best: string | null = null;
+    let bestAmount = -1;
+    for (const [name, amount] of byProvider) {
+      if (amount > bestAmount) {
+        best = name;
+        bestAmount = amount;
+      }
+    }
+    return best;
   }
 
   // ── Accessors for DailyAggregationService ────────────────────────────────
@@ -347,7 +408,20 @@ export class OdooTransformationService {
     // store name (billToName). Delivery-platform sales (non-NORMAL customerType,
     // e.g. Tamara/Tabby/Mrsool) bill to the platform's own account; NORMAL sales
     // bill to the store's mall, matched by branchName == billToName.
-    const orderCustomerType = backup.customerType ?? 'NORMAL';
+    // Odoo POS orders carry no `customer_type`; a delivery-platform sale is
+    // recognised from its payment method (e.g. TABBY / TAMARA). Mirrors the
+    // daily-aggregation grouping so the per-order and aggregated paths classify
+    // an order identically — otherwise provider orders synced here would bill to
+    // the store instead of the platform and post no commission GL journal.
+    const providerNames = await this.getServiceProviderNames(region);
+    const derivedProvider = this.deriveServiceProvider(backup, providerNames);
+    const orderCustomerType =
+      derivedProvider ?? (backup.customerType ?? 'NORMAL');
+    // Service-provider (delivery-platform) sales bill the platform on account and
+    // are settled later via the platform's receivable, so per requirement they
+    // post ONLY the invoice + commission journal — no standard/misc/apply
+    // receipts. (A NORMAL retail sale is settled at the till and does get them.)
+    const isServiceProviderOrder = derivedProvider != null;
     const salesMeta = await this.resolveBillToMetadata(
       orderCustomerType,
       region,
@@ -471,7 +545,9 @@ export class OdooTransformationService {
       region,
     );
 
-    for (const payment of backup.orderPayments) {
+    // Provider sales post no receipts (see isServiceProviderOrder above); the
+    // platform payment (TABBY/TAMARA/…) is a receivable, not a till settlement.
+    for (const payment of isServiceProviderOrder ? [] : backup.orderPayments) {
       const pmtMethod = payment.paymentName ?? '';
       if (!pmtMethod || pmtMethod.toLowerCase() === 'credit on cust') continue;
 
@@ -824,9 +900,17 @@ export class OdooTransformationService {
     const target = this.normalizeName(branchName);
     const rows = await this.salesMetadataRepo.find({
       where: { region, customerType: 'NORMAL' },
-      select: { billToName: true, costCenterCode: true },
+      select: { subinventory: true, billToName: true, costCenterCode: true },
     });
-    const match = rows.find((r) => this.normalizeName(r.billToName) === target);
+    // The store's key in FusionSalesMetadata is SUBINVENTORY (== branchCode /
+    // branchName), the same key the bill-to lookup uses — NOT billToName, which
+    // is the Oracle customer's display name (e.g. "Mahmal Center" for MAHMAL).
+    // Matching on billToName failed for every store whose display name differs
+    // from its code, wrongly reporting "No cost-center code". Fall back to
+    // billToName for legacy rows imported without a subinventory.
+    const match =
+      rows.find((r) => this.normalizeName(r.subinventory) === target) ??
+      rows.find((r) => this.normalizeName(r.billToName) === target);
     return match?.costCenterCode ?? null;
   }
 
@@ -861,10 +945,13 @@ export class OdooTransformationService {
     const debitMeta = metaRows.find((m) => m.creditDebit === 'CREDIT');
     const creditMeta = metaRows.find((m) => m.creditDebit === 'DEBIT');
     if (!debitMeta || !creditMeta) {
-      throw new Error(
+      // Non-fatal: skip the journal but let the invoice/receipts/inventory post.
+      // A GL-metadata gap must never fail the whole store's day.
+      this.logger.warn(
         `ServiceProviderJournalMeta for "${serviceProvider}" (region ${region}) ` +
-          `is missing a CREDIT/DEBIT account pair — cannot build a balanced journal.`,
+          `is missing a CREDIT/DEBIT account pair — GL journal skipped for ${txnNumber}.`,
       );
+      return [];
     }
 
     const total = invoiceHeader.invoiceLines.reduce(
@@ -896,10 +983,15 @@ export class OdooTransformationService {
 
     const costCenter = await this.resolveStoreCostCenter(branchName, region);
     if (!costCenter) {
-      throw new Error(
+      // Non-fatal: skip the journal, don't fail the invoice. (With the
+      // subinventory-keyed lookup this should only happen for a genuinely
+      // unmapped store.)
+      this.logger.warn(
         `No cost-center code (journal SEGMENT4) for store "${branchName}" ` +
-          `(region ${region}) — add costCenterCode to its NORMAL FusionSalesMetadata row.`,
+          `(region ${region}) — GL journal skipped for ${txnNumber}. Add ` +
+          `costCenterCode to its NORMAL FusionSalesMetadata row.`,
       );
+      return [];
     }
 
     const ledgerId = bigIntToNumber(debitMeta.ledgerId, 'ledgerId');
@@ -982,6 +1074,9 @@ export class OdooTransformationService {
         errorToSuspenseFlag: false,
         summaryFlag: false,
         journalLines,
+        // Persistence-only label for the dashboard (not sent to Oracle). Taken
+        // from the CREDIT-side meta row that drove this journal.
+        cashCredit: debitMeta.isCash ? 'Cash' : 'Credit',
       },
     ];
   }

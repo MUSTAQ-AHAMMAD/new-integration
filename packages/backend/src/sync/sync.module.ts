@@ -23,6 +23,7 @@ import { FusionCustomerAccount } from '../database/entities/fusion-customer-acco
 import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
 import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
 import { VendHqItemMeta } from '../database/entities/vend-hq-item-meta.entity';
+import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
 import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
 import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
 import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
@@ -50,6 +51,7 @@ import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
 import { IntegrationRunService } from './integration-run.service';
+import { IntegrationSchedulerService } from './integration-scheduler.service';
 import { ReadinessService } from './readiness.service';
 import { OrderDiagnosticsService } from './order-diagnostics.service';
 import { OrderEnrichmentService } from './order-enrichment.service';
@@ -79,6 +81,7 @@ import { BulkRetryService } from './bulk-retry.service';
       FusionInvoiceLine,
       FusionInvTxn,
       VendHqItemMeta,
+      VendHqTaxMeta,
       OutletIntegrationConfig,
       FusionStandardReceipt,
       FusionMiscReceipt,
@@ -123,6 +126,7 @@ import { BulkRetryService } from './bulk-retry.service';
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationRunService,
+    IntegrationSchedulerService,
     OrderEnrichmentService,
     StalledOrdersService,
     OrderDiagnosticsService,
@@ -146,6 +150,7 @@ import { BulkRetryService } from './bulk-retry.service';
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationRunService,
+    IntegrationSchedulerService,
     OrderEnrichmentService,
     StalledOrdersService,
     OrderDiagnosticsService,

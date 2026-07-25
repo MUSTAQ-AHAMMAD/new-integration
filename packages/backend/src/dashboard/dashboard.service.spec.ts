@@ -35,6 +35,10 @@ describe('DashboardService', () => {
   let health: ReturnType<typeof makeRepo>;
   let inventory: ReturnType<typeof makeRepo>;
   let webhooks: ReturnType<typeof makeRepo>;
+  let backupOdoo: ReturnType<typeof makeRepo>;
+  let invoiceHeaders: ReturnType<typeof makeRepo>;
+  let odooCredentials: ReturnType<typeof makeRepo>;
+  let refunds: ReturnType<typeof makeRepo>;
   let ordersQb: ReturnType<typeof makeQb>;
 
   const mockRedis = {
@@ -53,6 +57,10 @@ describe('DashboardService', () => {
     health = makeRepo();
     inventory = makeRepo();
     webhooks = makeRepo();
+    backupOdoo = makeRepo();
+    invoiceHeaders = makeRepo();
+    odooCredentials = makeRepo();
+    refunds = makeRepo();
     ordersQb = makeQb();
     orders.createQueryBuilder.mockReturnValue(ordersQb);
 
@@ -67,6 +75,10 @@ describe('DashboardService', () => {
       health as never,
       inventory as never,
       webhooks as never,
+      backupOdoo as never,
+      invoiceHeaders as never,
+      odooCredentials as never,
+      refunds as never,
       mockRedis as unknown as RedisService,
     );
     mockRedis.get.mockResolvedValue(null);

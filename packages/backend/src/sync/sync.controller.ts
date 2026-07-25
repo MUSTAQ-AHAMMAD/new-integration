@@ -41,6 +41,7 @@ import { DailyInvoiceService } from './daily-invoice.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
 import { IntegrationRunService } from './integration-run.service';
+import { IntegrationSchedulerService } from './integration-scheduler.service';
 import { ReadinessService } from './readiness.service';
 
 @ApiTags('sync')
@@ -54,6 +55,7 @@ export class SyncController {
     private readonly dailyAggregationService: DailyAggregationService,
     private readonly dailyInvoiceScheduler: DailyInvoiceSchedulerService,
     private readonly integrationRun: IntegrationRunService,
+    private readonly integrationScheduler: IntegrationSchedulerService,
     private readonly readinessService: ReadinessService,
     private readonly orderSyncService: OrderSyncService,
     private readonly odooBackupService: OdooBackupService,
@@ -253,6 +255,42 @@ export class SyncController {
       startDate: body?.startDate,
       endDate: body?.endDate,
     });
+  }
+
+  @Post('integration-run/all')
+  @ApiOperation({
+    summary:
+      'Start an integration run for EVERY active region over one date range. ' +
+      'Regions run concurrently; a region already running is skipped (reported).',
+  })
+  async startIntegrationRunAll(
+    @Body() body: { startDate: string; endDate: string },
+  ) {
+    if (
+      !body?.startDate ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(body.startDate) ||
+      !body?.endDate ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(body.endDate)
+    ) {
+      throw new BadRequestException(
+        'startDate and endDate are required as YYYY-MM-DD.',
+      );
+    }
+    return this.integrationRun.startAllActiveRegions({
+      startDate: body.startDate,
+      endDate: body.endDate,
+    });
+  }
+
+  @Post('integration-auto/run-now')
+  @ApiOperation({
+    summary:
+      'Trigger the automatic per-region integration immediately for every ' +
+      'region whose "Automatic Integration" toggle is enabled.',
+  })
+  async runAutoIntegrationNow() {
+    const started = await this.integrationScheduler.run('MANUAL_TRIGGER');
+    return { ok: true, startedRegions: started };
   }
 
   @Get('integration-run')

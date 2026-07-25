@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { formatDate, getStatusColor } from '@/lib/utils';
 import { toast } from 'sonner';
 import { CreateSyncJobModal } from '@/components/sync/create-sync-job-modal';
+import { LiveActivityFeed } from '@/components/dashboard/live-activity-feed';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorState } from '@/components/ui/error-state';
@@ -81,6 +82,9 @@ export default function SyncJobsPage() {
           <CreateSyncJobModal />
         </div>
       </div>
+
+      {/* Real-time activity stream + live queue depth */}
+      <LiveActivityFeed />
 
       {selectedRegion && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

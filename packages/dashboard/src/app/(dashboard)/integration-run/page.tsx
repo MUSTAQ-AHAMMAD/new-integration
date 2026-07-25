@@ -7,11 +7,13 @@ import { toast } from 'sonner';
 import {
   Activity,
   CheckCircle2,
+  Download,
   FileText,
   Play,
   RefreshCw,
   XCircle,
 } from 'lucide-react';
+import { downloadCsv } from '@/lib/table-export';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -25,6 +27,37 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 
 const PHASES = ['PULL', 'POST', 'DONE'] as const;
+
+type ResultSortKey =
+  | 'store'
+  | 'day'
+  | 'type'
+  | 'status'
+  | 'amount'
+  | 'orders'
+  | 'lines';
+
+function resultSortVal(
+  r: IntegrationRunOutcome,
+  key: ResultSortKey,
+): string | number {
+  switch (key) {
+    case 'store':
+      return (r.branchName ?? r.branchCode ?? '').toLowerCase();
+    case 'day':
+      return r.businessDay ?? '';
+    case 'type':
+      return r.customerType ?? '';
+    case 'status':
+      return r.status ?? '';
+    case 'amount':
+      return r.invoiceAmount ?? 0;
+    case 'orders':
+      return r.sourceOrderCount ?? 0;
+    case 'lines':
+      return r.invoiceLineCount ?? 0;
+  }
+}
 
 function phaseLabel(phase: string): string {
   switch (phase) {
@@ -58,6 +91,20 @@ function statusBadge(status: string): string {
   }
 }
 
+function formatMoney(value: number, currency = 'AED'): string {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${currency} ${value.toLocaleString('en-US', {
+      maximumFractionDigits: 2,
+    })}`;
+  }
+}
+
 function StatTile({ label, value, tone }: { label: string; value: number | string; tone?: 'good' | 'bad' | 'neutral' }) {
   const toneClass =
     tone === 'good'
@@ -79,6 +126,11 @@ export default function IntegrationRunPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // Results table controls (search / status filter / sort).
+  const [resultSearch, setResultSearch] = useState('');
+  const [resultStatus, setResultStatus] = useState('ALL');
+  const [sortKey, setSortKey] = useState<ResultSortKey>('store');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Regions come from the configured Odoo credentials (the pull source).
   const { data: credentials = [] } = useQuery({
@@ -120,6 +172,30 @@ export default function IntegrationRunPage() {
     onError: (e: Error) => toast.error(`Could not start run: ${e.message}`),
   });
 
+  // Run every active region at once (they execute concurrently, per-region).
+  const startAllMutation = useMutation({
+    mutationFn: () => api.startIntegrationRunAll({ startDate, endDate }),
+    onSuccess: (res) => {
+      if (res.started.length > 0) {
+        toast.success(
+          `Started ${res.started.length} region(s): ${res.started
+            .map((s) => s.region)
+            .join(', ')}` +
+            (res.skipped.length
+              ? ` · skipped ${res.skipped.length}`
+              : ''),
+        );
+        setActiveRunId(res.started[0].jobId);
+      } else {
+        toast.error(
+          `No runs started${res.skipped.length ? ` — ${res.skipped[0].reason}` : ''}`,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: ['integration-runs'] });
+    },
+    onError: (e: Error) => toast.error(`Could not start runs: ${e.message}`),
+  });
+
   const scope = run?.scopeValue;
   const isLive = run?.status === 'PROCESSING' || run?.status === 'PENDING';
   const progressPct = scope
@@ -130,6 +206,109 @@ export default function IntegrationRunPage() {
   const failedResults = (scope?.results ?? []).filter(
     (r) => r.status === 'FAILED',
   );
+
+  // Revenue = net value of the invoices actually created this run. Skipped
+  // (already-posted) and failed groups do not count toward the day's revenue.
+  const createdResults = (scope?.results ?? []).filter(
+    (r) => r.status === 'CREATED',
+  );
+  const currency =
+    (scope?.results ?? []).find((r) => r.currencyCode)?.currencyCode ?? 'AED';
+  const totalRevenue = createdResults.reduce(
+    (sum, r) => sum + (r.invoiceAmount ?? 0),
+    0,
+  );
+  // Per-business-day revenue, sorted by day, for the summary breakdown.
+  const revenueByDay = Object.entries(
+    createdResults.reduce<Record<string, number>>((acc, r) => {
+      acc[r.businessDay] = (acc[r.businessDay] ?? 0) + (r.invoiceAmount ?? 0);
+      return acc;
+    }, {}),
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  // Search + status filter + sort over the results table.
+  const displayResults = useMemo(() => {
+    let out = scope?.results ?? [];
+    const q = resultSearch.trim().toLowerCase();
+    if (q) {
+      out = out.filter((r) =>
+        [
+          r.branchName,
+          r.branchCode,
+          r.customerType,
+          r.status,
+          r.transactionNumber,
+          r.businessDay,
+          r.error,
+        ]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q)),
+      );
+    }
+    if (resultStatus !== 'ALL') {
+      out = out.filter((r) => r.status === resultStatus);
+    }
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...out].sort((a, b) => {
+      const av = resultSortVal(a, sortKey);
+      const bv = resultSortVal(b, sortKey);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+  }, [scope?.results, resultSearch, resultStatus, sortKey, sortDir]);
+
+  const toggleSort = (key: ResultSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const exportResults = () => {
+    const columns = [
+      { key: 'store', label: 'Store' },
+      { key: 'branchCode', label: 'Branch code' },
+      { key: 'day', label: 'Day' },
+      { key: 'type', label: 'Type' },
+      { key: 'status', label: 'Status' },
+      { key: 'invoice', label: 'Invoice #' },
+      { key: 'amount', label: 'Amount' },
+      { key: 'currency', label: 'Currency' },
+      { key: 'orders', label: 'Orders' },
+      { key: 'lines', label: 'Lines' },
+      { key: 'receipts', label: 'Receipts' },
+      { key: 'journals', label: 'Journals' },
+      { key: 'invTxns', label: 'Inv. txns' },
+      { key: 'detail', label: 'Detail' },
+    ];
+    const rows = displayResults.map((r) => ({
+      store: r.branchName ?? r.branchCode,
+      branchCode: r.branchCode,
+      day: r.businessDay,
+      type: r.customerType,
+      status: r.status,
+      invoice: r.transactionNumber ?? '',
+      amount: r.invoiceAmount ?? '',
+      currency: r.currencyCode ?? '',
+      orders: r.sourceOrderCount,
+      lines: r.invoiceLineCount,
+      receipts: r.standardReceipts + r.miscReceipts,
+      journals: r.journals,
+      invTxns: r.inventoryTransactions ?? 0,
+      detail:
+        r.error ??
+        (r.excludedOrders?.length
+          ? `${r.excludedOrders.length} order(s) held`
+          : ''),
+    }));
+    downloadCsv(
+      `integration-run-${scope?.region ?? 'run'}-${scope?.startDate ?? ''}.csv`,
+      columns,
+      rows,
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -204,21 +383,42 @@ export default function IntegrationRunPage() {
                 className="mt-1.5"
               />
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <Button
-                className="w-full"
+                className="flex-1"
                 disabled={
-                  !region || !startDate || !endDate || startMutation.isPending || isLive
+                  !region || !startDate || !endDate || startMutation.isPending
                 }
                 onClick={() => startMutation.mutate()}
               >
                 <Play
                   className={`mr-2 h-4 w-4 ${startMutation.isPending ? 'animate-pulse' : ''}`}
                 />
-                {isLive ? 'Run in progress…' : 'Start integration'}
+                Start
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={!startDate || !endDate || startAllMutation.isPending}
+                onClick={() => startAllMutation.mutate()}
+                title="Start a concurrent run for every active region"
+              >
+                <Play
+                  className={`mr-2 h-4 w-4 ${startAllMutation.isPending ? 'animate-pulse' : ''}`}
+                />
+                All regions
               </Button>
             </div>
           </div>
+
+          <p className="mt-3 text-xs text-slate-500">
+            Different regions run at the same time — you no longer have to wait
+            for one to finish. To run the integration on a schedule, enable{' '}
+            <a href="/admin/sync-control" className="underline">
+              Automatic Integration per region
+            </a>{' '}
+            in the Sync Control Center.
+          </p>
         </CardContent>
       </Card>
 
@@ -284,7 +484,10 @@ export default function IntegrationRunPage() {
 
             {/* Counters */}
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <StatTile label="Orders pulled from Odoo" value={scope.pull.ingested} />
+              <StatTile
+                label="Orders pulled from Odoo"
+                value={Math.max(scope.pull.ingested, scope.pull.saved)}
+              />
               <StatTile
                 label="Invoices created"
                 value={scope.post.invoicesCreated}
@@ -304,6 +507,38 @@ export default function IntegrationRunPage() {
                 label="Inventory transactions"
                 value={scope.post.inventoryTransactions}
               />
+            </div>
+
+            {/* Revenue summary */}
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Total revenue invoiced{' '}
+                    {scope.startDate === scope.endDate
+                      ? `· ${scope.startDate}`
+                      : `· ${scope.startDate} → ${scope.endDate}`}
+                  </div>
+                  <div className="mt-0.5 text-3xl font-bold text-emerald-700">
+                    {formatMoney(totalRevenue, currency)}
+                  </div>
+                </div>
+                <div className="text-xs text-emerald-700/80">
+                  across {createdResults.length} invoice(s)
+                </div>
+              </div>
+              {revenueByDay.length > 1 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {revenueByDay.map(([day, amount]) => (
+                    <span
+                      key={day}
+                      className="rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-700 shadow-sm"
+                    >
+                      {day}: {formatMoney(amount, currency)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Live event log */}
@@ -330,19 +565,89 @@ export default function IntegrationRunPage() {
             {/* Per store/day results */}
             {scope.results.length > 0 && (
               <div>
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Oracle results — one row per store, day and invoice group
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Oracle results
+                  </span>
+                  <div className="flex-1" />
+                  <Input
+                    value={resultSearch}
+                    onChange={(e) => setResultSearch(e.target.value)}
+                    placeholder="Search store, code, invoice…"
+                    className="h-8 w-56 text-sm"
+                  />
+                  <select
+                    value={resultStatus}
+                    onChange={(e) => setResultStatus(e.target.value)}
+                    className="h-8 rounded-md border border-input bg-transparent px-2 text-sm"
+                  >
+                    <option value="ALL">All statuses</option>
+                    <option value="CREATED">Created</option>
+                    <option value="SKIPPED">Skipped</option>
+                    <option value="FAILED">Failed</option>
+                  </select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={exportResults}
+                    disabled={displayResults.length === 0}
+                  >
+                    <Download className="mr-1 h-3 w-3" />
+                    Export CSV
+                  </Button>
+                </div>
+                <div className="mb-1 text-xs text-slate-400">
+                  Showing {displayResults.length} of {scope.results.length}{' '}
+                  row(s)
                 </div>
                 <div className="overflow-x-auto rounded-lg border border-slate-200">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-left text-xs text-slate-500">
                       <tr>
-                        <th className="px-3 py-2">Store</th>
-                        <th className="px-3 py-2">Day</th>
-                        <th className="px-3 py-2">Type</th>
-                        <th className="px-3 py-2">Status</th>
+                        {(
+                          [
+                            ['store', 'Store', ''],
+                            ['day', 'Day', ''],
+                            ['type', 'Type', ''],
+                            ['status', 'Status', ''],
+                          ] as [ResultSortKey, string, string][]
+                        ).map(([key, label]) => (
+                          <th
+                            key={key}
+                            className="cursor-pointer select-none px-3 py-2 hover:text-slate-700"
+                            onClick={() => toggleSort(key)}
+                          >
+                            {label}
+                            {sortKey === key
+                              ? sortDir === 'asc'
+                                ? ' ▲'
+                                : ' ▼'
+                              : ''}
+                          </th>
+                        ))}
                         <th className="px-3 py-2">Invoice #</th>
-                        <th className="px-3 py-2 text-right">Orders</th>
+                        <th
+                          className="cursor-pointer select-none px-3 py-2 text-right hover:text-slate-700"
+                          onClick={() => toggleSort('amount')}
+                        >
+                          Amount
+                          {sortKey === 'amount'
+                            ? sortDir === 'asc'
+                              ? ' ▲'
+                              : ' ▼'
+                            : ''}
+                        </th>
+                        <th
+                          className="cursor-pointer select-none px-3 py-2 text-right hover:text-slate-700"
+                          onClick={() => toggleSort('orders')}
+                        >
+                          Orders
+                          {sortKey === 'orders'
+                            ? sortDir === 'asc'
+                              ? ' ▲'
+                              : ' ▼'
+                            : ''}
+                        </th>
                         <th className="px-3 py-2 text-right">Lines</th>
                         <th className="px-3 py-2 text-right">Receipts</th>
                         <th className="px-3 py-2 text-right">Journals</th>
@@ -351,9 +656,16 @@ export default function IntegrationRunPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {scope.results.map((r: IntegrationRunOutcome, i) => (
+                      {displayResults.map((r: IntegrationRunOutcome, i) => (
                         <tr key={`${r.groupKey}-${i}`} className="border-t border-slate-100">
-                          <td className="px-3 py-2 font-medium">{r.branchCode}</td>
+                          <td className="px-3 py-2 font-medium">
+                            <div>{r.branchName ?? r.branchCode}</div>
+                            {r.branchName && (
+                              <div className="text-xs font-normal text-slate-400">
+                                {r.branchCode}
+                              </div>
+                            )}
+                          </td>
                           <td className="px-3 py-2">{r.businessDay}</td>
                           <td className="px-3 py-2">{r.customerType}</td>
                           <td className="px-3 py-2">
@@ -370,6 +682,11 @@ export default function IntegrationRunPage() {
                           </td>
                           <td className="px-3 py-2 font-mono text-xs">
                             {r.transactionNumber ?? '—'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-medium tabular-nums">
+                            {r.status === 'CREATED' && r.invoiceAmount != null
+                              ? formatMoney(r.invoiceAmount, r.currencyCode ?? currency)
+                              : '—'}
                           </td>
                           <td className="px-3 py-2 text-right">{r.sourceOrderCount}</td>
                           <td className="px-3 py-2 text-right">{r.invoiceLineCount}</td>
@@ -391,6 +708,18 @@ export default function IntegrationRunPage() {
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
+                        <td className="px-3 py-2" colSpan={5}>
+                          Total revenue ({createdResults.length} invoice
+                          {createdResults.length === 1 ? '' : 's'})
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-700">
+                          {formatMoney(totalRevenue, currency)}
+                        </td>
+                        <td className="px-3 py-2" colSpan={6} />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
                 {failedResults.length > 0 && (

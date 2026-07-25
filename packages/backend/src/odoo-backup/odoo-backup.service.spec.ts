@@ -17,6 +17,10 @@
  * the transaction manager's delete/insert calls.
  */
 
+// Exercise the mocked per-order persistence path here; the bulk executeMany
+// path talks to a real Oracle pool and is validated separately (live).
+process.env.ODOO_BULK_PERSIST = 'false';
+
 import axios, { AxiosError } from 'axios';
 import { DataSource, Repository } from 'typeorm';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
@@ -52,8 +56,10 @@ function makeRepos() {
     insert: jest.fn().mockResolvedValue({}),
   };
   const orders = {
-    // upsertOrder: findOne(null) → create → save; ingest step: findOne(select id)
+    // upsertOrder: findOne(null) → create → save; ingest step batch-loads the
+    // backup-row ids via find({ orderId: In(...) }).
     findOne: jest.fn().mockResolvedValue(null),
+    find: jest.fn().mockResolvedValue([]),
     create: jest.fn((x) => x),
     save: jest.fn().mockResolvedValue({ id: 'order-db-001' }),
     update: jest.fn().mockResolvedValue({}),
@@ -637,6 +643,33 @@ describe('OdooBackupService.backupOrdersForCredential — pagination', () => {
 
     expect(mockAxiosGet).toHaveBeenCalledTimes(1);
     expect(result.orders).toHaveLength(2);
+  });
+
+  it('fetches ALL records via a single large-limit request when the endpoint ignores offset', async () => {
+    const { service } = makeService();
+    // Page 1 and page 2 (offset=100) return the SAME 100 ids → the server is
+    // ignoring `offset`. The server advertises 250 total, so the service must
+    // refetch everything in one request (limit=250) instead of stopping at 100.
+    const page = Array.from({ length: 100 }, (_, i) => makeOrder({ id: 1000 + i }));
+    const full = Array.from({ length: 250 }, (_, i) => makeOrder({ id: 1000 + i }));
+    mockAxiosGet
+      .mockResolvedValueOnce({ data: { results: page, total: 250 } }) // page 1 (offset 0)
+      .mockResolvedValueOnce({ data: { results: page, total: 250 } }) // page 2 (offset 100) — duplicate
+      .mockResolvedValueOnce({ data: { results: full, total: 250 } }); // full refetch (limit=250)
+
+    const result = await service.backupOrdersForCredential(makeCredential(), {
+      limit: 100,
+    });
+
+    // All 250 records ingested (100 from page 1 + 150 new from the full fetch).
+    expect(result.orders).toHaveLength(250);
+    expect(result.saved).toBe(250);
+    // The third call is the full-set fetch: limit = total, offset = 0.
+    const [, thirdConfig] = mockAxiosGet.mock.calls[2] as [
+      string,
+      { params: Record<string, unknown> },
+    ];
+    expect(thirdConfig.params).toMatchObject({ limit: 250, offset: 0 });
   });
 });
 
