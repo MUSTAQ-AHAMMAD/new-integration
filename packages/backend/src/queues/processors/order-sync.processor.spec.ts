@@ -468,6 +468,60 @@ describe('OrderSyncProcessor — payment mapping handling', () => {
     });
   });
 
+  describe('daily-aggregation hand-off (per-order invoicing disabled)', () => {
+    beforeEach(() => {
+      // Default production mode: per-order invoicing is OFF, so orders are held
+      // for the daily aggregation run instead of being invoiced individually.
+      delete process.env.PER_ORDER_INVOICING;
+      orders.findOne.mockResolvedValue({
+        ...BASE_ORDER,
+        status: SyncStatus.PENDING,
+      } as unknown as OrderSyncQueue);
+    });
+
+    it('does NOT push an invoice to Oracle for a held order', async () => {
+      await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
+      expect(mockSoapClient.createSimpleInvoice).not.toHaveBeenCalled();
+    });
+
+    it('hands the order back to PENDING for the daily run', async () => {
+      await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
+      const backToPending = (orders.update as jest.Mock).mock.calls.find(
+        (c: unknown[]) =>
+          (c[1] as { status?: SyncStatus }).status === SyncStatus.PENDING,
+      );
+      expect(backToPending).toBeDefined();
+    });
+
+    it('advances the SyncJob counter so the job can complete (regression: held orders left the job stuck in PENDING)', async () => {
+      await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
+      expect(syncJobs.increment).toHaveBeenCalledWith(
+        { id: 'sj-1' },
+        'processedRecords',
+        1,
+      );
+      expect(syncJobs.increment).toHaveBeenCalledWith(
+        { id: 'sj-1' },
+        'skippedCount',
+        1,
+      );
+    });
+
+    it('counts an already-aggregated order as success', async () => {
+      orders.findOne.mockResolvedValue({
+        ...BASE_ORDER,
+        status: SyncStatus.SYNCED,
+        oracleInvoiceNumber: '2960519',
+      } as unknown as OrderSyncQueue);
+      await processor.handleOrderSync(makeJob({ syncJobId: 'sj-1' }));
+      expect(syncJobs.increment).toHaveBeenCalledWith(
+        { id: 'sj-1' },
+        'successCount',
+        1,
+      );
+    });
+  });
+
   describe('duplicate detection', () => {
     it('skips Oracle call and marks SYNCED when order is already a duplicate', async () => {
       (mockIdempotency.isDuplicate as jest.Mock).mockResolvedValue(true);

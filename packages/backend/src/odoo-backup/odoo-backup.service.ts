@@ -29,12 +29,14 @@ import {
   Between,
   DataSource,
   FindOptionsWhere,
+  In,
   LessThanOrEqual,
   MoreThanOrEqual,
   Repository,
 } from 'typeorm';
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import * as https from 'https';
+import * as oracledb from 'oracledb';
 import {
   OdooClient,
   OdooOrder,
@@ -64,6 +66,56 @@ const DEFAULT_ODOO_ORDERS_API_PATH = '/api/pos/order';
 const CREDENTIAL_PAGE_SIZE = 200;
 /** Per-request HTTP timeout (ms) for credential backup fetches. */
 const CREDENTIAL_FETCH_TIMEOUT_MS = 120_000;
+/**
+ * How many order upserts / ingests run concurrently. Each order is several
+ * independent DB round-trips, so overlapping them is the single biggest lever
+ * on pull throughput. Bounded so we never exceed the Oracle connection pool
+ * (APP_DB_POOL_MAX). Overridable via env for tuning.
+ */
+// Kept a little below the DB pool size (APP_DB_POOL_MAX, default 16) so several
+// region pulls can run at once without starving the pool or the API of warm
+// connections. Raise ODOO_INGEST_CONCURRENCY (and the pool) for single-region
+// bulk backfills.
+const INGEST_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.ODOO_INGEST_CONCURRENCY ?? '10', 10),
+);
+
+/** Progress reported during a credential backup+ingest, for live UIs. */
+export interface BackupProgress {
+  phase: 'BACKUP' | 'INGEST';
+  done: number;
+  total: number;
+}
+
+/**
+ * Runs `worker` over `items` with at most `concurrency` promises in flight,
+ * invoking `onEach(done)` after each item completes. Never rejects — the worker
+ * is responsible for catching its own per-item errors — so one bad record can't
+ * abort the whole batch.
+ */
+async function mapWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+  onEach?: (done: number) => void,
+): Promise<void> {
+  let cursor = 0;
+  let done = 0;
+  const runNext = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const i = cursor++;
+      await worker(items[i], i);
+      done += 1;
+      if (onEach) onEach(done);
+    }
+  };
+  const lanes = Array.from(
+    { length: Math.min(Math.max(concurrency, 1), items.length) },
+    () => runNext(),
+  );
+  await Promise.all(lanes);
+}
 
 /**
  * Normalises a raw API path value from an OdooCredential.
@@ -389,7 +441,18 @@ export class OdooBackupService {
    */
   async backupAndIngestForCredential(
     cred: OdooCredential,
-    params: { startDate?: string; endDate?: string; limit?: number },
+    params: {
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+      /**
+       * Skip the per-order OrderSyncQueue ingest. The Integration Run posts off
+       * the BackupOdooOrder tables directly (daily aggregation), so it doesn't
+       * need the queue — skipping it removes the slow per-order ingest pass.
+       */
+      skipIngest?: boolean;
+    },
+    onProgress?: (p: BackupProgress) => void,
   ): Promise<{
     saved: number;
     skipped: number;
@@ -402,66 +465,131 @@ export class OdooBackupService {
     // issuing a separate DB query per order.
     const branchIdMap = await this.loadBranchIdMap();
 
-    const result = await this.backupOrdersForCredential(cred, {
-      startDate: params.startDate,
-      endDate: params.endDate,
-      limit: params.limit, // undefined → fetch all pages
-    });
+    const result = await this.backupOrdersForCredential(
+      cred,
+      {
+        startDate: params.startDate,
+        endDate: params.endDate,
+        limit: params.limit, // undefined → fetch all pages
+      },
+      onProgress,
+    );
 
-    // Ingest backed-up orders into the OrderSyncQueue.
+    if (params.skipIngest) {
+      // Sales are posted straight from the BackupOdooOrder tables by daily
+      // aggregation, so they don't need the OrderSyncQueue. REFUNDS are the
+      // exception: they never aggregate — a refund must flow through the ingest
+      // path so a RefundTracking row is created and the CreditMemoService cron
+      // pushes its Oracle credit memo. Without this, an Integration Run produces
+      // ZERO credit memos for the refunds in its range.
+      const refundOrders = result.orders.filter((o) => this.isRefundOrder(o));
+      const backupIdByOrderId = await this.mapBackupIds(refundOrders);
+      let refundsIngested = 0;
+      let refundsSkipped = 0;
+      await mapWithConcurrency(refundOrders, INGEST_CONCURRENCY, async (order) => {
+        const r = await this.ingestSingleBackupOrder(
+          order,
+          cred,
+          branchIdMap,
+          backupIdByOrderId,
+        );
+        if (r === 'ingested') refundsIngested++;
+        else refundsSkipped++;
+      });
+      this.logger.log(
+        `Odoo credential backup done for region=${cred.region}: ` +
+          `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
+          `(sales ingest skipped; ${refundsIngested} refund(s) ingested for ` +
+          `credit-memo coverage, ${refundsSkipped} skipped).`,
+      );
+      return {
+        saved: result.saved,
+        skipped: result.skipped,
+        ingested: refundsIngested,
+        ingestSkipped: refundsSkipped,
+        total: result.orders.length,
+      };
+    }
+
+    // ── Batch-load the backup-row UUIDs for every fetched order in ONE pass ──
+    // Previously this issued a findOne PER order (thousands of round-trips).
+    // Oracle caps an IN list at 1000, so chunk the ids.
+    const orderIds = result.orders
+      .map((o) => (typeof o.id === 'number' ? o.id : null))
+      .filter((id): id is number => id !== null);
+    const backupIdByOrderId = new Map<number, string>();
+    for (let i = 0; i < orderIds.length; i += 1000) {
+      const chunk = orderIds.slice(i, i + 1000);
+      const rows = await this.orders.find({
+        where: { orderId: In(chunk) },
+        select: { id: true, orderId: true },
+      });
+      for (const row of rows) backupIdByOrderId.set(row.orderId, row.id);
+    }
+
+    // Ingest backed-up orders into the OrderSyncQueue — concurrently, so the
+    // per-order DB round-trips overlap instead of running one at a time.
     let ingested = 0;
     let ingestSkipped = 0;
-    for (const order of result.orders) {
-      try {
-        const payload = normalizeOrderForIngestion(order);
-        if (!payload) {
+    const total = result.orders.length;
+    await mapWithConcurrency(
+      result.orders,
+      INGEST_CONCURRENCY,
+      async (order) => {
+        try {
+          const payload = normalizeOrderForIngestion(order);
+          if (!payload) {
+            this.logger.warn(
+              `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
+                `normalizeOrderForIngestion returned null (missing Odoo fields branch_id or date_order)`,
+            );
+            ingestSkipped++;
+            return;
+          }
+
+          // ── Resolve canonical branchCode from StoreConfiguration ──────────
+          // normalizeOrderForIngestion sets branchCode = String(branch_id) which
+          // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
+          // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
+          // the real branchCode so validation and Oracle transformation work correctly.
+          const odooBranchId =
+            order.branch_id != null
+              ? Array.isArray(order.branch_id)
+                ? order.branch_id[0]
+                : order.branch_id
+              : null;
+          const storeEntry =
+            odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
+          const resolvedBranchCode =
+            storeEntry?.branchCode ?? payload.branchCode;
+          // Prefer region from credential; fall back to StoreConfiguration.region
+          const resolvedRegion = cred.region || storeEntry?.region || null;
+
+          await this.orderSyncService.ingestOrder({
+            ...payload,
+            branchCode: resolvedBranchCode,
+            region: resolvedRegion ?? undefined,
+            odooBackupOrderId:
+              typeof order.id === 'number'
+                ? backupIdByOrderId.get(order.id)
+                : undefined,
+          });
+          ingested++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           this.logger.warn(
-            `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
-              `normalizeOrderForIngestion returned null (missing Odoo fields branch_id or date_order)`,
+            `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
           );
           ingestSkipped++;
-          continue;
         }
-
-        // ── Resolve canonical branchCode from StoreConfiguration ──────────
-        // normalizeOrderForIngestion sets branchCode = String(branch_id) which
-        // is a numeric Odoo ID (e.g. "3").  StoreConfiguration.branchCode is a
-        // human-readable code (e.g. "CCNTRBHR") keyed via odooBranchId.  Look up
-        // the real branchCode so validation and Oracle transformation work correctly.
-        const odooBranchId =
-          order.branch_id != null
-            ? Array.isArray(order.branch_id)
-              ? order.branch_id[0]
-              : order.branch_id
-            : null;
-        const storeEntry =
-          odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
-        const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
-        // Prefer region from credential; fall back to StoreConfiguration.region
-        const resolvedRegion = cred.region || storeEntry?.region || null;
-
-        // Look up the BackupOdooOrder record we just upserted so we can link
-        // the queue entry back to the raw backup for transformation.
-        const backupOrder = await this.orders.findOne({
-          where: { orderId: order.id },
-          select: { id: true },
-        });
-
-        await this.orderSyncService.ingestOrder({
-          ...payload,
-          branchCode: resolvedBranchCode,
-          region: resolvedRegion ?? undefined,
-          odooBackupOrderId: backupOrder?.id,
-        });
-        ingested++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.warn(
-          `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
-        );
-        ingestSkipped++;
-      }
-    }
+      },
+      (doneCount) => {
+        // Throttle progress events to every 25 records (and the final one).
+        if (onProgress && (doneCount % 25 === 0 || doneCount === total)) {
+          onProgress({ phase: 'INGEST', done: doneCount, total });
+        }
+      },
+    );
 
     this.logger.log(
       `Odoo credential backup+ingest done for region=${cred.region}: ` +
@@ -475,6 +603,82 @@ export class OdooBackupService {
       ingestSkipped,
       total: result.orders.length,
     };
+  }
+
+  /** A refund is an explicit is_refund flag or a negative total (Odoo parity). */
+  private isRefundOrder(order: OdooOrder): boolean {
+    const amt = Number(order.amount_total ?? 0);
+    return (
+      Boolean((order as unknown as { is_refund?: unknown }).is_refund) || amt < 0
+    );
+  }
+
+  /** Batch-load backup-row UUIDs by numeric Odoo order id (Oracle IN cap 1000). */
+  private async mapBackupIds(
+    orders: OdooOrder[],
+  ): Promise<Map<number, string>> {
+    const orderIds = orders
+      .map((o) => (typeof o.id === 'number' ? o.id : null))
+      .filter((id): id is number => id !== null);
+    const map = new Map<number, string>();
+    for (let i = 0; i < orderIds.length; i += 1000) {
+      const chunk = orderIds.slice(i, i + 1000);
+      const rows = await this.orders.find({
+        where: { orderId: In(chunk) },
+        select: { id: true, orderId: true },
+      });
+      for (const row of rows) map.set(row.orderId, row.id);
+    }
+    return map;
+  }
+
+  /**
+   * Ingest one backed-up Odoo order into the OrderSyncQueue (resolving the
+   * canonical branchCode/region), returning whether it was ingested or skipped.
+   * Shared by the refunds-only pass and, conceptually, the full ingest loop.
+   */
+  private async ingestSingleBackupOrder(
+    order: OdooOrder,
+    cred: OdooCredential,
+    branchIdMap: Map<bigint, { branchCode: string; region: string | null }>,
+    backupIdByOrderId: Map<number, string>,
+  ): Promise<'ingested' | 'skipped'> {
+    try {
+      const payload = normalizeOrderForIngestion(order);
+      if (!payload) {
+        this.logger.warn(
+          `Odoo order id=${String(order.id)} region=${cred.region} skipped: ` +
+            `normalizeOrderForIngestion returned null (missing branch_id/date_order)`,
+        );
+        return 'skipped';
+      }
+      const odooBranchId =
+        order.branch_id != null
+          ? Array.isArray(order.branch_id)
+            ? order.branch_id[0]
+            : order.branch_id
+          : null;
+      const storeEntry =
+        odooBranchId != null ? branchIdMap.get(BigInt(odooBranchId)) : null;
+      const resolvedBranchCode = storeEntry?.branchCode ?? payload.branchCode;
+      const resolvedRegion = cred.region || storeEntry?.region || null;
+      await this.orderSyncService.ingestOrder({
+        ...payload,
+        branchCode: resolvedBranchCode,
+        region: resolvedRegion ?? undefined,
+        odooBackupOrderId:
+          typeof order.id === 'number'
+            ? backupIdByOrderId.get(order.id)
+            : undefined,
+      });
+      return 'ingested';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Failed to ingest Odoo order id=${String(order.id)} region=${cred.region}: ${msg}`,
+      );
+      return 'skipped';
+    }
   }
 
   /**
@@ -568,6 +772,77 @@ export class OdooBackupService {
   }
 
   /**
+   * Read-only live reconciliation: a single lightweight GET (limit=1) for a
+   * region + date range that returns the server-advertised TOTAL order count for
+   * that range — without fetching every page or writing anything. The caller
+   * compares it to the stored backup count. Never throws.
+   */
+  async reconcileForCredential(
+    cred: {
+      baseUrl: string;
+      apiKey: string;
+      region: string;
+      apiPath?: string | null;
+      rejectUnauthorizedSsl?: boolean | null;
+    },
+    params: { startDate?: string; endDate?: string },
+  ): Promise<{
+    ok: boolean;
+    url: string;
+    status: number | null;
+    apiTotal: number | null;
+    sampleCount: number;
+    error: string | null;
+  }> {
+    const rawBase = cred.baseUrl.replace(/\/$/, '');
+    const baseUrl = /^https?:\/\//i.test(rawBase)
+      ? rawBase
+      : `https://${rawBase}`;
+    const apiPath =
+      normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const url = `${baseUrl}${apiPath}`;
+    const sslVerify = cred.rejectUnauthorizedSsl !== false;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: sslVerify });
+
+    try {
+      const response = await axios.get<unknown>(url, {
+        headers: { 'x-api-key': cred.apiKey },
+        params: {
+          limit: 1,
+          offset: 0,
+          ...(params.startDate && {
+            start_date: toApiDatetime(params.startDate),
+          }),
+          ...(params.endDate && {
+            end_date: toApiDatetime(params.endDate, { end: true }),
+          }),
+        },
+        httpsAgent,
+        timeout: 20_000,
+      });
+      return {
+        ok: true,
+        url,
+        status: response.status,
+        apiTotal: this.extractTotalFromResponse(response.data),
+        sampleCount: this.extractOrderList(response.data).length,
+        error: null,
+      };
+    } catch (err: unknown) {
+      const status =
+        err instanceof AxiosError ? (err.response?.status ?? null) : null;
+      return {
+        ok: false,
+        url,
+        status,
+        apiTotal: null,
+        sampleCount: 0,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
    * Fetches orders from a specific OdooCredential (per-region DB credential)
    * and persists them to backup tables.
    * Uses a temporary axios instance scoped to the credential's baseUrl/apiKey.
@@ -589,6 +864,7 @@ export class OdooBackupService {
       endDate?: string;
       limit?: number;
     },
+    onProgress?: (p: BackupProgress) => void,
   ): Promise<{ saved: number; skipped: number; orders: OdooOrder[] }> {
     // Ensure the stored baseUrl always has an https:// scheme so that the
     // axios request doesn't fail with "Invalid URL" when the credential was
@@ -649,6 +925,7 @@ export class OdooBackupService {
     const tryFetch = async (
       apiPath: string,
       offset: number,
+      limitOverride?: number,
     ): Promise<AxiosResponse<unknown> | null> => {
       try {
         return await axios.get<unknown>(`${baseUrl}${apiPath}`, {
@@ -663,11 +940,15 @@ export class OdooBackupService {
             ...(params.endDate && {
               end_date: toApiDatetime(params.endDate, { end: true }),
             }),
-            limit: effectivePageSize,
+            limit: limitOverride ?? effectivePageSize,
             offset,
           },
           httpsAgent,
-          timeout: CREDENTIAL_FETCH_TIMEOUT_MS,
+          // A single full-set fetch (limitOverride) can return thousands of
+          // rows, so allow it more time than a normal page.
+          timeout: limitOverride
+            ? Math.max(CREDENTIAL_FETCH_TIMEOUT_MS, 120_000)
+            : CREDENTIAL_FETCH_TIMEOUT_MS,
         });
       } catch (err: unknown) {
         if (err instanceof AxiosError) {
@@ -819,11 +1100,67 @@ export class OdooBackupService {
         const dupeCount = currentIds.filter((id) => prevPageIds.has(id)).length;
 
         if (dupeCount === currentIds.length) {
-          this.logger.warn(
-            `OdooCredential region=${cred.region}: page at offset=${currentOffset} is ` +
-              `identical to the previous page — offset pagination is not supported by ` +
-              `this endpoint; stopping to prevent an infinite loop.`,
-          );
+          // This endpoint ignores `offset` (every page repeats the first), but
+          // it DOES honour a large `limit` — so fetch the whole result set in a
+          // single request instead of stopping at one page. Only the records not
+          // already ingested from page 1 are processed (upsert is idempotent, but
+          // this avoids redundant work). Falls back to stopping if the total is
+          // unknown or the full fetch fails.
+          if (totalExpected !== null && totalExpected > allOrders.length) {
+            this.logger.warn(
+              `OdooCredential region=${cred.region}: offset pagination not supported ` +
+                `by this endpoint — refetching all ${totalExpected} records in a single ` +
+                `request (limit=${totalExpected}).`,
+            );
+            let fullResp: AxiosResponse<unknown> | null = null;
+            try {
+              fullResp = await tryFetch(resolvedPath, 0, totalExpected);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.logger.error(
+                `OdooCredential region=${cred.region}: full-set refetch failed: ${msg} — ` +
+                  `keeping the ${allOrders.length} record(s) already fetched.`,
+              );
+            }
+            if (fullResp) {
+              const fullList = this.extractOrderList(fullResp.data);
+              const seen = new Set(
+                allOrders
+                  .map((o) => (typeof o.id === 'number' ? o.id : null))
+                  .filter((id): id is number => id !== null),
+              );
+              const remaining = fullList.filter(
+                (o) => typeof o.id !== 'number' || !seen.has(o.id),
+              );
+              // Bulk-persist — the throughput-critical path for endpoints that
+              // ignore offset (thousands of records at once).
+              const backupTotal = allOrders.length + remaining.length;
+              const baseline = allOrders.length;
+              const persisted = await this.persistOrders(
+                remaining,
+                cred.region,
+                (doneCount) => {
+                  const done = baseline + doneCount;
+                  if (onProgress && (done % 100 === 0 || doneCount === remaining.length)) {
+                    onProgress({ phase: 'BACKUP', done, total: backupTotal });
+                  }
+                },
+              );
+              saved += persisted.saved;
+              skipped += persisted.skipped;
+              allOrders.push(...remaining);
+              this.logger.log(
+                `OdooCredential region=${cred.region}: full-set refetch added ` +
+                  `${remaining.length} record(s) — total ${allOrders.length}/${totalExpected}.`,
+              );
+            }
+          } else {
+            this.logger.warn(
+              `OdooCredential region=${cred.region}: page at offset=${currentOffset} is ` +
+                `identical to the previous page — offset pagination is not supported by ` +
+                `this endpoint; stopping to prevent an infinite loop.`,
+            );
+          }
           break;
         }
         if (dupeCount > 0) {
@@ -855,23 +1192,28 @@ export class OdooBackupService {
           ? tryFetch(resolvedPath, nextOffset)
           : Promise.resolve(null);
 
-      // Upsert every order in the current page, then add them to the return
-      // array.  Orders are collected after the upsert attempt (not before) so
-      // that allOrders reflects what has actually been persisted, including
-      // orders where upsert failed (tracked in skipped) — the ingest step
-      // looks up the backup row separately via this.orders.findOne.
-      for (const order of currentPageOrders) {
-        try {
-          await this.upsertOrder(order, cred.region);
-          saved++;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.logger.warn(
-            `Failed to persist Odoo order id=${order.id} name=${order.name ?? 'no-name'} region=${cred.region}: ${msg}`,
-          );
-          skipped++;
-        }
-      }
+      // Persist the current page (bulk, with per-order fallback), then add them
+      // to the return array.
+      const pageBaseline = allOrders.length;
+      const pagePersisted = await this.persistOrders(
+        currentPageOrders,
+        cred.region,
+        (doneCount) => {
+          const done = pageBaseline + doneCount;
+          if (
+            onProgress &&
+            (done % 100 === 0 || doneCount === currentPageOrders.length)
+          ) {
+            onProgress({
+              phase: 'BACKUP',
+              done,
+              total: totalExpected ?? done,
+            });
+          }
+        },
+      );
+      saved += pagePersisted.saved;
+      skipped += pagePersisted.skipped;
       allOrders.push(...currentPageOrders);
 
       // ── Per-page structured log ───────────────────────────────────────────
@@ -1188,65 +1530,7 @@ export class OdooBackupService {
     region?: string | null,
     resolvedBranchCode?: string | null,
   ): Promise<void> {
-    const branchId = resolveId(order.branch_id);
-    // Try to get the branch name from the Many2one field; fall back to the
-    // part of the order name before the first "/" (e.g. "CCNTRBHR" from
-    // "CCNTRBHR/2139") when the API only returns the branch ID integer.
-    const branchName =
-      resolveName(order.branch_id) ??
-      (typeof order.name === 'string' && order.name.includes('/')
-        ? order.name.split('/')[0]
-        : null);
-    const partnerId = resolveId(order.partner_id);
-    const partnerName = resolveName(order.partner_id);
-    const dateOrder = order.date_order ? new Date(order.date_order) : null;
-
-    // ── Extra fields that match the old integration's BACKUP_VENDHQ_SALES mapping ──
-    // warehouse_id → OUTLET_NAME
-    const warehouseId = resolveId(order['warehouse_id'] as Many2OneField);
-    const warehouseName = resolveName(order['warehouse_id'] as Many2OneField);
-    // pos_config_id or session_id → REGISTER_NAME
-    const posConfigId = resolveId(order['pos_config_id'] as Many2OneField);
-    const posConfigName =
-      resolveName(order['pos_config_id'] as Many2OneField) ??
-      resolveName(order['session_id'] as Many2OneField);
-    // amount_untaxed → TOTAL_PRICE (subtotal excl. tax)
-    const amountUntaxed =
-      order['amount_untaxed'] != null ? Number(order['amount_untaxed']) : null;
-    // amount_discount → TOTAL_LOYALTY (discount/loyalty amount)
-    const amountDiscount =
-      order['amount_discount'] != null
-        ? Number(order['amount_discount'])
-        : null;
-    // Customer type from tags or partner type
-    const customerType =
-      typeof order['customer_type'] === 'string'
-        ? order['customer_type']
-        : null;
-
-    const orderData = {
-      orderName: order.name ?? null,
-      branchId,
-      branchName,
-      dateOrder,
-      amountTotal:
-        order.amount_total != null ? Number(order.amount_total) : null,
-      amountUntaxed,
-      amountTax: order.amount_tax != null ? Number(order.amount_tax) : null,
-      amountDiscount,
-      state: typeof order.state === 'string' ? order.state : null,
-      partnerId,
-      partnerName,
-      warehouseId,
-      warehouseName,
-      posConfigId,
-      posConfigName,
-      customerType,
-      timezone: typeof order.timezone === 'string' ? order.timezone : null,
-      region: region ?? null,
-      resolvedBranchCode: resolvedBranchCode ?? null,
-      rawJson: order as object,
-    };
+    const orderData = this.buildOrderColumns(order, region, resolvedBranchCode);
 
     const existing = await this.orders.findOne({
       where: { orderId: order.id },
@@ -1263,10 +1547,138 @@ export class OdooBackupService {
       parentId = created.id;
     }
 
-    // ── Order lines ──────────────────────────────────────────────────────────
-    // Odoo POS uses `lines`, sale orders use `order_line`, some versions use
-    // `line_ids`.  Filter out any integer-only entries (IDs without data) that
-    // some API variants return instead of full embedded objects.
+    const lineDataItems = this.buildLineRows(order, parentId, region);
+    if (lineDataItems.length > 0) {
+      await this.dataSource.transaction(async (mgr) => {
+        await mgr.delete(BackupOdooOrderLine, { orderId: order.id });
+        await mgr.insert(BackupOdooOrderLine, lineDataItems);
+      });
+    }
+
+    const paymentDataItems = this.buildPaymentRows(order, parentId, region);
+    if (paymentDataItems.length > 0) {
+      await this.dataSource.transaction(async (mgr) => {
+        await mgr.delete(BackupOdooOrderPayment, { orderId: order.id });
+        await mgr.insert(BackupOdooOrderPayment, paymentDataItems);
+      });
+    }
+  }
+
+  /** Bulk persistence is on by default; ODOO_BULK_PERSIST=false forces the
+   *  slower per-order path (kept as a safety valve / fallback). */
+  private readonly bulkPersistEnabled =
+    process.env.ODOO_BULK_PERSIST !== 'false';
+  private static readonly BULK_BATCH = 500;
+
+  /**
+   * Persists a set of fetched orders, preferring the fast bulk path and falling
+   * back to the per-order upsert for any batch the bulk path rejects. Returns
+   * running saved/skipped counts and reports incremental progress.
+   */
+  private async persistOrders(
+    orders: OdooOrder[],
+    region: string | null | undefined,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ saved: number; skipped: number }> {
+    const total = orders.length;
+    let saved = 0;
+    let skipped = 0;
+    let done = 0;
+
+    const perOrder = async (batch: OdooOrder[]) => {
+      await mapWithConcurrency(batch, INGEST_CONCURRENCY, async (o) => {
+        try {
+          await this.upsertOrder(o, region);
+          saved += 1;
+        } catch (err) {
+          this.logger.warn(
+            `Failed to persist Odoo order id=${String(o.id)}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          skipped += 1;
+        }
+      });
+    };
+
+    if (!this.bulkPersistEnabled) {
+      await perOrder(orders);
+      onProgress?.(orders.length, total);
+      return { saved, skipped };
+    }
+
+    for (let i = 0; i < orders.length; i += OdooBackupService.BULK_BATCH) {
+      const batch = orders.slice(i, i + OdooBackupService.BULK_BATCH);
+      try {
+        const r = await this.bulkUpsertOrders(batch, region);
+        saved += r.saved;
+        skipped += r.skipped;
+      } catch (err) {
+        this.logger.error(
+          `Bulk persist failed for a ${batch.length}-order batch — falling back ` +
+            `to per-order: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        await perOrder(batch);
+      }
+      done += batch.length;
+      onProgress?.(done, total);
+    }
+    return { saved, skipped };
+  }
+
+  // ── Shared row builders (used by both per-order upsert and bulk insert) ─────
+
+  /** Maps one Odoo order to the BackupOdooOrder column set (minus id/orderId). */
+  private buildOrderColumns(
+    order: OdooOrder,
+    region?: string | null,
+    resolvedBranchCode?: string | null,
+  ) {
+    const branchName =
+      resolveName(order.branch_id) ??
+      (typeof order.name === 'string' && order.name.includes('/')
+        ? order.name.split('/')[0]
+        : null);
+    return {
+      orderName: order.name ?? null,
+      branchId: resolveId(order.branch_id),
+      branchName,
+      dateOrder: order.date_order ? new Date(order.date_order) : null,
+      amountTotal:
+        order.amount_total != null ? Number(order.amount_total) : null,
+      amountUntaxed:
+        order['amount_untaxed'] != null
+          ? Number(order['amount_untaxed'])
+          : null,
+      amountTax: order.amount_tax != null ? Number(order.amount_tax) : null,
+      amountDiscount:
+        order['amount_discount'] != null
+          ? Number(order['amount_discount'])
+          : null,
+      state: typeof order.state === 'string' ? order.state : null,
+      partnerId: resolveId(order.partner_id),
+      partnerName: resolveName(order.partner_id),
+      warehouseId: resolveId(order['warehouse_id'] as Many2OneField),
+      warehouseName: resolveName(order['warehouse_id'] as Many2OneField),
+      posConfigId: resolveId(order['pos_config_id'] as Many2OneField),
+      posConfigName:
+        resolveName(order['pos_config_id'] as Many2OneField) ??
+        resolveName(order['session_id'] as Many2OneField),
+      customerType:
+        typeof order['customer_type'] === 'string'
+          ? order['customer_type']
+          : null,
+      timezone: typeof order.timezone === 'string' ? order.timezone : null,
+      region: region ?? null,
+      resolvedBranchCode: resolvedBranchCode ?? null,
+      rawJson: order as object,
+    };
+  }
+
+  /** Maps an order's embedded line objects to BackupOdooOrderLine rows. */
+  private buildLineRows(
+    order: OdooOrder,
+    parentId: string,
+    region?: string | null,
+  ) {
     const rawLineItems: unknown[] = Array.isArray(order.lines)
       ? order.lines
       : Array.isArray(order.order_line)
@@ -1277,138 +1689,338 @@ export class OdooBackupService {
     const lines: OdooOrderLine[] = rawLineItems.filter(
       (l): l is OdooOrderLine => typeof l === 'object' && l !== null,
     );
-
-    // Warn when the API returned line entries that are plain integers (ID-only
-    // arrays).  This means the Odoo endpoint is not embedding line data in the
-    // order response.  The line items cannot be stored without the full objects.
-    // To resolve this, ensure the Odoo API is configured to return embedded
-    // line records (e.g. via a `fields` expansion parameter) or verify that the
-    // correct endpoint is used for this region.
     if (lines.length === 0 && rawLineItems.length > 0) {
       this.logger.warn(
         `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
           `API returned ${rawLineItems.length} line item IDs but no embedded objects — ` +
-          `order lines will not be stored. ` +
-          `Check that the Odoo endpoint returns expanded line data.`,
+          `order lines will not be stored.`,
       );
     }
+    return lines.map((line) => {
+      const productCode =
+        typeof line.product_code === 'string'
+          ? line.product_code
+          : typeof line['default_code'] === 'string'
+            ? line['default_code']
+            : typeof line.product_barcode === 'string'
+              ? line.product_barcode
+              : null;
+      return {
+        // Bulk insert bypasses @BeforeInsert — assign the key here.
+        id: generateId(),
+        orderId: order.id,
+        lineId: typeof line.id === 'number' ? line.id : null,
+        productId: resolveId(line.product_id),
+        productName: resolveName(line.product_id),
+        productCode,
+        lineName: typeof line.name === 'string' ? line.name : null,
+        qty: resolveQty(line),
+        priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
+        priceSubtotal:
+          line.price_subtotal != null ? Number(line.price_subtotal) : null,
+        priceSubtotalIncl:
+          line.price_subtotal_incl != null
+            ? Number(line.price_subtotal_incl)
+            : null,
+        discount: line.discount != null ? Number(line.discount) : null,
+        taxName: extractFirstTaxName(line.tax_ids ?? line.tax_id),
+        taxIds: extractTaxIdsJson(line.tax_ids ?? line.tax_id),
+        baseUomId: resolveId(line.base_uom_id),
+        baseUomName: resolveName(line.base_uom_id),
+        productUomId: resolveId(line.product_uom_id),
+        productUomName: resolveName(line.product_uom_id),
+        parentOrderId: parentId,
+      };
+    });
+  }
 
-    if (lines.length > 0) {
-      // Batch-replace: delete stale line rows then bulk-insert fresh ones.
-      // This replaces the old N+1 (findMany + sequential create/update per line)
-      // with two round-trips regardless of how many lines exist.
-      const lineDataItems = lines.map((line) => {
-        const productId = resolveId(line.product_id);
-        const productName = resolveName(line.product_id);
-        const lineId = typeof line.id === 'number' ? line.id : null;
-
-        const productCode =
-          typeof line.product_code === 'string'
-            ? line.product_code
-            : typeof line['default_code'] === 'string'
-              ? line['default_code']
-              : typeof line.product_barcode === 'string'
-                ? line.product_barcode
-                : null;
-
-        // Prefer tax_ids (plural) which is what most Odoo variants return;
-        // fall back to tax_id (singular) for older/non-standard variants.
-        const taxName = extractFirstTaxName(line.tax_ids ?? line.tax_id);
-        const taxIds = extractTaxIdsJson(line.tax_ids ?? line.tax_id);
-
-        const lineName = typeof line.name === 'string' ? line.name : null;
-
-        return {
-          // Bulk insert goes through the InsertQueryBuilder, which never fires
-          // the entity's @BeforeInsert id hook — assign the key here or every
-          // row fails with ORA-01400 on the NOT NULL "id" column.
-          id: generateId(),
-          orderId: order.id,
-          lineId,
-          productId,
-          productName,
-          productCode,
-          lineName,
-          qty: resolveQty(line),
-          priceUnit: line.price_unit != null ? Number(line.price_unit) : null,
-          priceSubtotal:
-            line.price_subtotal != null ? Number(line.price_subtotal) : null,
-          priceSubtotalIncl:
-            line.price_subtotal_incl != null
-              ? Number(line.price_subtotal_incl)
-              : null,
-          discount: line.discount != null ? Number(line.discount) : null,
-          taxName,
-          taxIds,
-          baseUomId: resolveId(line.base_uom_id),
-          baseUomName: resolveName(line.base_uom_id),
-          productUomId: resolveId(line.product_uom_id),
-          productUomName: resolveName(line.product_uom_id),
-          parentOrderId: parentId,
-        };
-      });
-
-      await this.dataSource.transaction(async (mgr) => {
-        await mgr.delete(BackupOdooOrderLine, { orderId: order.id });
-        await mgr.insert(BackupOdooOrderLine, lineDataItems);
-      });
-    }
-
-    // ── Payments — Odoo v15 uses statement_ids, v18 may use payment_ids ──────
-    // Filter out integer-only entries for the same reason as lines above.
-    // Only prefer statement_ids when it is non-empty; otherwise fall through to
-    // payment_ids so that v18 orders whose statement_ids is [] but payment_ids
-    // carries real data are not silently dropped.
+  /** Maps an order's embedded payment objects to BackupOdooOrderPayment rows. */
+  private buildPaymentRows(
+    order: OdooOrder,
+    parentId: string,
+    region?: string | null,
+  ) {
     const rawPaymentItems: unknown[] = this.extractPaymentItems(order);
     const rawPayments: OdooOrderPayment[] = rawPaymentItems.filter(
       (p): p is OdooOrderPayment => typeof p === 'object' && p !== null,
     );
-
-    // Warn when the API returned payment entries that are plain integers (ID-only
-    // arrays).  This means the Odoo endpoint is not embedding payment data in the
-    // order response.
     if (rawPayments.length === 0 && rawPaymentItems.length > 0) {
       this.logger.warn(
         `Odoo order id=${order.id} region=${region ?? 'unknown'}: ` +
           `API returned ${rawPaymentItems.length} payment IDs but no embedded objects — ` +
-          `payments will not be stored. ` +
-          `Check that the Odoo endpoint returns expanded payment data.`,
+          `payments will not be stored.`,
       );
     }
+    return rawPayments.map((pmt) => {
+      const currency = Array.isArray(pmt.currency_id)
+        ? typeof (pmt.currency_id as [number, unknown])[1] === 'string'
+          ? pmt.currency_id[1]
+          : null
+        : null;
+      const paymentDateRaw = pmt.date ?? pmt.payment_date;
+      return {
+        id: generateId(),
+        orderId: order.id,
+        paymentId: typeof pmt.id === 'number' ? pmt.id : null,
+        paymentName: extractPaymentName(pmt),
+        amount: pmt.amount != null ? Number(pmt.amount) : null,
+        currency,
+        paymentDate:
+          typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null,
+        parentOrderId: parentId,
+      };
+    });
+  }
 
-    if (rawPayments.length > 0) {
-      // Batch-replace: delete stale payment rows then bulk-insert fresh ones.
-      const paymentDataItems = rawPayments.map((pmt) => {
-        const pmtId = typeof pmt.id === 'number' ? pmt.id : null;
-        const paymentName = extractPaymentName(pmt);
+  // ── Bulk persistence (executeMany) ──────────────────────────────────────────
 
-        const currency = Array.isArray(pmt.currency_id)
-          ? typeof (pmt.currency_id as [number, unknown])[1] === 'string'
-            ? pmt.currency_id[1]
-            : null
-          : null;
+  private bulkPool?: oracledb.Pool;
 
-        const paymentDateRaw = pmt.date ?? pmt.payment_date;
-        const paymentDate =
-          typeof paymentDateRaw === 'string' ? new Date(paymentDateRaw) : null;
+  /**
+   * A small dedicated node-oracledb pool for bulk `executeMany` inserts. Kept
+   * separate from TypeORM's pool so the raw driver API is available. Thick mode
+   * is already initialised by the app's TypeORM data-source at startup.
+   */
+  private async getBulkPool(): Promise<oracledb.Pool> {
+    if (this.bulkPool) return this.bulkPool;
+    const host = process.env.APP_DB_HOST ?? 'localhost';
+    const port = process.env.APP_DB_PORT ?? '1521';
+    const service = process.env.APP_DB_SERVICE ?? 'XEPDB1';
+    this.bulkPool = await oracledb.createPool({
+      user: process.env.APP_DB_USERNAME,
+      password: process.env.APP_DB_PASSWORD,
+      connectString: `${host}:${port}/${service}`,
+      poolMin: 1,
+      poolMax: 4,
+      poolIncrement: 1,
+    });
+    return this.bulkPool;
+  }
 
-        return {
-          // See the note on order lines: bulk insert bypasses @BeforeInsert.
-          id: generateId(),
-          orderId: order.id,
-          paymentId: pmtId,
-          paymentName,
-          amount: pmt.amount != null ? Number(pmt.amount) : null,
-          currency,
-          paymentDate,
-          parentOrderId: parentId,
-        };
+  /**
+   * Persists a batch of orders (+ their lines and payments) with node-oracledb
+   * `executeMany` — a few multi-row round-trips instead of ~6 per order. The
+   * big win is binding the rawJson CLOB as a STRING (binding it as a LOB is
+   * ~200x slower). Existing orders keep their backup-row id (so OrderSyncQueue
+   * links survive); new orders get a fresh id. Per-row failures are isolated
+   * (batchErrors) and counted as skipped, never aborting the batch.
+   */
+  private async bulkUpsertOrders(
+    orders: OdooOrder[],
+    region?: string | null,
+  ): Promise<{ saved: number; skipped: number }> {
+    const byId = new Map<number, OdooOrder>();
+    for (const o of orders) if (typeof o.id === 'number') byId.set(o.id, o);
+    const list = [...byId.values()];
+    if (list.length === 0) return { saved: 0, skipped: 0 };
+
+    // 1. Which orders already have a backup row (keep their id for FK stability).
+    const existing = new Map<number, string>();
+    const ids = [...byId.keys()];
+    for (let i = 0; i < ids.length; i += 1000) {
+      const rows = await this.orders.find({
+        where: { orderId: In(ids.slice(i, i + 1000)) },
+        select: { id: true, orderId: true },
       });
+      for (const r of rows) existing.set(r.orderId, r.id);
+    }
+    const parentIdByOrderId = new Map<number, string>();
+    for (const o of list)
+      parentIdByOrderId.set(o.id, existing.get(o.id) ?? generateId());
 
-      await this.dataSource.transaction(async (mgr) => {
-        await mgr.delete(BackupOdooOrderPayment, { orderId: order.id });
-        await mgr.insert(BackupOdooOrderPayment, paymentDataItems);
-      });
+    const now = new Date();
+    const STR = (maxSize: number) => ({ type: oracledb.STRING, maxSize });
+    const NUM = { type: oracledb.NUMBER };
+    const DT = { type: oracledb.DATE };
+
+    // 2. Parent rows split into inserts (new) and updates (existing).
+    const insRows: oracledb.BindParameters[] = [];
+    const updRows: oracledb.BindParameters[] = [];
+    for (const o of list) {
+      const c = this.buildOrderColumns(o, region, null);
+      const bind = {
+        id: parentIdByOrderId.get(o.id),
+        orderId: o.id,
+        orderName: c.orderName,
+        branchId: c.branchId,
+        branchName: c.branchName,
+        dateOrder: c.dateOrder,
+        amountTotal: c.amountTotal,
+        amountUntaxed: c.amountUntaxed,
+        amountTax: c.amountTax,
+        amountDiscount: c.amountDiscount,
+        state: c.state,
+        partnerId: c.partnerId,
+        partnerName: c.partnerName,
+        warehouseId: c.warehouseId,
+        warehouseName: c.warehouseName,
+        posConfigId: c.posConfigId,
+        posConfigName: c.posConfigName,
+        customerType: c.customerType,
+        timezone: c.timezone,
+        region: c.region,
+        resolvedBranchCode: c.resolvedBranchCode,
+        rawJson: JSON.stringify(o),
+        updatedAt: now,
+      };
+      if (existing.has(o.id)) updRows.push(bind);
+      else insRows.push({ ...bind, createdAt: now });
+    }
+
+    const jsonMax = Math.max(
+      1,
+      ...list.map((o) => Buffer.byteLength(JSON.stringify(o), 'utf8')),
+    );
+    const orderCols = {
+      orderName: STR(1020),
+      branchId: NUM,
+      branchName: STR(1020),
+      dateOrder: DT,
+      amountTotal: NUM,
+      amountUntaxed: NUM,
+      amountTax: NUM,
+      amountDiscount: NUM,
+      state: STR(1020),
+      partnerId: NUM,
+      partnerName: STR(1020),
+      warehouseId: NUM,
+      warehouseName: STR(1020),
+      posConfigId: NUM,
+      posConfigName: STR(1020),
+      customerType: STR(1020),
+      timezone: STR(1020),
+      region: STR(1020),
+      resolvedBranchCode: STR(1020),
+      rawJson: STR(jsonMax),
+    };
+
+    const pool = await this.getBulkPool();
+    const conn = await pool.getConnection();
+    let skipped = 0;
+    try {
+      if (insRows.length > 0) {
+        const r = await conn.executeMany(
+          `INSERT INTO "BackupOdooOrder" ("id","orderId","orderName","branchId","branchName","dateOrder","amountTotal","amountUntaxed","amountTax","amountDiscount","state","partnerId","partnerName","warehouseId","warehouseName","posConfigId","posConfigName","customerType","timezone","region","resolvedBranchCode","rawJson","createdAt","updatedAt") ` +
+            `VALUES (:id,:orderId,:orderName,:branchId,:branchName,:dateOrder,:amountTotal,:amountUntaxed,:amountTax,:amountDiscount,:state,:partnerId,:partnerName,:warehouseId,:warehouseName,:posConfigId,:posConfigName,:customerType,:timezone,:region,:resolvedBranchCode,:rawJson,:createdAt,:updatedAt)`,
+          insRows,
+          {
+            autoCommit: false,
+            batchErrors: true,
+            bindDefs: {
+              id: STR(64),
+              orderId: NUM,
+              ...orderCols,
+              createdAt: DT,
+              updatedAt: DT,
+            },
+          },
+        );
+        skipped += r.batchErrors?.length ?? 0;
+      }
+      if (updRows.length > 0) {
+        const r = await conn.executeMany(
+          `UPDATE "BackupOdooOrder" SET "orderName"=:orderName,"branchId"=:branchId,"branchName"=:branchName,"dateOrder"=:dateOrder,"amountTotal"=:amountTotal,"amountUntaxed"=:amountUntaxed,"amountTax"=:amountTax,"amountDiscount"=:amountDiscount,"state"=:state,"partnerId"=:partnerId,"partnerName"=:partnerName,"warehouseId"=:warehouseId,"warehouseName"=:warehouseName,"posConfigId"=:posConfigId,"posConfigName"=:posConfigName,"customerType"=:customerType,"timezone"=:timezone,"region"=:region,"resolvedBranchCode"=:resolvedBranchCode,"rawJson"=:rawJson,"updatedAt"=:updatedAt WHERE "orderId"=:orderId`,
+          updRows,
+          {
+            autoCommit: false,
+            batchErrors: true,
+            bindDefs: { orderId: NUM, ...orderCols, updatedAt: DT },
+          },
+        );
+        skipped += r.batchErrors?.length ?? 0;
+      }
+
+      // 3. Children: delete-then-insert for every parent in this batch.
+      const allParentIds = [...parentIdByOrderId.values()];
+      for (let i = 0; i < allParentIds.length; i += 500) {
+        const chunk = allParentIds.slice(i, i + 500);
+        const ph = chunk.map((_, k) => `:${k + 1}`).join(',');
+        await conn.execute(
+          `DELETE FROM "BackupOdooOrderLine" WHERE "parentOrderId" IN (${ph})`,
+          chunk,
+          { autoCommit: false },
+        );
+        await conn.execute(
+          `DELETE FROM "BackupOdooOrderPayment" WHERE "parentOrderId" IN (${ph})`,
+          chunk,
+          { autoCommit: false },
+        );
+      }
+
+      const lineRows: oracledb.BindParameters[] = [];
+      const payRows: oracledb.BindParameters[] = [];
+      for (const o of list) {
+        const pid = parentIdByOrderId.get(o.id) as string;
+        for (const l of this.buildLineRows(o, pid, region))
+          lineRows.push({ ...l, createdAt: now });
+        for (const p of this.buildPaymentRows(o, pid, region))
+          payRows.push({ ...p, createdAt: now });
+      }
+
+      if (lineRows.length > 0) {
+        await conn.executeMany(
+          `INSERT INTO "BackupOdooOrderLine" ("id","orderId","lineId","productId","productName","lineName","productCode","qty","priceUnit","priceSubtotal","priceSubtotalIncl","discount","taxName","taxIds","baseUomId","baseUomName","productUomId","productUomName","createdAt","parentOrderId") ` +
+            `VALUES (:id,:orderId,:lineId,:productId,:productName,:lineName,:productCode,:qty,:priceUnit,:priceSubtotal,:priceSubtotalIncl,:discount,:taxName,:taxIds,:baseUomId,:baseUomName,:productUomId,:productUomName,:createdAt,:parentOrderId)`,
+          lineRows,
+          {
+            autoCommit: false,
+            batchErrors: true,
+            bindDefs: {
+              id: STR(64),
+              orderId: NUM,
+              lineId: NUM,
+              productId: NUM,
+              productName: STR(1020),
+              lineName: STR(1020),
+              productCode: STR(1020),
+              qty: NUM,
+              priceUnit: NUM,
+              priceSubtotal: NUM,
+              priceSubtotalIncl: NUM,
+              discount: NUM,
+              taxName: STR(1020),
+              taxIds: STR(1020),
+              baseUomId: NUM,
+              baseUomName: STR(1020),
+              productUomId: NUM,
+              productUomName: STR(1020),
+              createdAt: DT,
+              parentOrderId: STR(64),
+            },
+          },
+        );
+      }
+
+      if (payRows.length > 0) {
+        await conn.executeMany(
+          `INSERT INTO "BackupOdooOrderPayment" ("id","orderId","paymentId","paymentName","amount","currency","paymentDate","createdAt","parentOrderId") ` +
+            `VALUES (:id,:orderId,:paymentId,:paymentName,:amount,:currency,:paymentDate,:createdAt,:parentOrderId)`,
+          payRows,
+          {
+            autoCommit: false,
+            batchErrors: true,
+            bindDefs: {
+              id: STR(64),
+              orderId: NUM,
+              paymentId: NUM,
+              paymentName: STR(1020),
+              amount: NUM,
+              currency: STR(1020),
+              paymentDate: DT,
+              createdAt: DT,
+              parentOrderId: STR(64),
+            },
+          },
+        );
+      }
+
+      await conn.commit();
+      return { saved: list.length - skipped, skipped };
+    } catch (err) {
+      await conn.rollback().catch(() => undefined);
+      throw err;
+    } finally {
+      await conn.close().catch(() => undefined);
     }
   }
 

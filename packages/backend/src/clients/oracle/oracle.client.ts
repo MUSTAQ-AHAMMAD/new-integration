@@ -13,6 +13,7 @@ import {
   withTimeout,
   MODULE_INIT_TIMEOUT_MS,
 } from '../../common/utils/timeout';
+import { Semaphore } from '../../common/utils/semaphore';
 
 export interface OracleInvoiceData {
   customerTransactionId?: string;
@@ -109,6 +110,13 @@ export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
   private http: AxiosInstance;
   private readonly circuitBreaker: CircuitBreakerService;
+  /**
+   * Global cap on concurrent inventory (and other bulk) REST calls to Oracle.
+   * The POST phase fans out inventory issues across parallel stores AND within a
+   * store; this keeps the aggregate load on Oracle bounded and tunable
+   * (ORACLE_REST_CONCURRENCY).
+   */
+  private readonly restGate: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -116,6 +124,15 @@ export class OracleClient implements OnModuleInit {
     @Optional() private readonly credentialResolver?: FusionCredentialResolver,
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
+    this.restGate = new Semaphore(
+      Math.max(
+        1,
+        parseInt(
+          this.configService.get<string>('ORACLE_REST_CONCURRENCY', '16'),
+          10,
+        ) || 16,
+      ),
+    );
     // Synchronous env-var initialisation — same pattern as OracleSoapClient.
     this.http = axios.create({
       baseURL: this.configService.get<string>('ORACLE_REST_BASE_URL'),
@@ -249,9 +266,8 @@ export class OracleClient implements OnModuleInit {
             ProcessStatus: 1,
             UseCurrentCostFlag: 'Y',
           };
-          const response = await this.http.post(
-            'inventoryStagedTransactions',
-            body,
+          const response = await this.restGate.run(() =>
+            this.http.post('inventoryStagedTransactions', body),
           );
           const data = this.isRecord(response.data) ? response.data : {};
           const idRaw = data['TransactionInterfaceId'];

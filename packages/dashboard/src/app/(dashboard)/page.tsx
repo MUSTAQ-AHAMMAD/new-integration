@@ -1,3 +1,4 @@
+import { ExecutiveOverview } from '@/components/dashboard/executive-overview';
 import { OverviewCards } from '@/components/dashboard/overview-cards';
 import { SyncJobsTable } from '@/components/dashboard/sync-jobs-table';
 import { AlertsPanel } from '@/components/dashboard/alerts-panel';
@@ -38,6 +39,9 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Management KPIs — money, completeness, risk */}
+      <ExecutiveOverview />
 
       <OverviewCards />
 

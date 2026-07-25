@@ -57,6 +57,22 @@ export function buildOracleDataSourceOptions(): OracleConnectionOptions {
     // Never auto-sync in production; use migrations. Toggle for local bootstrap.
     synchronize: process.env.APP_DB_SYNCHRONIZE === 'true',
     logging: process.env.APP_DB_LOGGING === 'true',
+    // Connection pool (passed to node-oracledb createPool). Concurrency only
+    // helps the backup/ingest if the pool is PRE-WARMED: creating fresh
+    // connections to a remote Oracle under load thrashes (measured ~9x SLOWER
+    // than sequential), whereas a warm fixed-size pool reused across concurrent
+    // upserts is ~4x faster. So poolMin == poolMax (no on-demand growth) and
+    // idle connections never expire (poolTimeout 0). Overridable via env.
+    extra: {
+      poolMin: parseInt(
+        process.env.APP_DB_POOL_MIN ?? process.env.APP_DB_POOL_MAX ?? '16',
+        10,
+      ),
+      poolMax: parseInt(process.env.APP_DB_POOL_MAX ?? '16', 10),
+      poolIncrement: parseInt(process.env.APP_DB_POOL_INCREMENT ?? '0', 10),
+      poolTimeout: parseInt(process.env.APP_DB_POOL_TIMEOUT ?? '0', 10),
+      queueTimeout: parseInt(process.env.APP_DB_QUEUE_TIMEOUT ?? '120000', 10),
+    },
   };
 }
 

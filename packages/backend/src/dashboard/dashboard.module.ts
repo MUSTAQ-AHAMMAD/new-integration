@@ -2,8 +2,12 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AlertLog } from '../database/entities/alert-log.entity';
 import { AuditLog } from '../database/entities/audit-log.entity';
+import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { BackupVendHqSale } from '../database/entities/backup-vend-hq-sale.entity';
 import { FailedTransaction } from '../database/entities/failed-transaction.entity';
+import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
+import { OdooCredential } from '../database/entities/odoo-credential.entity';
+import { RefundTracking } from '../database/entities/refund-tracking.entity';
 import { IntegrationHealthCheck } from '../database/entities/integration-health-check.entity';
 import { InventorySyncTracker } from '../database/entities/inventory-sync-tracker.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
@@ -21,7 +25,11 @@ import { DashboardService } from './dashboard.service';
       SyncJob,
       StoreConfiguration,
       BackupVendHqSale,
+      BackupOdooOrder,
       FailedTransaction,
+      FusionInvoiceHeader,
+      OdooCredential,
+      RefundTracking,
       AuditLog,
       IntegrationHealthCheck,
       InventorySyncTracker,

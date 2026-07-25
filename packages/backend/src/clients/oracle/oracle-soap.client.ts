@@ -14,6 +14,7 @@ import {
   withTimeout,
   MODULE_INIT_TIMEOUT_MS,
 } from '../../common/utils/timeout';
+import { Semaphore } from '../../common/utils/semaphore';
 
 // ──────────────────────────────────────────────────────────────
 // Domain models (mirrors Java fusion/soap/model/*.java)
@@ -235,6 +236,13 @@ export interface JournalHeader {
   summaryFlag?: boolean;
   journalLines: JournalLine[];
   jeHeaderId?: number;
+  /**
+   * Persistence-only: "Cash"/"Credit" label derived from the provider meta's
+   * isCash flag. NOT emitted in the GL SOAP payload (the builder ignores it) —
+   * it is copied onto FusionJournalHeader so the dashboard shows the mapping
+   * that was actually applied.
+   */
+  cashCredit?: string;
 }
 
 export interface CustomerProfile {
@@ -757,6 +765,12 @@ export class OracleSoapClient implements OnModuleInit {
   private readonly logger = new Logger(OracleSoapClient.name);
   private http: AxiosInstance;
   private readonly circuitBreaker: CircuitBreakerService;
+  /**
+   * Global cap on concurrent SOAP calls to Oracle Fusion. The POST phase can
+   * fan out across many stores and inventory issues at once; this keeps the
+   * actual load on the ERP bounded and tunable (ORACLE_SOAP_CONCURRENCY).
+   */
+  private readonly soapGate: Semaphore;
 
   constructor(
     private readonly configService: ConfigService,
@@ -764,6 +778,15 @@ export class OracleSoapClient implements OnModuleInit {
     @Optional() private readonly credentialResolver?: FusionCredentialResolver,
   ) {
     this.circuitBreaker = circuitBreaker ?? new CircuitBreakerService();
+    this.soapGate = new Semaphore(
+      Math.max(
+        1,
+        parseInt(
+          this.configService.get<string>('ORACLE_SOAP_CONCURRENCY', '8'),
+          10,
+        ) || 8,
+      ),
+    );
     // Initialise with environment-variable credentials synchronously so that
     // the client is usable immediately (e.g. in tests that never call
     // onModuleInit).  If a FusionCredentialResolver is present, onModuleInit
@@ -1622,10 +1645,14 @@ export class OracleSoapClient implements OnModuleInit {
     soapAction: string,
     operation: string,
   ): Promise<string> {
-    const resp = await this.http.post(path, body, {
-      headers: { SOAPAction: soapAction },
-      validateStatus: () => true,
-    });
+    // Every SOAP request passes through the global concurrency gate so the POST
+    // phase can parallelize freely while the real load on Oracle stays bounded.
+    const resp = await this.soapGate.run(() =>
+      this.http.post(path, body, {
+        headers: { SOAPAction: soapAction },
+        validateStatus: () => true,
+      }),
+    );
     const xml =
       typeof resp.data === 'string' ? resp.data : String(resp.data ?? '');
     if (resp.status >= 400) {

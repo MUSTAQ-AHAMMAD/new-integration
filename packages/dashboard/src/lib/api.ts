@@ -134,6 +134,19 @@ export const api = {
   getSyncTrend: (days = 7) => apiRequest<SyncTrendItem[]>(`/dashboard/sync-trend?days=${days}`),
   getFailedTransactions: (limit = 20) => apiRequest<FailedTransaction[]>(`/dashboard/failed-transactions?limit=${limit}`),
   getOrdersByBranch: () => apiRequest<BranchOrderStats[]>('/dashboard/orders-by-branch'),
+  getRegionStatus: () => apiRequest<RegionStatusRow[]>('/dashboard/region-status'),
+  getExecutiveSummary: () => apiRequest<ExecutiveSummary>('/dashboard/executive-summary'),
+  getStoreRevenue: () => apiRequest<StoreRevenueRow[]>('/dashboard/store-revenue'),
+  getOdooReconciliation: () =>
+    apiRequest<OdooReconciliationSummary>('/odoo-backup/diagnostics/summary'),
+  analyzeOdooOrder: (orderId: string) =>
+    apiRequest<OdooOrderAnalysis>(
+      `/odoo-backup/diagnostics/analyze-order/${encodeURIComponent(orderId)}`,
+    ),
+  liveReconcile: (region: string, startDate: string, endDate: string) =>
+    apiRequest<LiveReconcileResult>(
+      `/odoo-backup/reconcile?region=${encodeURIComponent(region)}&startDate=${startDate}&endDate=${endDate}`,
+    ),
   getRecentActivity: (limit = 50) => apiRequest<AuditLogItem[]>(`/dashboard/recent-activity?limit=${limit}`),
   getHealthStatus: () => apiRequest<HealthCheck[]>('/dashboard/health'),
   getNegativeInventory: () => apiRequest<InventoryItem[]>('/dashboard/negative-inventory'),
@@ -144,6 +157,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  startIntegrationRunAll: (data: { startDate: string; endDate: string }) =>
+    apiRequest<{
+      started: Array<{ region: string; jobId: string }>;
+      skipped: Array<{ region: string; reason: string }>;
+    }>('/sync/integration-run/all', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  runAutoIntegrationNow: () =>
+    apiRequest<{ ok: boolean; startedRegions: string[] }>(
+      '/sync/integration-auto/run-now',
+      { method: 'POST' },
+    ),
   listIntegrationRuns: (limit?: number) =>
     apiRequest<IntegrationRunJob[]>(`/sync/integration-run${limit ? `?limit=${limit}` : ''}`),
   getIntegrationRun: (id: string) =>
@@ -505,6 +531,92 @@ export interface BranchOrderStats {
   count: number;
 }
 
+export interface RegionStatusRow {
+  region: string;
+  odooActive: boolean;
+  lastOdooSync: string | null;
+  lastOraclePush: string | null;
+  ordersFetched: number;
+  odooRevenue: number;
+  invoicesPushed: number;
+  oracleRevenue: number;
+  failedOrders: number;
+}
+
+export interface StoreRevenueRow {
+  store: string;
+  region: string;
+  orders: number;
+  odooRevenue: number;
+}
+
+export interface OdooReconciliationSummary {
+  summary: {
+    totalOrders: number;
+    totalLines: number;
+    totalPayments: number;
+    avgLinesPerOrder: number;
+    avgPaymentsPerOrder: number;
+  };
+  diagnosis: { linesIssue: string; paymentsIssue: string };
+  sampleAnalysis?: unknown;
+  solution?: unknown;
+}
+
+export interface OdooOrderAnalysis {
+  orderId: number;
+  orderName: string | null;
+  error?: string;
+  lineItems?: Record<string, unknown>;
+  payments?: Record<string, unknown>;
+  actualCounts?: Record<string, unknown>;
+}
+
+export interface LiveReconcileResult {
+  region: string;
+  startDate: string;
+  endDate: string;
+  apiReachable: boolean;
+  apiTotal: number | null;
+  storedCount: number;
+  difference: number | null;
+  inSync: boolean | null;
+  note: string | null;
+  probe: {
+    url: string;
+    status: number | null;
+    sampleCount: number;
+    error: string | null;
+  };
+}
+
+export interface ExecutiveSummary {
+  generatedAt: string;
+  revenue: {
+    odooFetched: number;
+    oraclePosted: number;
+    oraclePosted30d: number;
+    completenessPct: number;
+    gap: number;
+  };
+  orders: {
+    fetched: number;
+    synced: number;
+    syncedPct: number;
+    pending: number;
+    failed: number;
+    valueAtRisk: number;
+    oldestPendingHours: number | null;
+  };
+  refunds: { pendingCount: number; pendingValue: number };
+  regions: { total: number; current: number; stale: number };
+  stores: { active: number; needsReview: number };
+  revenueMoM: { thisMonth: number; lastMonth: number; growthPct: number };
+  byRegion: RegionStatusRow[];
+  revenueTrend: Array<{ date: string; posted: number }>;
+  topFailures: Array<{ reason: string; count: number }>;
+}
+
 export interface AuditLogItem {
   id: string;
   externalId: string;
@@ -565,11 +677,14 @@ export interface SyncJob {
 
 export interface IntegrationRunOutcome {
   branchCode: string;
+  branchName?: string | null;
   businessDay: string;
   groupKey: string;
   customerType: string;
   status: 'CREATED' | 'SKIPPED' | 'FAILED';
   transactionNumber?: string;
+  invoiceAmount?: number;
+  currencyCode?: string | null;
   sourceOrderCount: number;
   invoiceLineCount: number;
   standardReceipts: number;

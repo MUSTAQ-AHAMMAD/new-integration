@@ -34,18 +34,47 @@ import { StoreConfiguration } from '../database/entities/store-configuration.ent
 import { OutletIntegrationConfig } from '../database/entities/outlet-integration-config.entity';
 import { generateId } from '../database/id.util';
 import { SyncStatus } from '../database/enums';
+import { mapWithConcurrency } from '../common/utils/concurrency';
 import {
   DailyAggregationService,
   DailyInvoiceGroup,
 } from './daily-aggregation.service';
 
+/**
+ * How many store/day units post concurrently. Each is independent; the true
+ * load on Oracle is separately capped by the SOAP client's global gate
+ * (ORACLE_SOAP_CONCURRENCY). Kept a bit above that gate so there is always
+ * enough queued SOAP work to keep the gate full. Tunable via env.
+ */
+const POST_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.DAILY_POST_CONCURRENCY ?? '12', 10) || 12,
+);
+
+/**
+ * How many inventory issues post concurrently WITHIN one store's group. Inventory
+ * is one Oracle REST call per line and dominates the POST, so it fans out here;
+ * the aggregate across all parallel stores is still capped by the Oracle client's
+ * global REST gate (ORACLE_REST_CONCURRENCY). Tunable via env.
+ */
+const INVENTORY_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.DAILY_INVENTORY_CONCURRENCY ?? '8', 10) || 8,
+);
+
 export interface DailyInvoiceOutcome {
   branchCode: string;
+  /** Human-readable store name for the UI (e.g. "Mahmal Center"). */
+  branchName?: string | null;
   businessDay: string;
   groupKey: string;
   customerType: string;
   status: 'CREATED' | 'SKIPPED' | 'FAILED';
   transactionNumber?: string;
+  /** Invoice net value (Σ quantity × unit selling price) for the UI. */
+  invoiceAmount?: number;
+  /** Currency the invoiceAmount is expressed in (e.g. "AED"). */
+  currencyCode?: string | null;
   sourceOrderCount: number;
   invoiceLineCount: number;
   standardReceipts: number;
@@ -216,13 +245,28 @@ export class DailyInvoiceService {
    * `days` is clamped to MAX_CATCHUP_DAYS so an unattended catch-up can never
    * walk the entire history.
    */
-  async postRange(params: {
-    branchCode?: string;
-    region?: string;
-    startDate: string;
-    days?: number;
-    trigger?: IntegrationTrigger;
-  }): Promise<DailyInvoiceOutcome[]> {
+  async postRange(
+    params: {
+      branchCode?: string;
+      region?: string;
+      startDate: string;
+      days?: number;
+      trigger?: IntegrationTrigger;
+    },
+    /**
+     * Called after each store/day is posted, with just that step's outcomes and
+     * how far through the store list we are — lets a live UI update per store
+     * instead of waiting for the whole range. Never affects the return value.
+     */
+    onProgress?: (p: {
+      outcomes: DailyInvoiceOutcome[];
+      storesDone: number;
+      storesTotal: number;
+      branchCode: string;
+      branchName: string | null;
+      businessDay: string;
+    }) => void,
+  ): Promise<DailyInvoiceOutcome[]> {
     const trigger: IntegrationTrigger = params.trigger ?? 'MANUAL';
     const days = Math.min(Math.max(params.days ?? 1, 1), MAX_CATCHUP_DAYS);
 
@@ -243,23 +287,43 @@ export class DailyInvoiceService {
       );
     }
 
-    const outcomes: DailyInvoiceOutcome[] = [];
+    // Build the full (store, day) work list, then post them CONCURRENTLY. Each
+    // store/day is independent (distinct invoices/receipts), so this is safe;
+    // the actual load on Oracle is bounded by the SOAP client's global
+    // concurrency gate (ORACLE_SOAP_CONCURRENCY), while per-group ordering
+    // (invoice → receipts → applies → inventory) is preserved inside postDay.
+    const tasks: Array<{
+      branchCode: string;
+      branchName: string | null;
+      day: string;
+    }> = [];
     for (const store of stores) {
       for (let i = 0; i < days; i++) {
-        const day = this.addDays(params.startDate, i);
-        try {
-          outcomes.push(
-            ...(await this.postDay(store.branchCode, day, trigger)),
-          );
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(
-            `[${store.branchCode} ${day}] aggregation failed: ${message}`,
-          );
-          outcomes.push({
-            branchCode: store.branchCode,
-            businessDay: day,
-            groupKey: `${store.branchCode}|${day}`,
+        tasks.push({
+          branchCode: store.branchCode,
+          branchName: store.branchName ?? null,
+          day: this.addDays(params.startDate, i),
+        });
+      }
+    }
+
+    const outcomes: DailyInvoiceOutcome[] = [];
+    let done = 0;
+    await mapWithConcurrency(tasks, POST_CONCURRENCY, async (task) => {
+      let stepOutcomes: DailyInvoiceOutcome[];
+      try {
+        stepOutcomes = await this.postDay(task.branchCode, task.day, trigger);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `[${task.branchCode} ${task.day}] aggregation failed: ${message}`,
+        );
+        stepOutcomes = [
+          {
+            branchCode: task.branchCode,
+            branchName: task.branchName,
+            businessDay: task.day,
+            groupKey: `${task.branchCode}|${task.day}`,
             customerType: 'UNKNOWN',
             status: 'FAILED',
             sourceOrderCount: 0,
@@ -268,10 +332,20 @@ export class DailyInvoiceService {
             miscReceipts: 0,
             journals: 0,
             error: message,
-          });
-        }
+          },
+        ];
       }
-    }
+      outcomes.push(...stepOutcomes);
+      done += 1;
+      onProgress?.({
+        outcomes: stepOutcomes,
+        storesDone: done,
+        storesTotal: tasks.length,
+        branchCode: task.branchCode,
+        branchName: task.branchName,
+        businessDay: task.day,
+      });
+    });
     return outcomes;
   }
 
@@ -281,10 +355,16 @@ export class DailyInvoiceService {
   ): Promise<DailyInvoiceOutcome> {
     const base: DailyInvoiceOutcome = {
       branchCode: group.branchCode,
+      branchName: group.branchName,
       businessDay: group.businessDay,
       groupKey: group.groupKey,
       customerType: group.customerType,
       status: 'FAILED',
+      invoiceAmount: group.invoiceHeader.invoiceLines.reduce(
+        (sum, l) => sum + l.quantity * l.unitSellingPrice,
+        0,
+      ),
+      currencyCode: group.invoiceHeader.invoiceCurrencyCode,
       sourceOrderCount: group.sourceOrderNumbers.length,
       invoiceLineCount: group.invoiceHeader.invoiceLines.length,
       standardReceipts: 0,
@@ -486,90 +566,10 @@ export class DailyInvoiceService {
       }
     }
 
-    // ── 2b. Inventory issues ─────────────────────────────────────────────────
-    // One staged inventory transaction per contributing line, relieving stock
-    // from the store's subinventory. Oracle processes the interface async.
-    // Idempotency: skip a line already recorded SUCCESS for this txn+item.
-    for (const plan of group.inventoryTransactions) {
-      const dedupeKey = `${txnNumber}:${plan.itemNumber}:${plan.salesOrder}:${plan.salesOrderLine}`;
-      const existing = await this.invTxnRepo.findOne({
-        where: {
-          txnSourceName: plan.salesOrder,
-          itemNumber: plan.itemNumber,
-          region: group.region,
-          status: 'SUCCESS',
-        },
-        select: { id: true },
-      });
-      if (existing) {
-        this.logger.log(
-          `[${group.branchCode}] inventory for ${plan.itemNumber} (${plan.salesOrder}) already posted — skipping`,
-        );
-        continue;
-      }
-      try {
-        const orgId = await this.oracleClient.resolveSubinventoryOrgId(
-          plan.subinventoryCode,
-        );
-        if (orgId == null) {
-          throw new Error(
-            `No inventory organisation found for subinventory "${plan.subinventoryCode}"`,
-          );
-        }
-        const interfaceId = this.nextInterfaceId();
-        await this.oracleClient.createStagedInventoryTransaction({
-          organizationId: orgId,
-          itemNumber: plan.itemNumber,
-          subinventoryCode: plan.subinventoryCode,
-          transactionQuantity: -Math.abs(plan.quantity), // issue = negative
-          transactionUom: plan.uomCode,
-          transactionDate: plan.transactionDate.toISOString(),
-          transactionTypeName: this.inventoryTransactionType,
-          transactionSourceName: plan.salesOrder,
-          sourceCode: 'Vend',
-          sourceHeaderId: interfaceId,
-          sourceLineId: interfaceId,
-          transactionInterfaceId: interfaceId,
-        });
-        await this.invTxnRepo.save(
-          this.invTxnRepo.create({
-            id: generateId(),
-            organizationName: String(orgId),
-            itemNumber: plan.itemNumber,
-            txnSourceName: plan.salesOrder,
-            subInventory: plan.subinventoryCode,
-            txnUom: plan.uomCode,
-            txnDate: plan.transactionDate,
-            txnQty: -Math.abs(plan.quantity),
-            region: group.region,
-            status: 'SUCCESS',
-            requestDate: new Date(),
-          } as Partial<FusionInvTxn>),
-        );
-        base.inventoryTransactions = (base.inventoryTransactions ?? 0) + 1;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(
-          `[${group.branchCode}] inventory issue for ${plan.itemNumber} ` +
-            `(${dedupeKey}) failed: ${message}`,
-        );
-        await this.invTxnRepo.save(
-          this.invTxnRepo.create({
-            id: generateId(),
-            itemNumber: plan.itemNumber,
-            txnSourceName: plan.salesOrder,
-            subInventory: plan.subinventoryCode,
-            txnQty: -Math.abs(plan.quantity),
-            region: group.region,
-            status: 'ERROR',
-            message,
-            requestDate: new Date(),
-          } as Partial<FusionInvTxn>),
-        );
-      }
-    }
-
-    // ── 3. GL journals (non-NORMAL customer types only) ──────────────────────
+    // ── 2b. GL journals (non-NORMAL customer types only) ─────────────────────
+    // Posted right after receipts (matching the legacy order) and BEFORE the
+    // bulk inventory issues, so the small, quick journal never waits behind
+    // thousands of inventory REST calls.
     for (const journal of group.journalHeaders) {
       const journalPosted = await this.journalHeaderRepo.findOne({
         where: {
@@ -586,6 +586,15 @@ export class DailyInvoiceService {
         continue;
       }
       try {
+        // Assign the batch GroupId from the Oracle txn so Oracle groups this
+        // journal's balanced Dr/Cr lines together. buildJournalHeaders leaves it
+        // unset (the legacy per-order processor filled it in); WITHOUT it Oracle's
+        // GL_INTERFACE rejects every row — JBO-27024 on attribute "GroupId".
+        const groupId = Number(txnNumber);
+        journal.batchDescription = `Odoo Journal Import: ${txnNumber}`;
+        for (const jl of journal.journalLines) {
+          jl.groupId = Number.isSafeInteger(groupId) ? groupId : undefined;
+        }
         const jeHeaderId = await this.soap.importJournalEntry(journal);
         await this.journalHeaderRepo.save(
           this.journalHeaderRepo.create({
@@ -596,6 +605,14 @@ export class DailyInvoiceService {
             status: 'SUCCESS',
             jeHeaderId: jeHeaderId ?? null,
             requestDate: new Date(),
+            // Persist the mapping actually applied so the dashboard shows it
+            // instead of blanks (the values are resolved from
+            // ServiceProviderJournalMeta in buildJournalHeaders).
+            ledgerId: journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
+            batchName: journal.batchName ?? null,
+            accountingDate: journal.accountingDate ?? null,
+            customerType: group.customerType ?? null,
+            cashCredit: journal.cashCredit ?? null,
           } as Partial<FusionJournalHeader>),
         );
         base.journals += 1;
@@ -612,10 +629,129 @@ export class DailyInvoiceService {
             status: 'ERROR',
             message,
             requestDate: new Date(),
+            // Persist the intended mapping even on failure, so the row is
+            // diagnosable rather than blank.
+            ledgerId: journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
+            batchName: journal.batchName ?? null,
+            accountingDate: journal.accountingDate ?? null,
+            customerType: group.customerType ?? null,
+            cashCredit: journal.cashCredit ?? null,
           } as Partial<FusionJournalHeader>),
         );
       }
     }
+
+    // ── 2c. Inventory issues ─────────────────────────────────────────────────
+    // One staged inventory transaction per contributing line, relieving stock
+    // from the store's subinventory. Oracle processes the interface async.
+    // Idempotency: skip a line already recorded SUCCESS for this txn+item.
+    //
+    // These are the bulk of the POST's work (one Oracle REST call per line), so
+    // they run CONCURRENTLY within the group. The aggregate load across all
+    // parallel stores is bounded by the Oracle client's global REST gate
+    // (ORACLE_REST_CONCURRENCY), so raising this per-group fan-out never
+    // overwhelms Oracle.
+    // Pre-load every already-posted line for this group in ONE query (chunked)
+    // instead of a findOne per line — the dedup then costs nothing per line,
+    // which matters because we now consider EVERY line (incl. already-invoiced
+    // ones) so stranded inventory can be retried.
+    const planRefs = [
+      ...new Set(
+        group.inventoryTransactions.map(
+          (p) => `${p.salesOrder}#${p.salesOrderLine}`,
+        ),
+      ),
+    ];
+    const postedRefs = new Set<string>();
+    for (let i = 0; i < planRefs.length; i += 1000) {
+      const rows = await this.invTxnRepo.find({
+        where: {
+          sourceLineRef: In(planRefs.slice(i, i + 1000)),
+          region: group.region,
+          status: 'SUCCESS',
+        },
+        select: { sourceLineRef: true },
+      });
+      for (const r of rows) if (r.sourceLineRef) postedRefs.add(r.sourceLineRef);
+    }
+
+    await mapWithConcurrency(
+      group.inventoryTransactions,
+      INVENTORY_CONCURRENCY,
+      async (plan) => {
+        // Per-line idempotency: a line's inventory is pushed to Oracle exactly
+        // once. Keyed on <salesOrder>#<salesOrderLine> so two lines with the
+        // same item both post (never aggregated), and a re-run never double-pushes.
+        const sourceLineRef = `${plan.salesOrder}#${plan.salesOrderLine}`;
+        const dedupeKey = `${txnNumber}:${sourceLineRef}:${plan.itemNumber}`;
+        if (postedRefs.has(sourceLineRef)) {
+          return; // already pushed to Oracle on a prior run
+        }
+        try {
+          const orgId = await this.oracleClient.resolveSubinventoryOrgId(
+            plan.subinventoryCode,
+          );
+          if (orgId == null) {
+            throw new Error(
+              `No inventory organisation found for subinventory "${plan.subinventoryCode}"`,
+            );
+          }
+          const interfaceId = this.nextInterfaceId();
+          await this.oracleClient.createStagedInventoryTransaction({
+            organizationId: orgId,
+            itemNumber: plan.itemNumber,
+            subinventoryCode: plan.subinventoryCode,
+            transactionQuantity: -Math.abs(plan.quantity), // issue = negative
+            transactionUom: plan.uomCode,
+            transactionDate: plan.transactionDate.toISOString(),
+            transactionTypeName: this.inventoryTransactionType,
+            transactionSourceName: plan.salesOrder,
+            sourceCode: 'Vend',
+            sourceHeaderId: interfaceId,
+            sourceLineId: interfaceId,
+            transactionInterfaceId: interfaceId,
+          });
+          await this.invTxnRepo.save(
+            this.invTxnRepo.create({
+              id: generateId(),
+              organizationName: String(orgId),
+              itemNumber: plan.itemNumber,
+              txnSourceName: plan.salesOrder,
+              sourceLineRef,
+              subInventory: plan.subinventoryCode,
+              txnUom: plan.uomCode,
+              txnDate: plan.transactionDate,
+              txnQty: -Math.abs(plan.quantity),
+              region: group.region,
+              status: 'SUCCESS',
+              requestDate: new Date(),
+            } as Partial<FusionInvTxn>),
+          );
+          base.inventoryTransactions = (base.inventoryTransactions ?? 0) + 1;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `[${group.branchCode}] inventory issue for ${plan.itemNumber} ` +
+              `(${dedupeKey}) failed: ${message}`,
+          );
+          await this.invTxnRepo.save(
+            this.invTxnRepo.create({
+              id: generateId(),
+              itemNumber: plan.itemNumber,
+              txnSourceName: plan.salesOrder,
+              sourceLineRef,
+              subInventory: plan.subinventoryCode,
+              txnQty: -Math.abs(plan.quantity),
+              region: group.region,
+              status: 'ERROR',
+              message,
+              requestDate: new Date(),
+            } as Partial<FusionInvTxn>),
+          );
+        }
+      },
+    );
+
 
     // ── 4. Mark the contributing orders synced ───────────────────────────────
     await this.markOrdersSynced(group, txnNumber);

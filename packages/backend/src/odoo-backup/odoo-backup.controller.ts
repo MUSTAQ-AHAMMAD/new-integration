@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -13,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Between, Repository } from 'typeorm';
 import {
   IsBoolean,
   IsInt,
@@ -342,6 +343,77 @@ export class OdooBackupController {
       throw new NotFoundException(`Odoo credential not found: ${id}`);
     }
     return this.backupService.probeCredential(cred);
+  }
+
+  /**
+   * Live reconciliation: compare the Odoo API's order count for a region + date
+   * range against the count stored in the backup tables. Read-only — a single
+   * lightweight request, no re-pull. Best for live regions (e.g. SN); expired
+   * Odoo tenants will report apiReachable=false.
+   */
+  @Get('reconcile')
+  @ApiOperation({
+    summary:
+      'Compare live Odoo order count vs stored backup count for a region + date range',
+  })
+  async reconcile(
+    @Query('region') region?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const reg = (region ?? '').trim().toUpperCase();
+    if (!reg) throw new BadRequestException('region is required');
+    if (
+      !startDate ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(startDate) ||
+      !endDate ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(endDate)
+    ) {
+      throw new BadRequestException(
+        'startDate and endDate are required as YYYY-MM-DD',
+      );
+    }
+    const cred = await this.credentials.findOne({
+      where: { region: reg, active: true },
+    });
+    if (!cred) {
+      throw new BadRequestException(
+        `No active Odoo credential for region ${reg}`,
+      );
+    }
+
+    const probe = await this.backupService.reconcileForCredential(cred, {
+      startDate,
+      endDate,
+    });
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T23:59:59.999Z`);
+    const storedCount = await this.orders.count({
+      where: { region: reg, dateOrder: Between(start, end) },
+    });
+    const apiTotal = probe.apiTotal;
+    return {
+      region: reg,
+      startDate,
+      endDate,
+      apiReachable: probe.ok,
+      apiTotal,
+      storedCount,
+      difference: apiTotal != null ? apiTotal - storedCount : null,
+      inSync: apiTotal != null ? apiTotal === storedCount : null,
+      note:
+        apiTotal == null
+          ? probe.ok
+            ? 'The Odoo endpoint did not advertise a total count for this range — an exact check would need a full live fetch.'
+            : `Odoo API not reachable: ${probe.error ?? 'unknown error'}`
+          : null,
+      probe: {
+        url: probe.url,
+        status: probe.status,
+        sampleCount: probe.sampleCount,
+        error: probe.error,
+      },
+    };
   }
 
   /**

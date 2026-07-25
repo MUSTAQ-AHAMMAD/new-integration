@@ -498,6 +498,8 @@ describe('OdooTransformationService', () => {
     prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         customerType: 'TABBY',
+        // A real TABBY payment makes this a service-provider order by derivation.
+        orderPayments: [{ paymentName: 'TABBY', amount: 100 }],
         orderLines: [{ productName: 'Item', qty: 1, priceUnit: 100 }],
       }),
     );
@@ -508,6 +510,12 @@ describe('OdooTransformationService', () => {
         customerType: 'TABBY',
         subinventory: 'Central',
       }),
+    ]);
+    // getServiceProviderNames() reads the region's providers first (order has no
+    // provider payment, so classification falls back to customerType='TABBY');
+    // buildJournalHeaders() then reads the paired CREDIT/DEBIT rows.
+    prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
+      { serviceProvider: 'TABBY' },
     ]);
     // Paired provider rows: CREDIT-row account is debited, DEBIT-row credited.
     prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
@@ -561,9 +569,43 @@ describe('OdooTransformationService', () => {
     expect(cr.segment2).toBe('5000104');
     expect(dr.segment4).toBe('0502');
     expect(dr.enteredDrAmount).toBe(cr.enteredCrAmount);
+    // Per requirement: a service-provider sale posts ONLY invoice + journal —
+    // no standard/misc/apply receipts (the platform settles the receivable).
+    expect(result.standardReceipts).toHaveLength(0);
+    expect(result.miscReceipts).toHaveLength(0);
+    expect(result.applyReceipts).toHaveLength(0);
+    expect(result.invoiceHeader.invoiceLines.length).toBeGreaterThan(0);
   });
 
-  it('throws when a service-provider journal lacks a CREDIT/DEBIT account pair', async () => {
+  it('does not flag a service-provider payment (TAMARA) as unmapped', async () => {
+    prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
+      makeBackup({
+        orderPayments: [
+          { paymentName: 'TAMARA', amount: 120 },
+          { paymentName: 'Cash', amount: 30 },
+        ],
+      }),
+    );
+    // Region providers include TAMARA (so it is skipped, not flagged).
+    prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
+      { serviceProvider: 'TAMARA' },
+    ]);
+    // Cash resolves to a receipt method; TAMARA must never be looked up.
+    prisma.fusionReceiptMethod.findOne.mockResolvedValue({
+      receiptMethodId: 10n,
+      receiptIsCash: true,
+    } as never);
+
+    const { unmapped } = await service.findUnmappedPaymentNames(
+      'CCNTRBHR/2139',
+      'SN',
+    );
+    expect(unmapped).not.toContain('TAMARA');
+  });
+
+  it('skips the journal (non-fatal) when a service-provider journal lacks a CREDIT/DEBIT account pair', async () => {
+    // A GL-metadata gap must never fail the whole store's invoice — the invoice,
+    // receipts and inventory still build; only the journal is skipped.
     prisma.backupOdooOrder.findOne.mockResolvedValueOnce(
       makeBackup({
         customerType: 'TABBY',
@@ -577,12 +619,21 @@ describe('OdooTransformationService', () => {
         subinventory: 'Central',
       }),
     ]);
+    // getServiceProviderNames() consumes the first find(); the unpaired row below
+    // is what buildJournalHeaders() then sees.
+    prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
+      { serviceProvider: 'TABBY' },
+    ]);
     prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
       { creditDebit: 'CREDIT', ledgerId: 1n, chartOfAccountsId: 2n, account: '3020044' },
     ]);
-    await expect(
-      service.buildOrderPayloads('backup-001', 'CCNTRBHR', 'AE'),
-    ).rejects.toThrow('missing a CREDIT/DEBIT account pair');
+    const result = await service.buildOrderPayloads(
+      'backup-001',
+      'CCNTRBHR',
+      'AE',
+    );
+    expect(result.journalHeaders).toHaveLength(0);
+    expect(result.invoiceHeader.invoiceLines.length).toBeGreaterThan(0);
   });
 
   // ── transactionNumberOverride ─────────────────────────────────────────────
@@ -635,5 +686,58 @@ describe('OdooTransformationService', () => {
     expect(result.miscReceipts).toHaveLength(1);
     expect(result.miscReceipts[0].receivableActivityName).toBe('Cash Rounding');
     expect(result.miscReceipts[0].receiptAmount).toBeCloseTo(-0.05);
+  });
+
+  // ── Service-provider derivation (Odoo has no customer_type) ─────────────────
+
+  describe('getServiceProviderNames / deriveServiceProvider', () => {
+    it('returns the region providers upper-cased and de-duplicated', async () => {
+      prisma.serviceProviderJournalMeta.find.mockResolvedValueOnce([
+        { serviceProvider: 'TABBY' },
+        { serviceProvider: 'TABBY' },
+        { serviceProvider: 'Tamara' },
+        { serviceProvider: '  ' },
+        { serviceProvider: null },
+      ]);
+      const names = await service.getServiceProviderNames('SA');
+      expect([...names].sort()).toEqual(['TABBY', 'TAMARA']);
+    });
+
+    it('classifies an order by a matching provider payment', () => {
+      const providers = new Set(['TABBY', 'TAMARA']);
+      const order = makeBackup({
+        orderPayments: [{ paymentName: 'Tabby', amount: 120 }],
+      }) as unknown as BackupOdooOrder;
+      expect(service.deriveServiceProvider(order, providers)).toBe('TABBY');
+    });
+
+    it('returns null for an ordinary retail sale', () => {
+      const providers = new Set(['TABBY', 'TAMARA']);
+      const order = makeBackup({
+        orderPayments: [
+          { paymentName: 'Cash', amount: 50 },
+          { paymentName: 'Mada', amount: 70 },
+        ],
+      }) as unknown as BackupOdooOrder;
+      expect(service.deriveServiceProvider(order, providers)).toBeNull();
+    });
+
+    it('picks the provider that settled the largest amount on a split payment', () => {
+      const providers = new Set(['TABBY', 'TAMARA']);
+      const order = makeBackup({
+        orderPayments: [
+          { paymentName: 'TABBY', amount: 30 },
+          { paymentName: 'TAMARA', amount: 90 },
+        ],
+      }) as unknown as BackupOdooOrder;
+      expect(service.deriveServiceProvider(order, providers)).toBe('TAMARA');
+    });
+
+    it('returns null when no providers are configured for the region', () => {
+      const order = makeBackup({
+        orderPayments: [{ paymentName: 'TABBY', amount: 30 }],
+      }) as unknown as BackupOdooOrder;
+      expect(service.deriveServiceProvider(order, new Set())).toBeNull();
+    });
   });
 });

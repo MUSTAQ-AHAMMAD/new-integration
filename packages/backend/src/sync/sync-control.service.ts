@@ -99,6 +99,15 @@ export class SyncControlService implements OnModuleInit {
           'Syncs on-hand quantities from Oracle Fusion to VendHQ every 30 minutes (per region)',
         enabled: true,
       },
+      {
+        serviceName: 'integration-auto',
+        displayName: 'Automatic Integration Run',
+        description:
+          'Runs the full Odoo→Oracle integration (pull + invoice/receipt/journal ' +
+          'cycle) automatically per region on a schedule. Enable per region below.',
+        // Master OFF by default — the operator opts in per region.
+        enabled: false,
+      },
     ];
 
     for (const service of services) {
@@ -308,7 +317,34 @@ export class SyncControlService implements OnModuleInit {
     'fusion-inv-to-vendhq': '0 */30 * * * *',
     'stalled-orders': '0 0 1 * * *',
     'daily-invoice': '0 0 3 * * *',
+    'integration-auto': process.env.INTEGRATION_AUTO_CRON || '0 0 2 * * *',
   };
+
+  /**
+   * Ensures a per-(service, region) control row exists, creating it with the
+   * given defaults when missing. Used by region-scoped schedulers (e.g. the
+   * automatic integration) so each region gets its own enable/disable toggle in
+   * the Sync Control Center. Never flips an existing row's enabled flag.
+   */
+  async ensureControl(
+    serviceName: string,
+    region: string,
+    defaults: { displayName: string; description: string; enabled?: boolean },
+  ): Promise<void> {
+    const existing = await this.syncControlRepo.findOne({
+      where: { serviceName, region },
+    });
+    if (existing) return;
+    await this.syncControlRepo.save(
+      this.syncControlRepo.create({
+        serviceName,
+        region,
+        displayName: defaults.displayName,
+        description: defaults.description,
+        enabled: defaults.enabled ?? false,
+      }),
+    );
+  }
 
   /**
    * Computes the next fire time for the fixed-interval / fixed-time crons above.

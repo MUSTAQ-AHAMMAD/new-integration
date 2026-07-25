@@ -13,6 +13,7 @@ import { generateId } from '../id.util';
 @Index(['status'])
 @Index(['region'])
 @Index(['itemNumber'])
+@Index(['sourceLineRef'])
 export class FusionInvTxn {
   @PrimaryColumn({ type: 'varchar2', length: 36 })
   id!: string;
@@ -42,6 +43,15 @@ export class FusionInvTxn {
 
   @Column({ type: 'varchar2', length: 255, nullable: true })
   txnSourceName!: string | null;
+
+  /**
+   * Per-line idempotency key: `<salesOrder>#<salesOrderLine>`. Uniquely
+   * identifies the source POS line so a line's inventory is pushed to Oracle
+   * exactly once (never twice) and never aggregated across lines — a re-run
+   * skips only the lines already recorded SUCCESS here.
+   */
+  @Column({ type: 'varchar2', length: 300, nullable: true })
+  sourceLineRef!: string | null;
 
   @Column({ type: 'varchar2', length: 255, nullable: true })
   subInventory!: string | null;

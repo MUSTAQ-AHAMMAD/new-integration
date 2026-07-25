@@ -13,6 +13,14 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
+      # node-oracledb thick mode runs DB calls on libuv's thread pool; the
+      # default size (4) caps concurrent Oracle ops at ~4 no matter how large the
+      # connection pool is. Raise it to match the pool so parallel order upserts
+      # actually run in parallel (the Odoo pull's throughput lever).
+      UV_THREADPOOL_SIZE: "16"
+      APP_DB_POOL_MIN: "16"
+      APP_DB_POOL_MAX: "16"
+      ODOO_INGEST_CONCURRENCY: "12"
       DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@pgbouncer:5432/integration_db?pgbouncer=true&connection_limit=10
       DIRECT_DATABASE_URL: postgresql://integration:${POSTGRES_PASSWORD:-integration_pass}@postgres:5432/integration_db
       REDIS_SENTINEL_HOSTS: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
