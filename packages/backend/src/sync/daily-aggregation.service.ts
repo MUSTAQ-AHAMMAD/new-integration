@@ -114,6 +114,21 @@ export interface DailyInvoiceGroup {
   inventoryTransactions: InventoryTransactionPlan[];
 }
 
+/**
+ * Per-region tax lookup, built once from VendHqTaxMeta. Mirrors the Java
+ * `invoiceLine.setTaxClassificationCode(lineItem.getTaxName())` — the line's
+ * Odoo tax is resolved to the Fusion classification code Oracle expects, so
+ * Oracle's tax engine computes and posts the VAT as a proper tax line.
+ */
+interface RegionTaxContext {
+  /** Odoo tax id → Fusion classification code. */
+  byTaxId: Map<string, string>;
+  /** normalized tax/fusion name → Fusion classification code. */
+  byName: Map<string, string>;
+  /** The region's single code when unambiguous, else null. */
+  regionDefault: string | null;
+}
+
 /** A planned inventory issue, before the Oracle organisation id is resolved. */
 export interface InventoryTransactionPlan {
   itemNumber: string;
@@ -171,48 +186,75 @@ export class DailyAggregationService {
    * (falling back to the tax name). Operator choice: one rate per region, folded
    * into each invoice line's unit price so the Oracle total includes VAT.
    */
-  private readonly regionVatRateCache = new Map<string, number>();
+  private readonly regionTaxCache = new Map<string, RegionTaxContext>();
 
-  private async resolveRegionVatRate(region: string): Promise<number> {
+  private normalizeTaxKey(v: string | null | undefined): string {
+    return (v ?? '').trim().toLowerCase();
+  }
+
+  /**
+   * Build the region's tax lookup from VendHqTaxMeta (cached). The Fusion
+   * classification code is fusionName (falling back to taxName), keyed by both
+   * the Odoo tax id and the tax/fusion name so a line can be matched either way.
+   */
+  private async resolveRegionTaxContext(
+    region: string,
+  ): Promise<RegionTaxContext> {
     const key = region.trim().toUpperCase();
-    const cached = this.regionVatRateCache.get(key);
-    if (cached !== undefined) return cached;
+    const cached = this.regionTaxCache.get(key);
+    if (cached) return cached;
 
     const rows = await this.taxMetaRepo.find({ where: { region: key } });
-    const parseRate = (name: string | null): number | null => {
-      const m = name?.match(/(\d+(?:\.\d+)?)\s*%/);
-      if (!m) return null;
-      const pct = Number(m[1]);
-      return Number.isFinite(pct) && pct > 0 ? pct / 100 : null;
+    const byTaxId = new Map<string, string>();
+    const byName = new Map<string, string>();
+    const codes = new Set<string>();
+    for (const r of rows) {
+      const code = (r.fusionName ?? r.taxName)?.trim();
+      if (!code) continue;
+      codes.add(code);
+      if (r.taxId) byTaxId.set(String(r.taxId).trim(), code);
+      if (r.taxName) byName.set(this.normalizeTaxKey(r.taxName), code);
+      byName.set(this.normalizeTaxKey(r.fusionName), code);
+    }
+    const distinct = [...codes];
+    const ctx: RegionTaxContext = {
+      byTaxId,
+      byName,
+      regionDefault: distinct.length === 1 ? distinct[0] : null,
     };
-    const rates = [
-      ...new Set(
-        rows
-          .map((r) => parseRate(r.fusionName) ?? parseRate(r.taxName))
-          .filter((r): r is number => r != null),
-      ),
-    ];
-
-    let rate = 0;
-    if (rates.length === 1) {
-      rate = rates[0];
-    } else if (rates.length > 1) {
-      // "One rate per region" is ambiguous here (e.g. SA lists both 5% and 15%).
-      // Use the highest and warn so the operator can prune the meta to one row.
-      rate = Math.max(...rates);
+    if (distinct.length === 0) {
       this.logger.warn(
-        `Region ${key} has multiple VAT rates in VendHqTaxMeta ` +
-          `(${rates.map((r) => `${r * 100}%`).join(', ')}) — using ${rate * 100}%. ` +
-          `Keep a single rate per region to make this deterministic.`,
+        `No tax code in VendHqTaxMeta for region ${key} — invoice lines sent ` +
+          `without a TaxClassificationCode (Oracle applies the customer/site default).`,
       );
-    } else {
+    } else if (distinct.length > 1) {
       this.logger.warn(
-        `No parseable VAT rate in VendHqTaxMeta for region ${key} — ` +
-          `invoice lines will be posted without tax (0%).`,
+        `Region ${key} has multiple tax codes in VendHqTaxMeta (${distinct.join(', ')}) — ` +
+          `matching per line by tax id/name; unmatched lines get no code.`,
       );
     }
-    this.regionVatRateCache.set(key, rate);
-    return rate;
+    this.regionTaxCache.set(key, ctx);
+    return ctx;
+  }
+
+  /**
+   * Resolve one line's Fusion TaxClassificationCode — Odoo tax id first (stable),
+   * then tax name, then the region default. Undefined when nothing matches, so
+   * an unknown code can never make Oracle reject the whole invoice.
+   */
+  private resolveLineTaxCode(
+    line: { taxName: string | null; taxIds?: string | null },
+    ctx: RegionTaxContext,
+  ): string | undefined {
+    if (line.taxIds) {
+      for (const raw of String(line.taxIds).split(/[\s,[\]]+/)) {
+        const id = raw.trim();
+        if (id && ctx.byTaxId.has(id)) return ctx.byTaxId.get(id);
+      }
+    }
+    const byName = ctx.byName.get(this.normalizeTaxKey(line.taxName));
+    if (byName) return byName;
+    return ctx.regionDefault ?? undefined;
   }
 
   /**
@@ -396,9 +438,10 @@ export class DailyAggregationService {
 
     const buMap = await this.businessUnitMapRepo.findOne({ where: { region } });
     const uomCodes = await this.loadUomCodes(region);
-    // VAT rate for this region (folded into each line's unit price below so the
-    // Oracle invoice total is tax-inclusive). 0 when no rate is configured.
-    const vatRate = await this.resolveRegionVatRate(region);
+    // Region tax lookup — each line carries a TaxClassificationCode so Oracle's
+    // tax engine computes and posts the VAT (Java-reference parity). Prices stay
+    // ex-tax; Oracle adds the tax line.
+    const taxCtx = await this.resolveRegionTaxContext(region);
     // Subinventory that stock is issued from — the store's metadata value, e.g.
     // "RYDAVNUMAL". Absent → inventory relief is skipped for the whole group.
     const subinventory = salesMeta.subinventory?.trim() || null;
@@ -523,7 +566,7 @@ export class DailyAggregationService {
             invoiceHeader.invoiceLines.length + 1,
             invoiceHeader.invoiceCurrencyCode,
             uomCode,
-            vatRate,
+            this.resolveLineTaxCode(line, taxCtx),
           ),
         );
       }
@@ -797,6 +840,7 @@ export class DailyAggregationService {
       productId: number | null;
       lineName?: string | null;
       taxName: string | null;
+      taxIds?: string | null;
       productUomName: string | null;
     },
     salesOrder: string,
@@ -804,7 +848,7 @@ export class DailyAggregationService {
     lineNumber: number,
     currencyCode: string,
     uomCode: string | null,
-    vatRate = 0,
+    taxClassificationCode?: string,
   ): InvoiceLine {
     let qty = Number(line.qty ?? 1);
     const total =
@@ -816,22 +860,15 @@ export class DailyAggregationService {
 
     // Sign lives in the quantity, never in the unit price (legacy parity) —
     // a negative line (discount / promotion) posts as negative quantity.
-    const baseUnitPrice =
+    // Ex-tax unit price (Java parity: totalPrice/qty). Oracle adds the VAT from
+    // the line's TaxClassificationCode, so the price must stay tax-EXCLUSIVE.
+    const unitPrice =
       line.priceUnit != null
         ? Math.abs(toSafeNumber(line.priceUnit))
         : qty !== 0
           ? Math.abs(total / qty)
           : 0;
     if (total < 0 && qty > 0) qty = -qty;
-
-    // Fold the region VAT into the unit price so the Oracle invoice total is
-    // tax-inclusive (operator choice: middleware computes tax, one rate per
-    // region). Odoo priceUnit is ex-tax, so this never double-counts. Rounded to
-    // 4dp to avoid float noise while keeping the qty×price total accurate.
-    const unitPrice =
-      vatRate > 0
-        ? Math.round(baseUnitPrice * (1 + vatRate) * 10000) / 10000
-        : baseUnitPrice;
 
     const productName = line.productName ?? '';
     // Discount/promotion lines: the legacy feed names the product
@@ -858,10 +895,11 @@ export class DailyAggregationService {
       currencyCode,
       salesOrder,
       salesOrderLine: String(salesOrderLine),
-      // taxClassificationCode is intentionally NOT set from the raw Odoo tax
-      // name: an unrecognised code makes Oracle reject the whole invoice, and
-      // the bill-to customer/site already carries the correct default VAT. A
-      // per-line tax code would need a validated Odoo-tax → Oracle-code map.
+      // Java parity: invoiceLine.setTaxClassificationCode(lineItem.getTaxName()).
+      // Resolved from VendHqTaxMeta so Oracle's tax engine computes the VAT and
+      // posts it as a proper tax line. Undefined → Oracle uses the customer/site
+      // default (never a rejected invoice from an unknown code).
+      taxClassificationCode: taxClassificationCode,
     };
   }
 
