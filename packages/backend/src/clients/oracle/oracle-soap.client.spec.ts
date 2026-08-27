@@ -419,7 +419,7 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toMatch(
-        /<typ1:UnitSellingPrice currencyCode="AED">50<\/typ1:UnitSellingPrice>/,
+        /<typ1:UnitSellingPrice currencyCode="AED">50\.00<\/typ1:UnitSellingPrice>/,
       );
     });
 
@@ -970,8 +970,8 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('PASA CREDIT MEMO');
-      // 50 → -50 on the wire (credit).
-      expect(soapBody).toContain('>-50<');
+      // 50 → -50 on the wire (credit), always emitted at 2dp.
+      expect(soapBody).toContain('>-50.00<');
       // Reference to the credited invoice is carried through.
       expect(soapBody).toContain('INV-001');
     });

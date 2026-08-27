@@ -15,6 +15,7 @@ import {
   MODULE_INIT_TIMEOUT_MS,
 } from '../../common/utils/timeout';
 import { Semaphore } from '../../common/utils/semaphore';
+import { money2 } from '../../common/money';
 
 // ──────────────────────────────────────────────────────────────
 // Domain models (mirrors Java fusion/soap/model/*.java)
@@ -279,7 +280,7 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
           <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${l.unitSellingPrice}</typ1:UnitSellingPrice>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(l.unitSellingPrice)}</typ1:UnitSellingPrice>
           ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
@@ -354,7 +355,7 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
           <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${-Math.abs(l.unitSellingPrice)}</typ1:UnitSellingPrice>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(-Math.abs(l.unitSellingPrice))}</typ1:UnitSellingPrice>
           ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
@@ -579,10 +580,10 @@ function buildJournalSoap(header: JournalHeader): string {
           ${opt('Segment9', l.segment9)}
           ${opt('Segment10', l.segment10)}
           <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
-          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${l.enteredDrAmount}</typ1:EnteredDrAmount>` : ''}
-          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${l.enteredCrAmount}</typ1:EnteredCrAmount>` : ''}
-          ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${l.accountedDr}</typ1:AccountedDr>` : ''}
-          ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${l.accountedCr}</typ1:AccountedCr>` : ''}
+          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${money2(l.enteredDrAmount)}</typ1:EnteredDrAmount>` : ''}
+          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${money2(l.enteredCrAmount)}</typ1:EnteredCrAmount>` : ''}
+          ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${money2(l.accountedDr)}</typ1:AccountedDr>` : ''}
+          ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${money2(l.accountedCr)}</typ1:AccountedCr>` : ''}
           ${l.currencyConversionRate !== undefined ? `<typ1:CurrencyConversionRate>${l.currencyConversionRate}</typ1:CurrencyConversionRate>` : ''}
           ${l.currencyConversionType ? `<typ1:CurrencyConversionType>${l.currencyConversionType}</typ1:CurrencyConversionType>` : ''}
           ${l.currencyConversionDate ? `<typ1:CurrencyConversionDate>${xmlDate(l.currencyConversionDate)}</typ1:CurrencyConversionDate>` : ''}

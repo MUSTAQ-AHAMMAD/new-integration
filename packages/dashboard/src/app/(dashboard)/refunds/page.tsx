@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, PlusCircle, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { authStorage } from '@/lib/api';
+import { getApiBase } from '@/lib/runtime-config';
 import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -44,7 +45,7 @@ interface ManualCreditMemoForm {
   refundDate: string;
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+const apiBase = getApiBase();
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const token = authStorage.getToken();

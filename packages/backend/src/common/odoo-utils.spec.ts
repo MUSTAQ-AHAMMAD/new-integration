@@ -5,25 +5,59 @@ import {
 } from './odoo-utils';
 
 describe('toApiDatetime', () => {
-  it('appends 00:00:00 to a date-only start date', () => {
-    expect(toApiDatetime('2026-02-01')).toBe('2026-02-01 00:00:00');
-  });
+  // Pin the zone so the test is deterministic regardless of APP_INTEGRATION_TIMEZONE.
+  // Asia/Riyadh is UTC+3 (no DST) — the production default.
+  const tz = 'Asia/Riyadh';
 
-  it('appends 23:59:59 to a date-only end date', () => {
-    expect(toApiDatetime('2026-02-01', { end: true })).toBe(
-      '2026-02-01 23:59:59',
+  it('converts a date-only start date to the UTC start of that local day', () => {
+    // 2026-02-01 00:00:00 in UTC+3 → 2026-01-31 21:00:00 UTC
+    expect(toApiDatetime('2026-02-01', { timeZone: tz })).toBe(
+      '2026-01-31 21:00:00',
     );
   });
 
-  it('leaves a datetime string with a space separator unchanged', () => {
-    expect(toApiDatetime('2026-02-01 21:00:00')).toBe('2026-02-01 21:00:00');
-    expect(toApiDatetime('2026-02-02 20:59:59', { end: true })).toBe(
-      '2026-02-02 20:59:59',
+  it('converts a date-only end date to the UTC end of that local day', () => {
+    // 2026-02-01 23:59:59 in UTC+3 → 2026-02-01 20:59:59 UTC
+    expect(toApiDatetime('2026-02-01', { end: true, timeZone: tz })).toBe(
+      '2026-02-01 20:59:59',
     );
   });
 
-  it('leaves a datetime string with a T separator unchanged', () => {
-    expect(toApiDatetime('2026-02-01T21:00:00')).toBe('2026-02-01T21:00:00');
+  it('reproduces the operator example (26/07/2026 → 25th 21:00 .. 26th 20:59:59 UTC)', () => {
+    expect(toApiDatetime('2026-07-26', { timeZone: tz })).toBe(
+      '2026-07-25 21:00:00',
+    );
+    expect(toApiDatetime('2026-07-26', { end: true, timeZone: tz })).toBe(
+      '2026-07-26 20:59:59',
+    );
+  });
+
+  it('treats a naive datetime (no offset) as local wall time and converts to UTC', () => {
+    // 21:00 local (UTC+3) → 18:00 UTC; the { end } flag is irrelevant once a time is present.
+    expect(toApiDatetime('2026-02-01 21:00:00', { timeZone: tz })).toBe(
+      '2026-02-01 18:00:00',
+    );
+    expect(toApiDatetime('2026-02-01T21:00:00', { timeZone: tz })).toBe(
+      '2026-02-01 18:00:00',
+    );
+  });
+
+  it('re-emits an explicit UTC instant (Z) as a naive UTC string, no shift', () => {
+    // Watermark path: lastSyncAt.toISOString() is already absolute.
+    expect(toApiDatetime('2026-02-01T10:00:00.000Z', { timeZone: tz })).toBe(
+      '2026-02-01 10:00:00',
+    );
+  });
+
+  it('respects an explicit ± offset instead of the local zone', () => {
+    // 10:00 at +05:00 → 05:00 UTC, regardless of the configured zone.
+    expect(toApiDatetime('2026-02-01T10:00:00+05:00', { timeZone: tz })).toBe(
+      '2026-02-01 05:00:00',
+    );
+  });
+
+  it('returns an empty string unchanged', () => {
+    expect(toApiDatetime('')).toBe('');
   });
 });
 

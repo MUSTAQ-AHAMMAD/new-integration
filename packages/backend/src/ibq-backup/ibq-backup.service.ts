@@ -97,12 +97,17 @@ const STATUS_DISABLED = 'DISABLED';
 /** Records fetched per page during paginated cron runs */
 const IBQ_PAGE_SIZE = 500;
 
-/** Format a Date as the YYYY-MM-DD HH:MM:SS string the IBQ API expects */
+/**
+ * Format a watermark Date as the YYYY-MM-DD HH:MM:SS string the IBQ API expects.
+ * The watermark (`lastSyncAt`) is an absolute instant, so it is emitted in UTC —
+ * matching how the admin date-range path converts its boundaries to UTC — rather
+ * than in the host's local time (which was only correct when the host ran UTC).
+ */
 function toIbqDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
   );
 }
 

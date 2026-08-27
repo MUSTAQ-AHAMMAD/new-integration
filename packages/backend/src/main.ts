@@ -118,12 +118,29 @@ async function bootstrap() {
     );
 
     app.use(compression());
+    // CORS_ORIGIN may be:
+    //   - "*"           → reflect whatever Origin the request carries. The
+    //                     dashboard derives its own host at runtime, so clients
+    //                     connect from any LAN IP/hostname; reflecting the
+    //                     origin keeps that working with `credentials: true`
+    //                     (a literal "*" is not allowed alongside credentials).
+    //   - a single origin or comma-separated list (e.g.
+    //     "http://localhost:3000,http://192.168.30.58:3000") → exact allow-list.
+    // Passing an array/true makes the cors middleware echo back the matching
+    // origin, which `credentials: true` requires.
+    const corsOrigins = (process.env.CORS_ORIGIN ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    const reflectAnyOrigin = corsOrigins.includes('*');
     app.enableCors({
-      origin:
-        process.env.CORS_ORIGIN ||
-        (process.env.NODE_ENV === 'production'
-          ? false
-          : 'http://localhost:3000'),
+      origin: reflectAnyOrigin
+        ? true
+        : corsOrigins.length > 0
+          ? corsOrigins
+          : process.env.NODE_ENV === 'production'
+            ? false
+            : 'http://localhost:3000',
       credentials: true,
     });
 

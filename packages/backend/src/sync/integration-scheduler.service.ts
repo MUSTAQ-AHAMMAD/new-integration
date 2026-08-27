@@ -18,6 +18,8 @@ import { OdooCredential } from '../database/entities/odoo-credential.entity';
 import { IntegrationRunService } from './integration-run.service';
 import { SyncControlService } from './sync-control.service';
 import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
+import { INTEGRATION_TIMEZONE } from '../common/odoo-utils';
+import { format as formatTz, toZonedTime } from 'date-fns-tz';
 
 const SERVICE = 'integration-auto';
 /** How many days back (in addition to today) each auto run covers. */
@@ -138,9 +140,17 @@ export class IntegrationSchedulerService implements OnModuleInit {
   }
 
   private window(): { startDate: string; endDate: string } {
-    const today = new Date();
-    const endDate = today.toISOString().slice(0, 10);
-    const start = new Date(today.getTime());
+    // "Today" is the current calendar day in the configured integration zone,
+    // not UTC — otherwise a run just after local midnight (e.g. 01:00 in a
+    // UTC+3 zone = 22:00 UTC the previous day) would target the wrong day.
+    // Both dates are bare YYYY-MM-DD; the pull path converts them local→UTC.
+    const endDate = formatTz(
+      toZonedTime(new Date(), INTEGRATION_TIMEZONE),
+      'yyyy-MM-dd',
+      { timeZone: INTEGRATION_TIMEZONE },
+    );
+    // Day arithmetic on a UTC-anchored midnight avoids DST/offset drift.
+    const start = new Date(`${endDate}T00:00:00Z`);
     start.setUTCDate(start.getUTCDate() - LOOKBACK_DAYS);
     return { startDate: start.toISOString().slice(0, 10), endDate };
   }

@@ -40,6 +40,8 @@ import { ServiceProviderJournalMeta } from '../database/entities/service-provide
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
+import { round2 } from '../common/money';
+import { TaxClassificationService } from './tax-classification.service';
 
 export interface OdooTransformResult {
   invoiceHeader: InvoiceHeader;
@@ -70,6 +72,7 @@ export class OdooTransformationService {
     private readonly receiptMethodRepo: Repository<FusionReceiptMethod>,
     @InjectRepository(ServiceProviderJournalMeta)
     private readonly journalMetaRepo: Repository<ServiceProviderJournalMeta>,
+    private readonly taxClassification: TaxClassificationService,
   ) {}
 
   /**
@@ -810,6 +813,10 @@ export class OdooTransformationService {
 
     // ── 4. Build credit-memo lines from the refund order lines ───────────────
     if (backup && backup.orderLines.length > 0) {
+      // Same tax lookup as the invoice path so a refund reverses the exact VAT
+      // Oracle charged on the sale (parity — a memo with no tax code would
+      // under-credit the tax and leave a reconciliation gap).
+      const taxCtx = await this.taxClassification.resolveRegionTaxContext(region);
       for (const line of backup.orderLines) {
         const qty = Math.abs(Number(line.qty ?? 1));
         if (qty === 0) continue;
@@ -821,12 +828,15 @@ export class OdooTransformationService {
               ? this.convertDecimal(line.priceSubtotal)
               : this.convertDecimal(line.priceUnit ?? 0) * qty;
 
-        const unitPrice =
+        // Ex-tax unit price, rounded to 2dp so no long float (total/qty) reaches
+        // Oracle. Oracle adds the VAT from the line's TaxClassificationCode.
+        const unitPrice = round2(
           line.priceUnit != null
             ? Math.abs(this.convertDecimal(line.priceUnit))
             : qty !== 0
               ? Math.abs(total / qty)
-              : 0;
+              : 0,
+        );
 
         const productName = line.productName ?? '';
         const isDiscount = productName === 'Discount Item';
@@ -843,6 +853,10 @@ export class OdooTransformationService {
           currencyCode: header.invoiceCurrencyCode,
           salesOrder: opts.refundOrderNumber,
           salesOrderLine: String(header.creditMemoLines.length + 1),
+          taxClassificationCode: this.taxClassification.resolveLineTaxCode(
+            { taxName: line.taxName ?? null, taxIds: line.taxIds ?? null },
+            taxCtx,
+          ),
         };
         header.creditMemoLines.push(memoLine);
       }

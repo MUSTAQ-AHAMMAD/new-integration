@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Eye, History, Play, TableProperties } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, authStorage } from '@/lib/api';
+import { getApiBase } from '@/lib/runtime-config';
 import { formatDate } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,7 +32,7 @@ interface AuditEntry {
   createdAt: string;
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+const apiBase = getApiBase();
 const PAGE_SIZE = 50;
 const ACTION_OPTIONS = ['ALL', 'CREATE', 'UPDATE', 'SYNC', 'RETRY', 'RESOLVE', 'WEBHOOK'] as const;
 const ENTITY_OPTIONS = ['ALL', 'ORDER', 'PAYMENT', 'STORE', 'REFUND', 'SYSTEM'] as const;

@@ -891,7 +891,10 @@ export class DailyAggregationService {
       // "G") — NOT the Odoo display name "Gram", which Oracle rejects as too
       // long. Omitted when unknown so Oracle falls back to the item's own UOM.
       uomCode: uomCode ?? undefined,
-      unitSellingPrice: unitPrice,
+      // Round to 2dp at the source so a `total / qty` derivation can never emit
+      // a long float (e.g. 3.3333333) and so displayed ex-tax totals computed
+      // from unitSellingPrice × quantity stay penny-consistent with the wire.
+      unitSellingPrice: this.round2(unitPrice),
       currencyCode,
       salesOrder,
       salesOrderLine: String(salesOrderLine),
@@ -1025,7 +1028,12 @@ export class DailyAggregationService {
           if (method === 'Debit Card' && region === 'OM' && charge > 10) {
             charge = 10;
           }
-          bucket.bankChargeAmount += charge;
+          // Round each charge to 2dp BEFORE accumulating. The standard receipt is
+          // round2(gross − charge) and the misc receipt is −round2(charge); if the
+          // charge is only rounded at emission, those two need not sum back to
+          // gross, leaving a sub-penny residue that reconciliation later trims off
+          // a valid payment. Rounding here makes net + |misc| == gross exactly.
+          bucket.bankChargeAmount += this.round2(charge);
         }
       }
     }

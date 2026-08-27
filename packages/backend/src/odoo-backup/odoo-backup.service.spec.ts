@@ -367,7 +367,9 @@ describe('OdooBackupService.backupOrdersForCredential — watermark filter', () 
       expect.stringContaining('/api/pos/order'),
       expect.objectContaining({
         params: expect.objectContaining({
-          start_date: lastSyncAt.toISOString(),
+          // The watermark instant is re-emitted as a naive UTC datetime (same
+          // absolute time, no `T`/`Z`) — the format Odoo's date filter expects.
+          start_date: '2024-06-01 00:00:00',
         }),
       }),
     );

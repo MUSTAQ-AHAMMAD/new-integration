@@ -4,6 +4,7 @@ import { type Dispatch, type SetStateAction, useEffect, useMemo, useState } from
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type CreateNotificationRecipientDto, type NotificationRecipient } from '@/lib/api';
+import { getApiBase } from '@/lib/runtime-config';
 import { formatDate } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,7 +54,7 @@ interface RecipientFormState {
   isActive: boolean;
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+const apiBase = getApiBase();
 const DEFAULT_THRESHOLDS: AlertThresholdSettings = {
   failureRateThreshold: 5,
   latencyThresholdMs: 2000,

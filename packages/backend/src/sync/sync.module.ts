@@ -47,6 +47,7 @@ import { AutoFixService } from './auto-fix.service';
 import { FusionTransformationService } from './fusion-transformation.service';
 import { IdempotencyService } from './idempotency.service';
 import { OdooTransformationService } from './odoo-transformation.service';
+import { TaxClassificationService } from './tax-classification.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
@@ -121,6 +122,7 @@ import { BulkRetryService } from './bulk-retry.service';
     ValidationService,
     FusionTransformationService,
     OdooTransformationService,
+    TaxClassificationService,
     DailyAggregationService,
     DailyInvoiceService,
     DailyInvoiceSchedulerService,
