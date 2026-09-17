@@ -162,10 +162,12 @@ describe('OdooClient.getOrders — HTTP parameters', () => {
 
     await client.getOrders({ startDate: '2024-01-01T00:00:00Z', limit: 100 });
 
+    // An explicit UTC instant is re-emitted as the naive `YYYY-MM-DD HH:MM:SS`
+    // UTC string Odoo expects (same absolute time, no offset suffix).
     expect(httpGet).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        params: expect.objectContaining({ start_date: '2024-01-01T00:00:00Z' }),
+        params: expect.objectContaining({ start_date: '2024-01-01 00:00:00' }),
       }),
     );
   });

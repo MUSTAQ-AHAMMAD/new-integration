@@ -38,6 +38,7 @@ import { mapWithConcurrency } from '../common/utils/concurrency';
 import {
   DailyAggregationService,
   DailyInvoiceGroup,
+  InventoryTransactionPlan,
 } from './daily-aggregation.service';
 
 /**
@@ -105,12 +106,17 @@ export class DailyInvoiceService {
   private readonly logger = new Logger(DailyInvoiceService.name);
 
   /**
-   * Oracle transaction type used for inventory issues. Configurable because the
-   * legacy "Vend Sales Issue" type may not exist on every pod; defaults to the
-   * standard "Account Issue" which the current pod accepts.
+   * Oracle transaction types used for inventory movements. A sale relieves the
+   * stock with "Vend Sales Issue"; a refund puts it back with "Vend Sales".
+   * Both stay env-overridable because the names are pod-specific setup data.
    */
-  private readonly inventoryTransactionType =
-    process.env.ORACLE_INVENTORY_TXN_TYPE || 'Account Issue';
+  private readonly inventoryTransactionTypes: Record<
+    NonNullable<InventoryTransactionPlan['kind']>,
+    string
+  > = {
+    SALE: process.env.ORACLE_INVENTORY_TXN_TYPE || 'Vend Sales Issue',
+    REFUND: process.env.ORACLE_INVENTORY_REFUND_TXN_TYPE || 'Vend Sales',
+  };
 
   /**
    * Monotonic, collision-resistant id for the inventory interface. Date.now is
@@ -668,7 +674,10 @@ export class DailyInvoiceService {
         where: {
           sourceLineRef: In(planRefs.slice(i, i + 1000)),
           region: group.region,
-          status: 'SUCCESS',
+          // PENDING counts as pushed: the row is already sitting in Oracle's
+          // interface awaiting the transaction manager. Re-sending it would
+          // relieve the same stock twice. Only ERROR rows are re-attempted.
+          status: In(['SUCCESS', 'PENDING']),
         },
         select: { sourceLineRef: true },
       });
@@ -683,6 +692,13 @@ export class DailyInvoiceService {
         // once. Keyed on <salesOrder>#<salesOrderLine> so two lines with the
         // same item both post (never aggregated), and a re-run never double-pushes.
         const sourceLineRef = `${plan.salesOrder}#${plan.salesOrderLine}`;
+        // A sale issues stock out (negative qty) under "Vend Sales Issue"; a
+        // refund returns it (positive qty) under "Vend Sales".
+        const kind = plan.kind ?? 'SALE';
+        const signedQty =
+          kind === 'REFUND'
+            ? Math.abs(plan.quantity)
+            : -Math.abs(plan.quantity);
         const dedupeKey = `${txnNumber}:${sourceLineRef}:${plan.itemNumber}`;
         if (postedRefs.has(sourceLineRef)) {
           return; // already pushed to Oracle on a prior run
@@ -697,14 +713,19 @@ export class DailyInvoiceService {
             );
           }
           const interfaceId = this.nextInterfaceId();
+          // Oracle accepts this into the staging interface and processes it in
+          // the background, so a 200 here is NOT proof the stock moved — an
+          // insufficient-quantity rejection surfaces on the interface row later.
+          // The row is therefore recorded PENDING and confirmed (or failed) by
+          // InventoryTransactionVerifierService.
           await this.oracleClient.createStagedInventoryTransaction({
             organizationId: orgId,
             itemNumber: plan.itemNumber,
             subinventoryCode: plan.subinventoryCode,
-            transactionQuantity: -Math.abs(plan.quantity), // issue = negative
+            transactionQuantity: signedQty,
             transactionUom: plan.uomCode,
             transactionDate: plan.transactionDate.toISOString(),
-            transactionTypeName: this.inventoryTransactionType,
+            transactionTypeName: this.inventoryTransactionTypes[kind],
             transactionSourceName: plan.salesOrder,
             sourceCode: 'Vend',
             sourceHeaderId: interfaceId,
@@ -721,9 +742,10 @@ export class DailyInvoiceService {
               subInventory: plan.subinventoryCode,
               txnUom: plan.uomCode,
               txnDate: plan.transactionDate,
-              txnQty: -Math.abs(plan.quantity),
+              txnQty: signedQty,
               region: group.region,
-              status: 'SUCCESS',
+              status: 'PENDING',
+              txnInterfaceId: interfaceId,
               requestDate: new Date(),
             } as Partial<FusionInvTxn>),
           );
@@ -741,7 +763,7 @@ export class DailyInvoiceService {
               txnSourceName: plan.salesOrder,
               sourceLineRef,
               subInventory: plan.subinventoryCode,
-              txnQty: -Math.abs(plan.quantity),
+              txnQty: signedQty,
               region: group.region,
               status: 'ERROR',
               message,

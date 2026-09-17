@@ -367,8 +367,9 @@ relieved.
   (cached), e.g. `RYDAVNUMAL` → org `300000001419031`.
 - **Quantity** is negated (issue); **UOM** is the resolved item-master code;
   **subinventory** comes from `FusionSalesMetadata.subinventory`.
-- **Transaction type** is `ORACLE_INVENTORY_TXN_TYPE` (default `Account Issue` — the
-  legacy `Vend Sales Issue` may not exist on every pod).
+- **Transaction type** is `Vend Sales Issue` for a sale and `Vend Sales` for a refund
+  return; override per kind with `ORACLE_INVENTORY_TXN_TYPE` /
+  `ORACLE_INVENTORY_REFUND_TXN_TYPE`.
 - Recorded in `FusionInvTxn` (`SUCCESS`/`ERROR`), guarded so a re-run never
   double-issues. Only lines with a real item + resolvable UOM produce an issue;
   description-only and discount lines do not.

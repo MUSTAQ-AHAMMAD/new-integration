@@ -1,5 +1,6 @@
 import { ObjectLiteral, Repository } from 'typeorm';
 import { OdooTransformationService } from './odoo-transformation.service';
+import { TaxClassificationService } from './tax-classification.service';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
 import { FusionCustomerAccount } from '../database/entities/fusion-customer-account.entity';
@@ -128,6 +129,14 @@ describe('OdooTransformationService', () => {
       asRepo<FusionBusinessUnitMap>(prisma.fusionBusinessUnitMap),
       asRepo<FusionReceiptMethod>(prisma.fusionReceiptMethod),
       asRepo<ServiceProviderJournalMeta>(prisma.serviceProviderJournalMeta),
+      {
+        resolveRegionTaxContext: jest.fn().mockResolvedValue({
+          byTaxId: new Map<string, string>(),
+          byName: new Map<string, string>(),
+          regionDefault: null,
+        }),
+        resolveLineTaxCode: jest.fn().mockReturnValue(undefined),
+      } as unknown as TaxClassificationService,
     );
     jest.clearAllMocks();
   });

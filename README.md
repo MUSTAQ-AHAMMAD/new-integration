@@ -61,6 +61,8 @@ See [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) for detailed 
 | `HealthModule` | `@nestjs/terminus` endpoint + 5-min cron health checks |
 | `GatewayModule` | Socket.IO WebSocket for dashboard real-time events |
 | `DashboardModule` | Aggregate stats, charts data, failed tx, audit log |
+| `ReconciliationModule` | Compare stored Odoo orders against the Oracle rows we pushed; find mismatches |
+| `UsersModule` | Dashboard accounts, roles and per-area visibility |
 
 ---
 
@@ -111,6 +113,68 @@ cd packages/dashboard && pnpm dev
 ```bash
 docker compose up -d
 ```
+
+### Access control
+
+Dashboard sign-in is backed by the `AppUser` table. On a fresh install nobody
+exists yet, so the first sign-in uses the `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+environment pair; that account is then written into `AppUser` and manageable
+like any other from **Admin Panel → Access Control → User Management**.
+
+| Role | Sees |
+|------|------|
+| `ADMIN` | Everything, including credentials and user management |
+| `OPERATOR` | The integration itself — no credentials, settings or user management |
+| `VIEWER` | Read-only: dashboards, reports, reconciliation, audit |
+
+A role is the ceiling. Per-user **area overrides** narrow it further (for
+example an operator who should only see Reports and Audit). Areas are defined
+once in `packages/backend/src/auth/areas.ts`, enforced on the API through
+`@RequireArea()`, and mirrored in `packages/dashboard/src/lib/areas.ts` so the
+sidebar hides what the account cannot open. Keep the two in step when adding a
+screen.
+
+> The `AppUser` table is created like every other entity — by TypeORM
+> `synchronize` (`APP_DB_SYNCHRONIZE=true`) or `pnpm --filter backend
+> db:bootstrap`. Until it exists the env admin still works and the backend logs
+> a warning on each sign-in.
+
+### Reconciliation
+
+**Reconciliation** in the sidebar has two tabs:
+
+- **Odoo ↔ Oracle** — every Odoo order in a date window placed next to the
+  invoice, lines and receipts recorded when it was pushed, classified as
+  matched, missing, amount/payment/line mismatch, Oracle error, or (worst)
+  present in Oracle despite being cancelled or unpaid in Odoo. Orders are
+  joined on the Odoo order reference, which is what
+  `FusionInvoiceLine.salesOrder` and `OrderSyncQueue.odooOrderNumber` both
+  carry. Exportable as CSV.
+
+  It reads top-down. Three roll-ups sit over one order list:
+
+  | View | One row per | Answers |
+  |------|-------------|---------|
+  | **By store** | outlet | which store is out of balance |
+  | **By day** | trading day | which day went wrong |
+  | **By store & day** | outlet × day | the level a Z-report reconciles at |
+  | **Orders** | Odoo order reference | which sale caused it |
+
+  Each roll-up carries order count, problems, match rate, Odoo total, Oracle
+  total, variance, Odoo payments and linked Oracle receipts, plus a totals row.
+  Clicking a row drills into the Odoo order references behind it; clicking an
+  order opens the line-by-line and payment-by-receipt comparison. The drill-down
+  narrows the order list only — the roll-ups keep covering the whole window, so
+  the store totals never shift under you. Stores are keyed on branch code,
+  falling back to branch name then POS config name, so an outlet is never split
+  across two rows because one identifier is missing.
+
+  Roll-up totals deliberately ignore the status filter: a store's variance has
+  to cover every order it booked, or it stops reconciling against the POS.
+- **Odoo source integrity** — did what Odoo's API returned land in our tables
+  intact? A clean result here is the precondition for trusting the first tab.
+
+Both are read-only; running them never sends anything to Odoo or Oracle.
 
 ### URLs
 

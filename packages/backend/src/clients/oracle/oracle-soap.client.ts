@@ -15,6 +15,7 @@ import {
   MODULE_INIT_TIMEOUT_MS,
 } from '../../common/utils/timeout';
 import { Semaphore } from '../../common/utils/semaphore';
+import { money2 } from '../../common/money';
 
 // ──────────────────────────────────────────────────────────────
 // Domain models (mirrors Java fusion/soap/model/*.java)
@@ -73,6 +74,12 @@ export interface CreditMemoLine {
   description?: string;
   quantity: number;
   uomCode?: string;
+  /**
+   * Oracle's numeric InventoryItemId. CreditMemoService identifies the item by
+   * id rather than by ItemNumber; omitted when it cannot be resolved, which
+   * Oracle accepts as a description-only line.
+   */
+  inventoryItemId?: string;
   /** Positive magnitude of the unit price; emitted negated on the wire. */
   unitSellingPrice: number;
   currencyCode: string;
@@ -109,7 +116,33 @@ export interface CreditMemoHeader {
   originalTransactionNumber?: string;
   /** Free-text reason surfaced on the memo (Comments). */
   reason?: string;
+  /**
+   * Numeric Oracle ids the CreditMemoService SOAP payload identifies the memo
+   * by. They come from StoreConfiguration (set per branch on the Stores admin
+   * screen) and are kept as strings so ids beyond 2^53 reach the wire intact.
+   * When any is missing the caller falls back to the REST create, which works
+   * from names instead.
+   */
+  orgId?: string;
+  billToCustomerId?: string;
+  billToSiteUseId?: string;
+  paymentTermsId?: string;
+  batchSourceSequenceId?: string;
+  /** Oracle's CustomerTrxSquenceId — the credit-memo transaction type's id. */
+  customerTrxTypeSequenceId?: string;
   creditMemoLines: CreditMemoLine[];
+}
+
+/** True when every id the CreditMemoService payload needs is on the header. */
+export function hasCreditMemoSoapIds(h: CreditMemoHeader): boolean {
+  return Boolean(
+    h.orgId &&
+      h.billToCustomerId &&
+      h.billToSiteUseId &&
+      h.paymentTermsId &&
+      h.batchSourceSequenceId &&
+      h.customerTrxTypeSequenceId,
+  );
 }
 
 export interface CreditMemoResponse {
@@ -126,12 +159,15 @@ export interface CreditMemoResponse {
  */
 export interface ApplyCreditMemoRequest {
   applyDate: Date;
-  /** Oracle TransactionNumber of the invoice being credited. */
+  /** Oracle TransactionNumber of the invoice credited (InvoiceTrxNumber). */
   transactionNumber: string;
-  /** Oracle TransactionNumber of the credit memo to apply. */
+  /** Oracle TransactionNumber of the memo to apply (CreditMemoTrxNumber). */
   creditMemoNumber: string;
   amountApplied: number;
-  currencyCode: string;
+  /** Business unit name, e.g. "AlQurashi-KSA". Required by the operation. */
+  businessUnit: string;
+  /** Accounting date; defaults to applyDate. */
+  glDate?: Date;
 }
 
 export interface ApplyCreditMemoResponse {
@@ -279,7 +315,7 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
           <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${l.unitSellingPrice}</typ1:UnitSellingPrice>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(l.unitSellingPrice)}</typ1:UnitSellingPrice>
           ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
@@ -354,7 +390,7 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
           <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${-Math.abs(l.unitSellingPrice)}</typ1:UnitSellingPrice>
+          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(-Math.abs(l.unitSellingPrice))}</typ1:UnitSellingPrice>
           ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
@@ -406,48 +442,149 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
 </soapenv:Envelope>`;
 }
 
-// ── Credit-memo application ────────────────────────────────────────────────
-// Applies a credit memo to the invoice it credits, mirroring the shape of the
-// (working) createApplyReceipt envelope. The service path, SOAPAction and target
-// namespace are ENV-CONFIGURABLE because the exact op differs by Fusion pod and
-// is not verifiable offline — set them from your instance's WSDL:
-//   ORACLE_CM_APPLY_SERVICE_PATH  (default below)
-//   ORACLE_CM_APPLY_SOAP_ACTION   (default below)
-//   ORACLE_CM_APPLY_NAMESPACE     (default below)
-// The whole step is gated by ORACLE_CM_APPLY_ENABLED (default off) so it never
-// fires against an unverified endpoint.
-const CM_APPLY_DEFAULTS = {
+// ── Credit Memo Service (create + apply) ───────────────────────────────────
+// Both envelopes below are the ones verified against the pod: a memo is created
+// with createCreditMemo and applied with createApplyOnAccountCreditMemo, on
+// /fscmService/CreditMemoService under the .../transactions/creditMemos/
+// namespace. Everything stays env-overridable so a pod that names things
+// differently can be pointed at without a code change, but the defaults are now
+// the working values rather than guesses:
+//   ORACLE_CM_SERVICE_PATH / ORACLE_CM_NAMESPACE / ORACLE_CM_NAMESPACE_TYPES
+//   ORACLE_CM_CREATE_SOAP_ACTION / ORACLE_CM_APPLY_SOAP_ACTION
+const CM_DEFAULTS = {
   servicePath: '/fscmService/CreditMemoService',
-  soapAction:
-    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/applyCreditMemo',
   namespaceTypes:
-    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/types/',
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemos/creditMemoService/types/',
   namespaceModel:
-    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemoService/',
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemos/creditMemoService/',
+  createSoapAction:
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemos/creditMemoService/createCreditMemo',
+  applySoapAction:
+    'http://xmlns.oracle.com/apps/financials/receivables/transactions/creditMemos/creditMemoService/createApplyOnAccountCreditMemo',
 };
 
-function buildApplyCreditMemoSoap(req: ApplyCreditMemoRequest): string {
-  const nsTypes =
-    process.env.ORACLE_CM_APPLY_NAMESPACE_TYPES ??
-    CM_APPLY_DEFAULTS.namespaceTypes;
-  const nsModel =
-    process.env.ORACLE_CM_APPLY_NAMESPACE ?? CM_APPLY_DEFAULTS.namespaceModel;
+function cmServicePath(): string {
+  return process.env.ORACLE_CM_SERVICE_PATH ?? CM_DEFAULTS.servicePath;
+}
+
+function cmNamespaces(): { nsTypes: string; nsModel: string } {
+  return {
+    nsTypes:
+      process.env.ORACLE_CM_NAMESPACE_TYPES ?? CM_DEFAULTS.namespaceTypes,
+    nsModel: process.env.ORACLE_CM_NAMESPACE ?? CM_DEFAULTS.namespaceModel,
+  };
+}
+
+/**
+ * createCreditMemo envelope.
+ *
+ * Line signs follow the convention the REST credit-memo path already uses: the
+ * invoiced quantity and the extended amount are negative (this is a credit)
+ * while the unit selling price stays a positive magnitude. Optional elements
+ * are omitted rather than sent empty — Oracle rejects an empty InventoryItemId
+ * or UOMCode outright, and a description-only line is a valid memo line.
+ */
+function buildCreateCreditMemoSoap(header: CreditMemoHeader): string {
+  const { nsTypes, nsModel } = cmNamespaces();
+  const currency = header.invoiceCurrencyCode;
+  const comments =
+    header.reason ??
+    (header.originalTransactionNumber
+      ? `Refund against invoice ${header.originalTransactionNumber}`
+      : undefined);
+
+  const linesXml = header.creditMemoLines
+    .map((line) => {
+      const qty = Math.abs(line.quantity);
+      const price = Math.abs(line.unitSellingPrice);
+      const extended = Math.round((qty * price + Number.EPSILON) * 100) / 100;
+      const uom = line.uomCode?.trim();
+      const parts = [
+        `        <cred:CreditMemoLine>`,
+        `          <cred:LineNumber>${line.lineNumber}</cred:LineNumber>`,
+        `          <cred:Description>${escapeXml(
+          line.description || `Refund line ${line.lineNumber}`,
+        )}</cred:Description>`,
+        `          <cred:InvoicedQuantity${
+          uom ? ` unitCode="${escapeXml(uom)}"` : ''
+        }>${-qty}</cred:InvoicedQuantity>`,
+      ];
+      if (uom) parts.push(`          <cred:UOMCode>${escapeXml(uom)}</cred:UOMCode>`);
+      parts.push(
+        `          <cred:UnitSellingPrice currencyCode="${currency}">${price}</cred:UnitSellingPrice>`,
+        `          <cred:ExtendedAmount currencyCode="${currency}">${-extended}</cred:ExtendedAmount>`,
+        `          <cred:LineType>LINE</cred:LineType>`,
+      );
+      if (line.inventoryItemId) {
+        parts.push(
+          `          <cred:InventoryItemId>${escapeXml(line.inventoryItemId)}</cred:InventoryItemId>`,
+        );
+      }
+      parts.push(
+        `          <cred:SalesOrder>${escapeXml(line.salesOrder)}</cred:SalesOrder>`,
+      );
+      if (line.taxClassificationCode) {
+        parts.push(
+          `          <cred:TaxClassificationCode>${escapeXml(line.taxClassificationCode)}</cred:TaxClassificationCode>`,
+        );
+      }
+      parts.push(`        </cred:CreditMemoLine>`);
+      return parts.join('\n');
+    })
+    .join('\n');
+
+  const headerParts = [
+    `        <cred:InvoiceCurrencyCode>${currency}</cred:InvoiceCurrencyCode>`,
+    `        <cred:BatchSourceSequenceId>${escapeXml(header.batchSourceSequenceId ?? '')}</cred:BatchSourceSequenceId>`,
+    `        <cred:BillToCustomerId>${escapeXml(header.billToCustomerId ?? '')}</cred:BillToCustomerId>`,
+    `        <cred:BillToSiteUseId>${escapeXml(header.billToSiteUseId ?? '')}</cred:BillToSiteUseId>`,
+  ];
+  if (comments) {
+    headerParts.push(`        <cred:Comments>${escapeXml(comments)}</cred:Comments>`);
+  }
+  headerParts.push(
+    `        <cred:TrxDate>${xmlDate(header.memoDate)}</cred:TrxDate>`,
+    `        <cred:PaymentTermsId>${escapeXml(header.paymentTermsId ?? '')}</cred:PaymentTermsId>`,
+    `        <cred:OrgId>${escapeXml(header.orgId ?? '')}</cred:OrgId>`,
+    `        <cred:CustomerTrxSquenceId>${escapeXml(header.customerTrxTypeSequenceId ?? '')}</cred:CustomerTrxSquenceId>`,
+  );
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope
   xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
   xmlns:typ="${nsTypes}"
-  xmlns:typ1="${nsModel}">
+  xmlns:cred="${nsModel}">
   <soapenv:Header/>
   <soapenv:Body>
-    <typ:applyCreditMemo>
-      <typ:creditMemoApplication>
-        <typ1:ApplyDate>${xmlDate(req.applyDate)}</typ1:ApplyDate>
-        <typ1:TransactionNumber>${escapeXml(req.transactionNumber)}</typ1:TransactionNumber>
-        <typ1:CreditMemoNumber>${escapeXml(req.creditMemoNumber)}</typ1:CreditMemoNumber>
-        <typ1:AmountApplied>${Math.abs(req.amountApplied)}</typ1:AmountApplied>
-        <typ1:CurrencyCode>${req.currencyCode}</typ1:CurrencyCode>
-      </typ:creditMemoApplication>
-    </typ:applyCreditMemo>
+    <typ:createCreditMemo>
+      <typ:creditMemo>
+${headerParts.join('\n')}
+${linesXml}
+      </typ:creditMemo>
+    </typ:createCreditMemo>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+function buildApplyCreditMemoSoap(req: ApplyCreditMemoRequest): string {
+  const { nsTypes, nsModel } = cmNamespaces();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+  xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:typ="${nsTypes}"
+  xmlns:cred="${nsModel}">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <typ:createApplyOnAccountCreditMemo>
+      <typ:applyOnAccountCreditMemo>
+        <cred:BusinessUnit>${escapeXml(req.businessUnit)}</cred:BusinessUnit>
+        <cred:CreditMemoTrxNumber>${escapeXml(req.creditMemoNumber)}</cred:CreditMemoTrxNumber>
+        <cred:InvoiceTrxNumber>${escapeXml(req.transactionNumber)}</cred:InvoiceTrxNumber>
+        <cred:AmountApplied>${Math.abs(req.amountApplied).toFixed(2)}</cred:AmountApplied>
+        <cred:ApplyDate>${xmlDate(req.applyDate)}</cred:ApplyDate>
+        <cred:GlDate>${xmlDate(req.glDate ?? req.applyDate)}</cred:GlDate>
+      </typ:applyOnAccountCreditMemo>
+    </typ:createApplyOnAccountCreditMemo>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -579,10 +716,10 @@ function buildJournalSoap(header: JournalHeader): string {
           ${opt('Segment9', l.segment9)}
           ${opt('Segment10', l.segment10)}
           <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
-          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${l.enteredDrAmount}</typ1:EnteredDrAmount>` : ''}
-          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${l.enteredCrAmount}</typ1:EnteredCrAmount>` : ''}
-          ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${l.accountedDr}</typ1:AccountedDr>` : ''}
-          ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${l.accountedCr}</typ1:AccountedCr>` : ''}
+          ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${money2(l.enteredDrAmount)}</typ1:EnteredDrAmount>` : ''}
+          ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${money2(l.enteredCrAmount)}</typ1:EnteredCrAmount>` : ''}
+          ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${money2(l.accountedDr)}</typ1:AccountedDr>` : ''}
+          ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${money2(l.accountedCr)}</typ1:AccountedCr>` : ''}
           ${l.currencyConversionRate !== undefined ? `<typ1:CurrencyConversionRate>${l.currencyConversionRate}</typ1:CurrencyConversionRate>` : ''}
           ${l.currencyConversionType ? `<typ1:CurrencyConversionType>${l.currencyConversionType}</typ1:CurrencyConversionType>` : ''}
           ${l.currencyConversionDate ? `<typ1:CurrencyConversionDate>${xmlDate(l.currencyConversionDate)}</typ1:CurrencyConversionDate>` : ''}
@@ -1080,47 +1217,155 @@ export class OracleSoapClient implements OnModuleInit {
     );
   }
 
-  /** True when credit-memo application is opted in (ORACLE_CM_APPLY_ENABLED). */
-  isCreditMemoApplicationEnabled(): boolean {
-    return process.env.ORACLE_CM_APPLY_ENABLED === 'true';
+  /**
+   * Creates the credit memo through Oracle's CreditMemoService
+   * (createCreditMemo) — the payload the pod actually accepts for refunds.
+   *
+   * Unlike {@link createCreditMemo}, which re-uses the invoice service and
+   * identifies everything by name, this operation works from numeric ids
+   * (OrgId, BillToCustomerId, BillToSiteUseId, PaymentTermsId,
+   * BatchSourceSequenceId, CustomerTrxSquenceId). Those live on
+   * StoreConfiguration; call {@link hasCreditMemoSoapIds} first — a memo sent
+   * with a blank id is rejected by Oracle with an unhelpful fault.
+   */
+  async createCreditMemoViaService(
+    header: CreditMemoHeader,
+  ): Promise<CreditMemoResponse> {
+    if (!hasCreditMemoSoapIds(header)) {
+      throw new Error(
+        'Cannot call CreditMemoService.createCreditMemo — the branch is missing ' +
+          'one or more Oracle ids (OrgId, BillToCustomerId, BillToSiteUseId, ' +
+          'PaymentTermsId, BatchSourceSequenceId, CustomerTrxSquenceId). Set them ' +
+          'on the Stores admin screen.',
+      );
+    }
+
+    return this.circuitBreaker.execute('oracle:createCreditMemoService', () =>
+      this.withRetries(async () => {
+        const memoTotal = header.creditMemoLines.reduce(
+          (s, l) => s + Math.abs(l.unitSellingPrice) * Math.abs(l.quantity),
+          0,
+        );
+        this.logger.log(
+          `Creating credit memo via CreditMemoService for ${header.billToCustomerName} ` +
+            `(amount -${memoTotal} ${header.invoiceCurrencyCode}, ` +
+            `${header.creditMemoLines.length} line(s), org ${header.orgId})...`,
+        );
+
+        const body = buildCreateCreditMemoSoap(header);
+        this.logger.debug(
+          `📤 Oracle createCreditMemo SOAP payload (${body.length} chars):\n${body}`,
+        );
+
+        const xml = await this.soapPost(
+          cmServicePath(),
+          body,
+          process.env.ORACLE_CM_CREATE_SOAP_ACTION ??
+            CM_DEFAULTS.createSoapAction,
+          'createCreditMemo',
+        );
+        this.assertNoFault(xml, 'createCreditMemo');
+
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
+          'SUCCESS';
+        // The service echoes the created memo; TrxNumber is what the apply call
+        // needs as CreditMemoTrxNumber.
+        const transactionNumber =
+          extractTag(xml, 'TrxNumber') ||
+          extractTag(xml, 'TransactionNumber') ||
+          extractTag(xml, 'trxNumber') ||
+          extractTag(xml, 'transactionNumber') ||
+          '';
+        const customerTrxId =
+          extractTag(xml, 'CustomerTrxId') ||
+          extractTag(xml, 'CustomerTransactionId') ||
+          extractTag(xml, 'customerTrxId') ||
+          '';
+
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          const errorMessage = extractErrorMessage(xml);
+          this.logger.error(
+            `❌ CreditMemoService.createCreditMemo failed with Status E:\n` +
+              `  Transaction Number: ${transactionNumber || 'null'}\n` +
+              `  Error Message: ${errorMessage || '(none)'}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle credit memo creation failed with Status E: ${
+              errorMessage || 'no error details'
+            }`,
+          );
+        }
+
+        if (!transactionNumber.trim()) {
+          this.logger.error(
+            `❌ createCreditMemo returned no transaction number:\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle accepted the credit memo but returned no transaction number ` +
+              `(status ${serviceStatus}) — it cannot be applied. Check the memo in Oracle.`,
+          );
+        }
+
+        this.logger.log(
+          `✅ Credit memo created via CreditMemoService: txn=${transactionNumber}, status=${serviceStatus}`,
+        );
+        return { serviceStatus, transactionNumber, customerTrxId };
+      }),
+    );
   }
 
   /**
-   * Applies a credit memo to the invoice it credits. Opt-in and env-configurable
-   * (see CM_APPLY_DEFAULTS / buildApplyCreditMemoSoap) because the exact Oracle
-   * op differs by pod and cannot be verified offline. Returns disabled=true
-   * without calling Oracle when ORACLE_CM_APPLY_ENABLED !== 'true'.
+   * True unless application has been explicitly switched off. The operation is
+   * verified against the pod, so an unapplied memo sitting on-account is a
+   * failure rather than the safe default it used to be — set
+   * ORACLE_CM_APPLY_ENABLED=false only to deliberately pause applications.
+   */
+  isCreditMemoApplicationEnabled(): boolean {
+    return process.env.ORACLE_CM_APPLY_ENABLED !== 'false';
+  }
+
+  /**
+   * Applies a credit memo to the invoice it credits, via
+   * createApplyOnAccountCreditMemo (see buildApplyCreditMemoSoap). Returns
+   * disabled=true without calling Oracle when ORACLE_CM_APPLY_ENABLED=false.
    */
   async applyCreditMemo(
     req: ApplyCreditMemoRequest,
   ): Promise<ApplyCreditMemoResponse & { disabled?: boolean }> {
     if (!this.isCreditMemoApplicationEnabled()) {
       this.logger.debug(
-        'Credit-memo application is disabled (ORACLE_CM_APPLY_ENABLED != true) — ' +
+        'Credit-memo application is disabled (ORACLE_CM_APPLY_ENABLED=false) — ' +
           'memo left on-account.',
       );
       return { serviceStatus: 'DISABLED', applicationId: '', disabled: true };
     }
 
-    const servicePath =
-      process.env.ORACLE_CM_APPLY_SERVICE_PATH ?? CM_APPLY_DEFAULTS.servicePath;
+    const servicePath = cmServicePath();
     const soapAction =
-      process.env.ORACLE_CM_APPLY_SOAP_ACTION ?? CM_APPLY_DEFAULTS.soapAction;
+      process.env.ORACLE_CM_APPLY_SOAP_ACTION ?? CM_DEFAULTS.applySoapAction;
 
     return this.circuitBreaker.execute('oracle:applyCreditMemo', () =>
       this.withRetries(async () => {
         this.logger.log(
           `Applying credit memo ${req.creditMemoNumber} to invoice ` +
-            `${req.transactionNumber} (amount ${Math.abs(req.amountApplied)} ${req.currencyCode})...`,
+            `${req.transactionNumber} (amount ${Math.abs(req.amountApplied)}, BU ${req.businessUnit})...`,
         );
         const body = buildApplyCreditMemoSoap(req);
+        this.logger.debug(
+          `📤 Oracle createApplyOnAccountCreditMemo SOAP payload:\n${body}`,
+        );
         const xml = await this.soapPost(
           servicePath,
           body,
           soapAction,
-          'applyCreditMemo',
+          'createApplyOnAccountCreditMemo',
         );
-        this.assertNoFault(xml, 'applyCreditMemo');
+        this.assertNoFault(xml, 'createApplyOnAccountCreditMemo');
 
         const serviceStatus =
           extractTag(xml, 'ServiceStatus') ||

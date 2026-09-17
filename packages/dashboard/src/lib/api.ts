@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+import { getApiBase } from './runtime-config';
 
 // ── Auth token storage ────────────────────────────────────────────
 const TOKEN_KEY = 'integration_hub_token';
@@ -14,7 +14,7 @@ export const authStorage = {
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const token = authStorage.getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${getApiBase()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -100,13 +100,86 @@ export interface SyncControlRow {
   updatedAt: string;
 }
 
+/**
+ * Builds a `?a=1&b=2` string, skipping empty values so blank filters are not
+ * sent. Takes any plain object rather than `Record<string, unknown>` so callers
+ * can pass a typed query shape without casting at every call site.
+ */
+function buildQuery(params: object): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params as Record<string, unknown>)) {
+    if (value === undefined || value === null || value === '') continue;
+    search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
+
 export const api = {
   // ── Auth ───────────────────────────────────────────────────────
   login: (email: string, password: string) =>
-    apiRequest<{ accessToken: string }>('/auth/login', {
+    apiRequest<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
+  getMe: () => apiRequest<AuthProfile>('/auth/me'),
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    apiRequest<{ changed: true }>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  // User management
+  listUsers: () => apiRequest<DashboardUser[]>('/users'),
+  listAreas: () => apiRequest<AreaDefinition[]>('/users/areas'),
+  createUser: (data: CreateUserPayload) =>
+    apiRequest<{ user: DashboardUser; temporaryPassword?: string }>('/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateUser: (id: string, data: UpdateUserPayload) =>
+    apiRequest<DashboardUser>(`/users/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  resetUserPassword: (id: string, password?: string) =>
+    apiRequest<{ temporaryPassword: string }>(
+      `/users/${encodeURIComponent(id)}/reset-password`,
+      { method: 'POST', body: JSON.stringify(password ? { password } : {}) },
+    ),
+  deleteUser: (id: string) =>
+    apiRequest<{ deleted: true }>(`/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  // Odoo vs Oracle reconciliation
+  reconcileOdooOracle: (params: ReconcileQuery) =>
+    apiRequest<ReconciliationResult>(
+      `/reconciliation${buildQuery(params)}`,
+    ),
+  reconciliationBreakdown: (params: ReconcileQuery & { groupBy: BreakdownGroupBy }) =>
+    apiRequest<BreakdownResult>(
+      `/reconciliation/breakdown${buildQuery(params)}`,
+    ),
+  getReconciliationDetail: (orderName: string) =>
+    apiRequest<ReconciliationDetail>(
+      `/reconciliation/orders/${encodeURIComponent(orderName)}`,
+    ),
+  /** Takings by payment method, per store and per day. */
+  reconciliationTenders: (
+    params: ReconcileQuery & { groupBy: TenderGroupBy },
+  ) => apiRequest<TenderResult>(`/reconciliation/tenders${buildQuery(params)}`),
+  tenderExportUrl: (params: ReconcileQuery & { groupBy: TenderGroupBy }) =>
+    `${getApiBase()}/reconciliation/tenders/export${buildQuery(params)}`,
+  /** Reads the invoice back out of Oracle by transaction number, right now. */
+  liveVerifyOrder: (orderName: string, tolerance?: number) =>
+    apiRequest<LiveVerifyResult>(
+      `/reconciliation/orders/${encodeURIComponent(orderName)}/live${
+        tolerance != null ? `?tolerance=${tolerance}` : ''
+      }`,
+    ),
+  reconciliationExportUrl: (params: ReconcileQuery) =>
+    `${getApiBase()}/reconciliation/export${buildQuery(params)}`,
 
   // ── Region Integration ────────────────────────────────────────
   listVendHqRegions: () => apiRequest<VendHqRegionCredential[]>('/vendhq-backup/regions'),
@@ -174,6 +247,12 @@ export const api = {
     apiRequest<IntegrationRunJob[]>(`/sync/integration-run${limit ? `?limit=${limit}` : ''}`),
   getIntegrationRun: (id: string) =>
     apiRequest<IntegrationRunJob>(`/sync/integration-run/${id}`),
+  getIntegrationCoverage: (region: string, days?: number) =>
+    apiRequest<IntegrationCoverage>(
+      `/sync/integration-coverage?region=${encodeURIComponent(region)}${
+        days ? `&days=${days}` : ''
+      }`,
+    ),
 
   createSyncJob: (data: CreateSyncJobDto) => apiRequest<SyncJob>('/sync/jobs', { method: 'POST', body: JSON.stringify(data) }),
   listSyncJobs: (status?: string) => apiRequest<SyncJob[]>(`/sync/jobs${status ? `?status=${status}` : ''}`),
@@ -274,7 +353,7 @@ export const api = {
   /** Download all records for an admin table as a CSV blob URL */
   adminExportCsvUrl: (table: string, region?: string) => {
     const qs = region ? `?region=${encodeURIComponent(region)}` : '';
-    return `${API_BASE}/admin/${table}/export${qs}`;
+    return `${getApiBase()}/admin/${table}/export${qs}`;
   },
 
   /** Upload a CSV file to bulk-import records into an admin table */
@@ -282,7 +361,7 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
     const token = authStorage.getToken();
-    return fetch(`${API_BASE}/admin/${table}/import`, {
+    return fetch(`${getApiBase()}/admin/${table}/import`, {
       method: 'POST',
       body: form,
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -364,10 +443,10 @@ export const api = {
     }),
 
   /** Export payment mappings as CSV */
-  exportPaymentMappingsCsvUrl: () => `${API_BASE}/payment-mappings/export`,
+  exportPaymentMappingsCsvUrl: () => `${getApiBase()}/payment-mappings/export`,
 
   /** Export store configs as CSV */
-  exportStoresCsvUrl: () => `${API_BASE}/store-config/export`,
+  exportStoresCsvUrl: () => `${getApiBase()}/store-config/export`,
 
   // ─── AI Monitor ───────────────────────────────────────────────────
   /** Run the AI-powered diagnostic analysis of the whole integration */
@@ -385,7 +464,7 @@ export const api = {
   /** POST the query to the export endpoint and trigger a CSV file download */
   exportReport: async (dto: ReportQueryDto): Promise<void> => {
     const token = authStorage.getToken();
-    const res = await fetch(`${API_BASE}/reports/export`, {
+    const res = await fetch(`${getApiBase()}/reports/export`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -729,6 +808,28 @@ export interface IntegrationRunJob extends Omit<SyncJob, 'scopeValue'> {
   completedAt?: string | null;
 }
 
+/** One business day's gap between what Odoo holds and what Oracle confirmed. */
+export interface DayCoverage {
+  region: string;
+  businessDay: string;
+  ordersTotal: number;
+  ordersComplete: number;
+  ordersMissing: number;
+  ordersPartial: number;
+  linesOutstanding: number;
+  amountOutstanding: number;
+  branches: string[];
+  sampleOrderNumbers: string[];
+}
+
+export interface IntegrationCoverage {
+  region: string;
+  days: DayCoverage[];
+  outstandingDays: string[];
+  ordersOutstanding: number;
+  linesOutstanding: number;
+}
+
 export interface OrderQueueEntry {
   id: string;
   odooOrderId: string;
@@ -795,6 +896,13 @@ export interface StoreConfig {
   transactionSource: string;
   transactionType: string;
   invoiceCurrencyCode: string;
+  creditMemoTransactionType: string | null;
+  // Oracle ids the CreditMemoService SOAP payload needs. Null until set here.
+  billToCustomerId: string | null;
+  billToSiteUseId: string | null;
+  paymentTermsId: string | null;
+  batchSourceSequenceId: string | null;
+  creditMemoTrxTypeId: string | null;
   isActive: boolean;
   validationStatus: string;
   validationErrors: string[] | null;
@@ -820,6 +928,12 @@ export interface UpsertStoreConfigDto {
   transactionSource?: string;
   transactionType?: string;
   invoiceCurrencyCode?: string;
+  creditMemoTransactionType?: string;
+  billToCustomerId?: string;
+  billToSiteUseId?: string;
+  paymentTermsId?: string;
+  batchSourceSequenceId?: string;
+  creditMemoTrxTypeId?: string;
   isActive?: boolean;
   createdBy: string;
 }
@@ -1158,4 +1272,350 @@ export interface AiAnalysisResult {
     failedTransactions: { unresolved: number; byType: Record<string, number> };
     itemSyncErrors: number;
   };
+}
+
+// ─── Auth & user management ────────────────────────────────────────
+export type UserRole = 'ADMIN' | 'OPERATOR' | 'VIEWER';
+
+export interface AuthProfile {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole | string;
+  /** Area keys this account may see; drives navigation and route guarding. */
+  areas: string[];
+  mustChangePassword: boolean;
+}
+
+export interface LoginResponse {
+  accessToken: string;
+  user: AuthProfile;
+}
+
+export interface AreaDefinition {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+  routes: string[];
+}
+
+export interface DashboardUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole | string;
+  isActive: boolean;
+  /** null = inherits the role defaults. */
+  areaOverrides: string[] | null;
+  effectiveAreas: string[];
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateUserPayload {
+  email: string;
+  name?: string;
+  password?: string;
+  role: string;
+  isActive?: boolean;
+  areaOverrides?: string[] | null;
+}
+
+export interface UpdateUserPayload {
+  name?: string;
+  role?: string;
+  isActive?: boolean;
+  areaOverrides?: string[] | null;
+}
+
+// ─── Odoo ↔ Oracle reconciliation ──────────────────────────────────
+export type ReconciliationStatus =
+  | 'ORACLE_ERROR'
+  | 'MISSING_IN_ORACLE'
+  | 'UNEXPECTED_IN_ORACLE'
+  | 'AMOUNT_MISMATCH'
+  | 'PAYMENT_MISMATCH'
+  | 'LINE_MISMATCH'
+  | 'NOT_SYNCABLE'
+  | 'MATCHED';
+
+export interface ReconcileQuery {
+  startDate?: string;
+  endDate?: string;
+  region?: string;
+  branchCode?: string;
+  /** One store, matched on branch code, Odoo branch name or POS config name. */
+  store?: string;
+  status?: string;
+  search?: string;
+  tolerance?: number;
+  limit?: number;
+  offset?: number;
+  maxScan?: number;
+}
+
+export interface ReconciliationOdooSide {
+  orderId: number;
+  /** The Odoo order reference — the key both systems are joined on. */
+  orderName: string;
+  branchCode: string | null;
+  branchName: string | null;
+  posConfigName: string | null;
+  region: string | null;
+  orderDate: string | null;
+  state: string | null;
+  total: number;
+  untaxed: number;
+  tax: number;
+  discount: number;
+  lineCount: number;
+  lineTotal: number;
+  paymentCount: number;
+  paymentTotal: number;
+}
+
+export interface ReconciliationOracleSide {
+  headerId: string | null;
+  invoiceNumber: string | null;
+  status: string | null;
+  txnDate: string | null;
+  glDate: string | null;
+  total: number | null;
+  lineCount: number;
+  /** null = no receipt could be linked (unknown), not zero. */
+  receiptTotal: number | null;
+  receiptCount: number;
+  message: string | null;
+}
+
+export interface ReconciliationRow {
+  orderName: string;
+  odoo: ReconciliationOdooSide;
+  oracle: ReconciliationOracleSide | null;
+  queueStatus: string | null;
+  queueError: string | null;
+  status: ReconciliationStatus;
+  amountDifference: number | null;
+  paymentDifference: number | null;
+  lineDifference: number | null;
+  issues: string[];
+}
+
+export interface ReconciliationOrphan {
+  salesOrder: string;
+  invoiceNumber: string | null;
+  region: string | null;
+  lineCount: number;
+  firstSeen: string | null;
+}
+
+export interface ReconciliationResult {
+  window: { startDate: string | null; endDate: string | null };
+  tolerance: number;
+  summary: {
+    scanned: number;
+    truncated: boolean;
+    counts: Record<ReconciliationStatus, number>;
+    problems: number;
+    odooTotal: number;
+    oracleTotal: number;
+    variance: number;
+    matchRate: number;
+    orphanCount: number;
+    /** Orders billed on an invoice shared with other orders. */
+    aggregatedOrders: number;
+  };
+  rows: ReconciliationRow[];
+  orphans: ReconciliationOrphan[];
+  pagination: { total: number; limit: number; offset: number };
+}
+
+export type BreakdownGroupBy = 'store' | 'date' | 'store-date';
+
+export interface BreakdownRow {
+  key: string;
+  branchCode: string | null;
+  branchName: string | null;
+  region: string | null;
+  /** `YYYY-MM-DD`, or null when the grouping does not slice by date. */
+  date: string | null;
+  orders: number;
+  counts: Record<ReconciliationStatus, number>;
+  problems: number;
+  matchRate: number;
+  odooTotal: number;
+  oracleTotal: number;
+  variance: number;
+  odooPayments: number;
+  oracleReceipts: number;
+  /** Orders whose receipts could not be linked, so `oracleReceipts` understates. */
+  unlinkedReceiptOrders: number;
+}
+
+export interface BreakdownResult {
+  groupBy: BreakdownGroupBy;
+  tolerance: number;
+  scanned: number;
+  truncated: boolean;
+  rows: BreakdownRow[];
+  totals: BreakdownRow;
+}
+
+export type TenderGroupBy =
+  | 'store-date-method'
+  | 'store-method'
+  | 'date-method'
+  | 'method';
+
+export type TenderMappingStatus =
+  | 'MAPPED'
+  | 'PENDING'
+  | 'UNMAPPED'
+  | 'ORACLE_ONLY';
+
+export type TenderStatus =
+  | 'MATCHED'
+  | 'SHORT_IN_ORACLE'
+  | 'OVER_IN_ORACLE'
+  | 'MISSING_IN_ORACLE'
+  | 'UNEXPECTED_IN_ORACLE'
+  /** Not all orders behind this tender's invoices were in the window. */
+  | 'INCOMPLETE';
+
+export interface TenderRow {
+  key: string;
+  branchCode: string | null;
+  branchName: string | null;
+  region: string | null;
+  date: string | null;
+  method: string;
+  mappedMethod: string | null;
+  mappingStatus: TenderMappingStatus;
+  odooCount: number;
+  odooTotal: number;
+  oracleCount: number;
+  oracleTotal: number;
+  /** Settlement fees — normally negative, held out of `oracleTotal`. */
+  oracleFees: number;
+  variance: number;
+  /** An invoice behind this row bills orders outside the window. */
+  partial: boolean;
+  status: TenderStatus;
+}
+
+export interface TenderResult {
+  groupBy: TenderGroupBy;
+  tolerance: number;
+  scanned: number;
+  truncated: boolean;
+  rows: TenderRow[];
+  totals: TenderRow;
+  unmappedMethods: string[];
+}
+
+export type LiveVerifyStatus =
+  | 'VERIFIED'
+  | 'MISMATCH'
+  | 'NOT_IN_ORACLE'
+  | 'LOOKUP_FAILED';
+
+export interface OracleLiveInvoiceLine {
+  lineNumber: number | null;
+  description: string | null;
+  itemNumber: string | null;
+  quantity: number | null;
+  unitSellingPrice: number | null;
+  lineAmount: number | null;
+  taxClassificationCode: string | null;
+  salesOrder: string | null;
+  unitOfMeasure: string | null;
+}
+
+export interface LiveVerifyResult {
+  orderName: string;
+  txnNumber: string;
+  checkedAt: string;
+  durationMs: number;
+  status: LiveVerifyStatus;
+  issues: string[];
+  tolerance: number;
+  odoo: {
+    total: number;
+    lineCount: number;
+    paymentTotal: number;
+    orderDate: string | null;
+    branchName: string | null;
+    state: string | null;
+  };
+  /** What we recorded at push time, for spotting drift in our own audit row. */
+  stored: {
+    invoiceNumber: string | null;
+    status: string | null;
+    total: number | null;
+    lineCount: number;
+  } | null;
+  live: {
+    transactionNumber: string | null;
+    customerTransactionId: number | null;
+    documentNumber: number | null;
+    status: string | null;
+    transactionDate: string | null;
+    accountingDate: string | null;
+    currencyCode: string | null;
+    transactionType: string | null;
+    transactionSource: string | null;
+    businessUnit: string | null;
+    billToCustomerName: string | null;
+    billToCustomerNumber: string | null;
+    enteredAmount: number | null;
+    balanceAmount: number | null;
+    lineCount: number | null;
+    lines: OracleLiveInvoiceLine[];
+  } | null;
+  amountDifference: number | null;
+  lineDifference: number | null;
+}
+
+export interface ReconciliationDetail {
+  summary: ReconciliationRow;
+  odooLines: {
+    lineId: number | null;
+    product: string | null;
+    productCode: string | null;
+    qty: number;
+    priceUnit: number;
+    subtotal: number;
+    subtotalIncl: number;
+    taxName: string | null;
+  }[];
+  oracleLines: {
+    lineNumber: number | null;
+    itemNumber: string | null;
+    description: string | null;
+    qty: number;
+    uom: string | null;
+    taxCode: string | null;
+    status: string | null;
+    invoiceNumber: string | null;
+    message: string | null;
+  }[];
+  odooPayments: {
+    paymentId: number | null;
+    method: string | null;
+    amount: number;
+    currency: string | null;
+    paymentDate: string | null;
+  }[];
+  oracleReceipts: {
+    kind: 'STANDARD' | 'MISC';
+    receiptNumber: string | null;
+    amount: number;
+    receiptDate: string | null;
+    status: string | null;
+    message: string | null;
+  }[];
 }

@@ -200,6 +200,13 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
+      # Run the process in UTC so every Date/toISOString is deterministic
+      # regardless of host timezone. The admin date-range → UTC conversion is
+      # applied explicitly using APP_INTEGRATION_TIMEZONE (see below).
+      TZ: UTC
+      # Timezone the admin's date-range picker input is interpreted in before
+      # converting to UTC for the Odoo/IBQ API. Default Asia/Riyadh (UTC+3).
+      APP_INTEGRATION_TIMEZONE: ${APP_INTEGRATION_TIMEZONE:-Asia/Riyadh}
       # node-oracledb thick mode runs DB calls on libuv's thread pool; its
       # default size (4) caps concurrent Oracle ops regardless of pool size.
       # Match it to the DB pool so parallel order upserts truly run in parallel.
@@ -217,7 +224,11 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       LOG_LEVEL: debug
-      CORS_ORIGIN: http://localhost:3000
+      # The dashboard derives its own host at runtime, so clients may connect
+      # from any LAN address. Default to '*' (reflect the request origin) so no
+      # rebuild is needed when IPs/hostnames change. Set an explicit
+      # comma-separated allow-list in the root .env to lock this down for prod.
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
       # Oracle DB — fill in your instance details in .env (copy from .env.example)
       # These are required when using the "Import from Oracle" button in the dashboard
             # Oracle DB — fill in your instance details in .env (copy from .env.example)
@@ -236,6 +247,13 @@ services:
       # path there is a Windows host path. Env vars set here win over dotenv,
       # so pin the Linux path bundled in the image.
       APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
+      # Max concurrent SOAP invoice POSTs to Oracle Fusion. Kept LOW because
+      # Oracle's AR tax engine intermittently throws transient faults
+      # (CalculatedUnitSellingPrice NPE / "Failed to validate all rows") when
+      # many invoices compute tax simultaneously — which then trips the
+      # oracle:createSimpleInvoice circuit and blocks otherwise-healthy invoices.
+      # Lower = fewer transient faults; raise cautiously if runs are too slow.
+      ORACLE_SOAP_CONCURRENCY: ${ORACLE_SOAP_CONCURRENCY:-4}
     ports:
       - '3001:3001'
     depends_on:
@@ -253,6 +271,9 @@ services:
       # Mount the local data/ folder read-only so CSV seed files are accessible
       # inside the container without rebuilding the image.
       - ./packages/backend/data:/app/packages/backend/data:ro
+      # APP_DB_* live here (dotenv). .dockerignore excludes .env from the image,
+      # so it must be bind-mounted in at runtime rather than baked in.
+      - ./packages/backend/.env:/app/packages/backend/.env:ro
     networks:
       - integration_net
 
@@ -298,6 +319,9 @@ services:
     command: ['sh', '-c', 'pnpm run start:worker:dev']
     environment:
       NODE_ENV: development
+      # Match the backend: run in UTC and interpret admin dates in this zone.
+      TZ: UTC
+      APP_INTEGRATION_TIMEZONE: ${APP_INTEGRATION_TIMEZONE:-Asia/Riyadh}
       # See backend: raise libuv thread pool so thick-mode Oracle ops parallelize.
       UV_THREADPOOL_SIZE: "16"
       APP_DB_POOL_MIN: "16"
@@ -316,6 +340,14 @@ services:
       APP_DB_INSTANT_CLIENT_DIR: /opt/instantclient
       ORACLE_DB_THICK_MODE: ${ORACLE_DB_THICK_MODE:-false}
       ORACLE_DB_INSTANT_CLIENT_DIR: ${ORACLE_DB_INSTANT_CLIENT_DIR:-}
+      # See backend: cap concurrent SOAP invoice POSTs low so Oracle's AR tax
+      # engine doesn't throw transient faults under parallel tax computation
+      # (which trips the oracle:createSimpleInvoice circuit). Overridable via .env.
+      ORACLE_SOAP_CONCURRENCY: ${ORACLE_SOAP_CONCURRENCY:-4}
+    volumes:
+      # APP_DB_* live here (dotenv). .dockerignore excludes .env from the image,
+      # so it must be bind-mounted in at runtime rather than baked in.
+      - ./packages/backend/.env:/app/packages/backend/.env:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -335,8 +367,14 @@ services:
     container_name: integration_dashboard
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
-      NEXT_PUBLIC_WS_URL: http://localhost:3001
+      # NEXT_PUBLIC_API_URL / NEXT_PUBLIC_WS_URL are intentionally left UNSET.
+      # The browser derives the backend host from window.location at runtime
+      # (see packages/dashboard/src/lib/runtime-config.ts), so the dashboard
+      # works from localhost, the server's LAN IP, or a hostname with no
+      # rebuild. Set NEXT_PUBLIC_API_URL only for a fixed prod/reverse-proxy URL.
+      #
+      # Server-side rewrite fallback target (inside the container network):
+      INTERNAL_API_URL: http://backend:3001/api/v1
     ports:
       - '3000:3000'
     depends_on:

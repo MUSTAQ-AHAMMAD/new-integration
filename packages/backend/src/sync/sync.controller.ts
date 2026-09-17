@@ -40,6 +40,8 @@ import { AutoFixService } from './auto-fix.service';
 import { DailyInvoiceService } from './daily-invoice.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
+import { IntegrationCoverageService } from './integration-coverage.service';
+import { InventoryTransactionVerifierService } from './inventory-transaction-verifier.service';
 import { IntegrationRunService } from './integration-run.service';
 import { IntegrationSchedulerService } from './integration-scheduler.service';
 import { ReadinessService } from './readiness.service';
@@ -55,6 +57,8 @@ export class SyncController {
     private readonly dailyAggregationService: DailyAggregationService,
     private readonly dailyInvoiceScheduler: DailyInvoiceSchedulerService,
     private readonly integrationRun: IntegrationRunService,
+    private readonly integrationCoverage: IntegrationCoverageService,
+    private readonly inventoryVerifier: InventoryTransactionVerifierService,
     private readonly integrationScheduler: IntegrationSchedulerService,
     private readonly readinessService: ReadinessService,
     private readonly orderSyncService: OrderSyncService,
@@ -311,6 +315,79 @@ export class SyncController {
       throw new BadRequestException(`Integration run ${id} not found`);
     }
     return job;
+  }
+
+  @Get('integration-coverage')
+  @ApiOperation({
+    summary:
+      'Per-business-day gap between Odoo and Oracle for a region: how many ' +
+      'orders are backed up, how many are fully posted, and exactly which ' +
+      'lines Oracle is still missing. This is what the scheduler drives off.',
+  })
+  async getIntegrationCoverage(
+    @Query('region') region?: string,
+    @Query('days') days?: string,
+  ) {
+    if (!region || !region.trim()) {
+      throw new BadRequestException('region is required');
+    }
+    const lookback = days ? Number(days) : undefined;
+    if (lookback != null && (!Number.isFinite(lookback) || lookback < 1)) {
+      throw new BadRequestException('days must be a positive number');
+    }
+    const coverage = await this.integrationCoverage.regionCoverage(
+      region.trim().toUpperCase(),
+      lookback,
+    );
+    return {
+      region: region.trim().toUpperCase(),
+      days: coverage,
+      outstandingDays: coverage
+        .filter((d) => d.ordersMissing > 0 || d.ordersPartial > 0)
+        .map((d) => d.businessDay)
+        .sort(),
+      ordersOutstanding: coverage.reduce(
+        (s, d) => s + d.ordersMissing + d.ordersPartial,
+        0,
+      ),
+      linesOutstanding: coverage.reduce((s, d) => s + d.linesOutstanding, 0),
+    };
+  }
+
+  // ── Inventory issues: did Oracle actually relieve the stock? ────────────
+  // Posting an issue only queues it (TransactionMode 3). These endpoints expose
+  // the read-back that turns "Oracle accepted the row" into "Oracle processed
+  // it", which is where a negative-balance rejection finally becomes visible.
+
+  @Get('inventory-transactions/status')
+  @ApiOperation({
+    summary:
+      'Counts of inventory issues by state: PENDING (queued in Oracle, not ' +
+      'yet confirmed), SUCCESS (Oracle processed it), ERROR (Oracle rejected ' +
+      'it — sold stock that was never relieved).',
+  })
+  async getInventoryTransactionStatus() {
+    return this.inventoryVerifier.statusCounts();
+  }
+
+  @Get('inventory-transactions/rejected')
+  @ApiOperation({
+    summary:
+      'Inventory issues Oracle rejected, newest first — each one is stock ' +
+      'that was invoiced but never relieved, with Oracle\'s own reason.',
+  })
+  async listRejectedInventoryTransactions(@Query('limit') limit?: string) {
+    return this.inventoryVerifier.listRejected(limit ? Number(limit) : undefined);
+  }
+
+  @Post('inventory-transactions/verify')
+  @ApiOperation({
+    summary:
+      'Check every pending inventory issue against Oracle now, instead of ' +
+      'waiting for the 15-minute cycle.',
+  })
+  async verifyInventoryTransactions() {
+    return this.inventoryVerifier.verifyPending();
   }
 
   @Post('daily-invoice/run-now')

@@ -812,6 +812,13 @@ export class StoreConfigService {
     transactionSource?: string;
     transactionType?: string;
     invoiceCurrencyCode?: string;
+    creditMemoTransactionType?: string;
+    // Oracle ids for the SOAP credit-memo payload; see StoreConfiguration.
+    billToCustomerId?: string;
+    billToSiteUseId?: string;
+    paymentTermsId?: string;
+    batchSourceSequenceId?: string;
+    creditMemoTrxTypeId?: string;
     isActive?: boolean;
     createdBy: string;
   }) {

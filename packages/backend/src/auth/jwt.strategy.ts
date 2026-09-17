@@ -7,6 +7,14 @@ export interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  /** Display name, when the account has one. */
+  name?: string | null;
+  /**
+   * Dashboard areas this session may see. Optional because tokens minted
+   * before area-based visibility existed have no such claim — consumers fall
+   * back to the role defaults rather than treating that as "no access".
+   */
+  areas?: string[];
   iat?: number;
   exp?: number;
 }

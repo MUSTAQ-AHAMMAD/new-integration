@@ -44,6 +44,21 @@ function makeCreditMemoHeader(
   };
 }
 
+/** A header whose Oracle ids are all set, so CreditMemoService can be used. */
+function makeCreditMemoHeaderWithIds(
+  overrides: Partial<CreditMemoHeader> = {},
+): CreditMemoHeader {
+  return makeCreditMemoHeader({
+    orgId: '300000237135370',
+    billToCustomerId: '146013',
+    billToSiteUseId: '130054',
+    paymentTermsId: '5',
+    batchSourceSequenceId: '300000067320011',
+    customerTrxTypeSequenceId: '300000001421038',
+    ...overrides,
+  });
+}
+
 function makeApplyCreditMemoRequest(
   overrides: Partial<ApplyCreditMemoRequest> = {},
 ): ApplyCreditMemoRequest {
@@ -52,7 +67,7 @@ function makeApplyCreditMemoRequest(
     transactionNumber: 'INV-001',
     creditMemoNumber: 'CM-500',
     amountApplied: 100,
-    currencyCode: 'AED',
+    businessUnit: 'AlQurashi-KSA',
     ...overrides,
   };
 }
@@ -419,7 +434,7 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toMatch(
-        /<typ1:UnitSellingPrice currencyCode="AED">50<\/typ1:UnitSellingPrice>/,
+        /<typ1:UnitSellingPrice currencyCode="AED">50\.00<\/typ1:UnitSellingPrice>/,
       );
     });
 
@@ -970,8 +985,8 @@ describe('OracleSoapClient', () => {
 
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('PASA CREDIT MEMO');
-      // 50 → -50 on the wire (credit).
-      expect(soapBody).toContain('>-50<');
+      // 50 → -50 on the wire (credit), always emitted at 2dp.
+      expect(soapBody).toContain('>-50.00<');
       // Reference to the credited invoice is carried through.
       expect(soapBody).toContain('INV-001');
     });
@@ -1017,6 +1032,96 @@ describe('OracleSoapClient', () => {
     });
   });
 
+  // ── createCreditMemoViaService ────────────────────────────────
+  describe('createCreditMemoViaService', () => {
+    it('sends the CreditMemoService envelope with the branch ids', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425183' }),
+      });
+
+      const result = await client.createCreditMemoViaService(
+        makeCreditMemoHeaderWithIds(),
+      );
+
+      expect(result.transactionNumber).toBe('1425183');
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain('<typ:createCreditMemo>');
+      expect(soapBody).toContain('<typ:creditMemo>');
+      expect(soapBody).toContain(
+        '<cred:OrgId>300000237135370</cred:OrgId>',
+      );
+      expect(soapBody).toContain(
+        '<cred:BillToCustomerId>146013</cred:BillToCustomerId>',
+      );
+      expect(soapBody).toContain(
+        '<cred:BillToSiteUseId>130054</cred:BillToSiteUseId>',
+      );
+      expect(soapBody).toContain(
+        '<cred:BatchSourceSequenceId>300000067320011</cred:BatchSourceSequenceId>',
+      );
+      // Oracle's own spelling of the element, typo included.
+      expect(soapBody).toContain(
+        '<cred:CustomerTrxSquenceId>300000001421038</cred:CustomerTrxSquenceId>',
+      );
+      expect(soapBody).toContain('<cred:TrxDate>2024-01-20</cred:TrxDate>');
+    });
+
+    it('credits: negative quantity and extended amount, positive unit price', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425184' }),
+      });
+
+      await client.createCreditMemoViaService(makeCreditMemoHeaderWithIds());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).toContain(
+        '<cred:InvoicedQuantity>-2</cred:InvoicedQuantity>',
+      );
+      expect(soapBody).toContain(
+        '<cred:UnitSellingPrice currencyCode="AED">50</cred:UnitSellingPrice>',
+      );
+      expect(soapBody).toContain(
+        '<cred:ExtendedAmount currencyCode="AED">-100</cred:ExtendedAmount>',
+      );
+    });
+
+    it('omits InventoryItemId and UOMCode when they are unknown', async () => {
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425185' }),
+      });
+
+      await client.createCreditMemoViaService(makeCreditMemoHeaderWithIds());
+
+      const soapBody = mockHttpPost.mock.calls[0][1] as string;
+      expect(soapBody).not.toContain('InventoryItemId');
+      expect(soapBody).not.toContain('UOMCode');
+    });
+
+    it('refuses to call Oracle when a branch id is missing', async () => {
+      await expect(
+        client.createCreditMemoViaService(
+          makeCreditMemoHeaderWithIds({ billToSiteUseId: undefined }),
+        ),
+      ).rejects.toThrow('missing');
+      expect(mockHttpPost).not.toHaveBeenCalled();
+    });
+
+    it('throws when Oracle returns no transaction number', async () => {
+      mockHttpPost.mockResolvedValue({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS' }),
+      });
+
+      const promise = client.createCreditMemoViaService(
+        makeCreditMemoHeaderWithIds(),
+      );
+      const assertion = expect(promise).rejects.toThrow(
+        'returned no transaction number',
+      );
+      await jest.runAllTimersAsync();
+      await assertion;
+    });
+  });
+
   // ── applyCreditMemo ───────────────────────────────────────────
   describe('applyCreditMemo', () => {
     const ORIGINAL_ENV = process.env;
@@ -1048,9 +1153,40 @@ describe('OracleSoapClient', () => {
 
       expect(result.applicationId).toBe('APP-77');
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
-      // Both the credit memo and the invoice it credits are in the envelope.
-      expect(soapBody).toContain('CM-500');
-      expect(soapBody).toContain('INV-001');
+      // The operation, wrapper and namespace Oracle accepts — an earlier
+      // version guessed all three and silently never applied anything.
+      expect(soapBody).toContain('<typ:createApplyOnAccountCreditMemo>');
+      expect(soapBody).toContain('<typ:applyOnAccountCreditMemo>');
+      expect(soapBody).toContain(
+        'receivables/transactions/creditMemos/creditMemoService/',
+      );
+      // Field names are the service's, not the invoice service's.
+      expect(soapBody).toContain(
+        '<cred:CreditMemoTrxNumber>CM-500</cred:CreditMemoTrxNumber>',
+      );
+      expect(soapBody).toContain(
+        '<cred:InvoiceTrxNumber>INV-001</cred:InvoiceTrxNumber>',
+      );
+      expect(soapBody).toContain(
+        '<cred:BusinessUnit>AlQurashi-KSA</cred:BusinessUnit>',
+      );
+      expect(soapBody).toContain('<cred:AmountApplied>100.00</cred:AmountApplied>');
+      // GlDate defaults to the apply date rather than being omitted.
+      expect(soapBody).toContain('<cred:ApplyDate>2024-01-20</cred:ApplyDate>');
+      expect(soapBody).toContain('<cred:GlDate>2024-01-20</cred:GlDate>');
+    });
+
+    it('applies by default, without ORACLE_CM_APPLY_ENABLED being set', async () => {
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.ORACLE_CM_APPLY_ENABLED;
+      mockHttpPost.mockResolvedValueOnce({
+        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', ApplicationId: 'APP-78' }),
+      });
+
+      const result = await client.applyCreditMemo(makeApplyCreditMemoRequest());
+
+      expect(result.disabled).toBeUndefined();
+      expect(result.applicationId).toBe('APP-78');
     });
 
     it('throws on Status E when application is rejected', async () => {
