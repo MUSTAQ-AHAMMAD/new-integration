@@ -51,6 +51,8 @@ import { TaxClassificationService } from './tax-classification.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
+import { IntegrationCoverageService } from './integration-coverage.service';
+import { InventoryTransactionVerifierService } from './inventory-transaction-verifier.service';
 import { IntegrationRunService } from './integration-run.service';
 import { IntegrationSchedulerService } from './integration-scheduler.service';
 import { ReadinessService } from './readiness.service';
@@ -127,6 +129,8 @@ import { BulkRetryService } from './bulk-retry.service';
     DailyInvoiceService,
     DailyInvoiceSchedulerService,
     ReadinessService,
+    IntegrationCoverageService,
+    InventoryTransactionVerifierService,
     IntegrationRunService,
     IntegrationSchedulerService,
     OrderEnrichmentService,
@@ -151,6 +155,8 @@ import { BulkRetryService } from './bulk-retry.service';
     DailyInvoiceService,
     DailyInvoiceSchedulerService,
     ReadinessService,
+    IntegrationCoverageService,
+    InventoryTransactionVerifierService,
     IntegrationRunService,
     IntegrationSchedulerService,
     OrderEnrichmentService,

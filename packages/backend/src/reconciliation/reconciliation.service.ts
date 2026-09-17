@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
@@ -9,8 +15,14 @@ import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.enti
 import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
 import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
 import { PAID_ORDER_STATES } from '../common/odoo-utils';
 import { round2 } from '../common/money';
+import {
+  OracleClient,
+  type OracleLiveInvoice,
+  type OracleLiveInvoiceLine,
+} from '../clients/oracle/oracle.client';
 
 /**
  * Where a single order stands when the Odoo source row is put next to what
@@ -94,7 +106,19 @@ export interface OracleSide {
   status: string | null;
   txnDate: Date | null;
   glDate: Date | null;
+  /**
+   * The invoice total. On an aggregated daily invoice this is the whole day for
+   * the store, not this order — see `coversOrders`.
+   */
   total: number | null;
+  /**
+   * How many distinct Odoo orders share this invoice. The daily invoice path
+   * bills a whole store-day as one Oracle transaction, so this is routinely
+   * greater than 1 and `total` then belongs to all of them jointly.
+   */
+  coversOrders: number;
+  /** True when this invoice bills more than one Odoo order. */
+  isAggregate: boolean;
   lineCount: number;
   /** null when no receipt row could be linked — unknown, not zero. */
   receiptTotal: number | null;
@@ -124,7 +148,88 @@ export interface OrphanRow {
   firstSeen: Date | null;
 }
 
+/** Outcome of reading an invoice back out of Oracle and comparing it to Odoo. */
+export type LiveVerifyStatus =
+  | 'VERIFIED'
+  | 'MISMATCH'
+  | 'NOT_IN_ORACLE'
+  | 'LOOKUP_FAILED';
+
 export type BreakdownGroupBy = 'store' | 'date' | 'store-date';
+
+/** Grain of the tender (payment-method) reconciliation. */
+export type TenderGroupBy =
+  | 'store-date-method'
+  | 'store-method'
+  | 'date-method'
+  | 'method';
+
+/** Whether an Odoo tender has a usable Oracle receipt method behind it. */
+export type TenderMappingStatus =
+  | 'MAPPED'
+  | 'PENDING'
+  | 'UNMAPPED'
+  | 'ORACLE_ONLY';
+
+export type TenderStatus =
+  | 'MATCHED'
+  | 'SHORT_IN_ORACLE'
+  | 'OVER_IN_ORACLE'
+  | 'MISSING_IN_ORACLE'
+  | 'UNEXPECTED_IN_ORACLE'
+  /** Not all orders behind this tender's invoices were in the window. */
+  | 'INCOMPLETE';
+
+/**
+ * One tender line: what a store took in a given payment method on a given day,
+ * against what Oracle receipted for it.
+ *
+ * This is the grain a cash-up actually happens at. Oracle numbers its receipts
+ * `<Method>-<transactionNumber>`, keyed on the invoice rather than the
+ * individual order, so per-order tender does not exist on the Oracle side at
+ * all — store x day x method is the finest slice where both systems can
+ * genuinely be compared.
+ */
+export interface TenderRow {
+  key: string;
+  branchCode: string | null;
+  branchName: string | null;
+  region: string | null;
+  /** `YYYY-MM-DD`, or null when the grouping does not slice by date. */
+  date: string | null;
+  /** Display name of the tender, in the spelling the source system uses. */
+  method: string;
+  /** Oracle receipt method the mapping resolves this tender to. */
+  mappedMethod: string | null;
+  mappingStatus: TenderMappingStatus;
+  odooCount: number;
+  odooTotal: number;
+  /** Standard receipts — the gross amount Oracle receipted. */
+  oracleCount: number;
+  oracleTotal: number;
+  /**
+   * Miscellaneous receipts against the same tender, normally negative: card
+   * scheme and gateway fees deducted at settlement. Kept out of `oracleTotal`
+   * so a fee never reads as a shortfall against the till.
+   */
+  oracleFees: number;
+  /** Odoo minus Oracle. Positive = the till took more than Oracle receipted. */
+  variance: number;
+  /**
+   * True when an invoice contributing to this row bills orders that fall
+   * outside the scanned window. Oracle receipts always cover the whole invoice,
+   * so the Odoo side would be short through nothing but the date filter — the
+   * variance is suppressed rather than reported as a shortfall.
+   */
+  partial: boolean;
+  status: TenderStatus;
+}
+
+/** Accumulator behind a {@link BreakdownRow}, carrying dedupe state. */
+interface BreakdownAccumulator extends BreakdownRow {
+  /** Invoice headers already added to `oracleTotal`, so shared ones count once. */
+  countedHeaders: Set<string>;
+}
 
 /** One aggregated line of the store / date drill-down. */
 export interface BreakdownRow {
@@ -163,6 +268,14 @@ export interface ReconciliationSummary {
   /** Share of syncable orders that reconcile cleanly, 0–100. */
   matchRate: number;
   orphanCount: number;
+  /**
+   * Orders billed on an invoice they share with other orders. While this is
+   * non-zero the money columns are not order-for-order comparable: Oracle's
+   * side counts whole invoices, some of whose orders fall outside the window,
+   * and our stored invoice lines carry no amount to split them by. Per-order
+   * money for these has to come from the live Oracle check.
+   */
+  aggregatedOrders: number;
 }
 
 const DEFAULT_LIMIT = 50;
@@ -171,6 +284,14 @@ const DEFAULT_MAX_SCAN = 2000;
 const HARD_MAX_SCAN = 20000;
 const DEFAULT_TOLERANCE = 0.01;
 const ORPHAN_LIMIT = 200;
+/**
+ * How many invoice lines one live read pulls. Daily invoices aggregate a whole
+ * store-day, so this has to cover a busy outlet's lines in a single page — a
+ * partial page would silently understate an order's share.
+ */
+const AGGREGATE_LINE_FETCH = 500;
+/** Shown when a payment row or receipt number carries no tender name. */
+const UNKNOWN_TENDER = 'UNKNOWN';
 /** Oracle caps an IN-list at 1000 bind values. */
 const IN_CHUNK = 900;
 
@@ -180,6 +301,15 @@ const IN_CHUNK = 900;
  * a space would make `Dubai Mall 2026-08-20` ambiguous to split back apart.
  */
 const GROUP_KEY_SEPARATOR = ' :: ';
+
+/**
+ * Oracle refuses to aggregate a CLOB — `MAX(someClob)` raises ORA-00932
+ * ("inconsistent datatypes: expected - got CLOB"). Narrowing the column to a
+ * VARCHAR2 first makes it aggregatable. 2000 characters is far more than any
+ * Oracle error message needs and stays inside the 4000-byte VARCHAR2 limit.
+ */
+const CLOB_TO_TEXT = (column: string): string =>
+  `DBMS_LOB.SUBSTR(${column}, 2000, 1)`;
 
 function chunk<T>(items: T[], size = IN_CHUNK): T[][] {
   const out: T[][] = [];
@@ -238,6 +368,11 @@ export class ReconciliationService {
     private readonly miscReceipts: Repository<FusionMiscReceipt>,
     @InjectRepository(OrderSyncQueue)
     private readonly queue: Repository<OrderSyncQueue>,
+    @InjectRepository(PaymentMethodMapping)
+    private readonly paymentMappings: Repository<PaymentMethodMapping>,
+    // Optional: the stored comparison must keep working on a deployment with no
+    // Oracle REST credentials. Only liveVerify() needs this.
+    @Optional() private readonly oracle?: OracleClient,
   ) {}
 
   /**
@@ -306,7 +441,7 @@ export class ReconciliationService {
 
     // Status filtering is deliberately not applied: a store's totals must cover
     // every order it booked, or the variance column stops reconciling.
-    const groups = new Map<string, BreakdownRow>();
+    const groups = new Map<string, BreakdownAccumulator>();
     for (const row of rows) {
       const key = this.groupKey(row, groupBy);
       const group = groups.get(key) ?? this.emptyGroup(key, row, groupBy);
@@ -333,6 +468,241 @@ export class ReconciliationService {
       truncated,
       rows: list,
       totals: this.finaliseGroup(totals),
+    };
+  }
+
+  /**
+   * Reconciles takings by payment method, per store and per day.
+   *
+   * Odoo's side comes from the payment rows on each order; Oracle's from the
+   * receipts it raised, numbered `<Method>-<transactionNumber>`. The
+   * transaction number is resolved back to a store and day through the orders
+   * billed on that invoice, so both sides land in the same bucket.
+   */
+  async tenderBreakdown(
+    params: ReconciliationParams,
+    groupBy: TenderGroupBy,
+  ): Promise<{
+    groupBy: TenderGroupBy;
+    tolerance: number;
+    scanned: number;
+    truncated: boolean;
+    rows: TenderRow[];
+    totals: TenderRow;
+    /** Tenders Odoo used that have no usable Oracle receipt method. */
+    unmappedMethods: string[];
+  }> {
+    const { rows, truncated, tolerance } = await this.scan(params);
+
+    const groups = new Map<string, TenderRow>();
+    const bucketFor = (row: ReconciliationRow, method: string): TenderRow => {
+      const withStore =
+        groupBy === 'store-date-method' || groupBy === 'store-method';
+      const withDate =
+        groupBy === 'store-date-method' || groupBy === 'date-method';
+      const parts: string[] = [];
+      if (withStore) parts.push(this.storeKey(row));
+      if (withDate) parts.push(this.dateKey(row));
+      // Case-folded so a till spelling "Mada" and a receipt spelling "MADA"
+      // are one tender rather than two half-empty rows.
+      parts.push(method.toUpperCase());
+      const key = parts.join(GROUP_KEY_SEPARATOR);
+
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          key,
+          branchCode: withStore ? row.odoo.branchCode : null,
+          branchName: withStore
+            ? (row.odoo.branchName ?? row.odoo.posConfigName)
+            : null,
+          region: row.odoo.region,
+          date: withDate ? this.dateKey(row) : null,
+          method,
+          mappedMethod: null,
+          mappingStatus: 'UNMAPPED',
+          odooCount: 0,
+          odooTotal: 0,
+          oracleCount: 0,
+          oracleTotal: 0,
+          oracleFees: 0,
+          variance: 0,
+          partial: false,
+          status: 'MATCHED',
+        };
+        groups.set(key, group);
+      }
+      return group;
+    };
+
+    // ── Odoo side: the tenders the till recorded ──────────────────────────
+    const odooByMethod = await this.aggregateOdooPaymentsByMethod(
+      rows.map((r) => r.odoo.orderId),
+    );
+    for (const row of rows) {
+      const perMethod = odooByMethod.get(row.odoo.orderId);
+      if (!perMethod) continue;
+      for (const [method, agg] of perMethod) {
+        const group = bucketFor(row, method);
+        group.odooCount += agg.count;
+        group.odooTotal += agg.total;
+      }
+    }
+
+    // ── Oracle side: the receipts it actually raised ──────────────────────
+    // One invoice can carry many orders; any of them locates the same bucket,
+    // so the first order seen for a transaction number is enough.
+    const txnToRow = new Map<string, ReconciliationRow>();
+    for (const row of rows) {
+      const txn = row.oracle?.invoiceNumber;
+      if (txn && !txnToRow.has(txn)) txnToRow.set(txn, row);
+    }
+    // How much of each invoice the window actually captured. An invoice bills
+    // `coversOrders` orders; if fewer than that were scanned, the Odoo takings
+    // for it are necessarily short and no variance drawn from them is real.
+    const scannedPerTxn = new Map<string, number>();
+    for (const row of rows) {
+      const txn = row.oracle?.invoiceNumber;
+      if (txn) scannedPerTxn.set(txn, (scannedPerTxn.get(txn) ?? 0) + 1);
+    }
+
+    const receipts = await this.receiptsByTransaction([...txnToRow.keys()]);
+    for (const receipt of receipts) {
+      const row = txnToRow.get(receipt.txnNumber);
+      if (!row) continue;
+      const group = bucketFor(row, receipt.method);
+      if (
+        (scannedPerTxn.get(receipt.txnNumber) ?? 0) <
+        (row.oracle?.coversOrders ?? 1)
+      ) {
+        group.partial = true;
+      }
+      if (receipt.isMisc) {
+        group.oracleFees += receipt.amount;
+      } else {
+        group.oracleCount += 1;
+        group.oracleTotal += receipt.amount;
+      }
+    }
+
+    // ── Mapping status, so an unmapped tender is visible as such ──────────
+    const mappings = await this.loadPaymentMappings();
+    const unmapped = new Set<string>();
+    // Tenders Oracle demonstrably receipts *somewhere* in this window. A method
+    // that settles fine for one store is mapped, full stop — so when another
+    // store shows nothing receipted for it, that store has a sync problem, not
+    // a mapping problem. Judging this per row would label every unsynced store
+    // "unmapped" and bury the tenders that genuinely have nowhere to post.
+    const receiptedSomewhere = new Set<string>();
+    for (const group of groups.values()) {
+      if (group.oracleCount > 0) {
+        receiptedSomewhere.add(group.method.toUpperCase());
+      }
+    }
+    for (const group of groups.values()) {
+      const mapping = mappings.get(group.method.toUpperCase());
+      if (mapping) {
+        group.mappedMethod = mapping.oracleName;
+        group.mappingStatus = mapping.usable ? 'MAPPED' : 'PENDING';
+        // A stale PENDING_MAPPING row is still worth showing on the row, but it
+        // only belongs in the headline list if the tender is actually stuck.
+        // Oracle receipting it elsewhere proves it is not.
+        if (
+          !mapping.usable &&
+          !receiptedSomewhere.has(group.method.toUpperCase())
+        ) {
+          unmapped.add(group.method);
+        }
+      } else if (group.odooCount === 0 && group.oracleCount > 0) {
+        // Oracle receipted a tender the till never reported under that name.
+        group.mappingStatus = 'ORACLE_ONLY';
+      } else if (receiptedSomewhere.has(group.method.toUpperCase())) {
+        // Oracle receipts this tender elsewhere, so it is plainly mapped — just
+        // not through PaymentMethodMapping, which only covers the ODOO source
+        // system. VendHQ-sourced regions resolve their methods elsewhere.
+        group.mappingStatus = 'MAPPED';
+      } else {
+        // Took money, nothing receipted, and no mapping to explain it.
+        group.mappingStatus = 'UNMAPPED';
+        unmapped.add(group.method);
+      }
+    }
+
+    const list = [...groups.values()].map((g) =>
+      this.finaliseTender(g, tolerance),
+    );
+    // Biggest money gap first — that is what a cash-up chases.
+    list.sort(
+      (a, b) =>
+        Math.abs(b.variance) - Math.abs(a.variance) ||
+        a.key.localeCompare(b.key),
+    );
+
+    const blank: TenderRow = {
+      key: 'TOTAL',
+      branchCode: null,
+      branchName: null,
+      region: null,
+      date: null,
+      method: 'All tenders',
+      mappedMethod: null,
+      mappingStatus: 'MAPPED',
+      odooCount: 0,
+      odooTotal: 0,
+      oracleCount: 0,
+      oracleTotal: 0,
+      oracleFees: 0,
+      variance: 0,
+      partial: false,
+      status: 'MATCHED',
+    };
+    for (const r of list) {
+      blank.odooCount += r.odooCount;
+      blank.odooTotal += r.odooTotal;
+      blank.oracleCount += r.oracleCount;
+      blank.oracleTotal += r.oracleTotal;
+      blank.oracleFees += r.oracleFees;
+      if (r.partial) blank.partial = true;
+    }
+
+    return {
+      groupBy,
+      tolerance,
+      scanned: rows.length,
+      truncated,
+      rows: list,
+      totals: this.finaliseTender(blank, tolerance),
+      unmappedMethods: [...unmapped].sort(),
+    };
+  }
+
+  /** Rounds once at the end and decides which way a tender is out. */
+  private finaliseTender(group: TenderRow, tolerance: number): TenderRow {
+    const odooTotal = round2(group.odooTotal);
+    const oracleTotal = round2(group.oracleTotal);
+    const variance = round2(odooTotal - oracleTotal);
+
+    let status: TenderStatus;
+    if (group.partial && Math.abs(variance) > tolerance) {
+      // The gap is explained by the window, not by the systems disagreeing.
+      status = 'INCOMPLETE';
+    } else if (Math.abs(variance) <= tolerance) {
+      status = 'MATCHED';
+    } else if (group.oracleCount === 0) {
+      status = 'MISSING_IN_ORACLE';
+    } else if (group.odooCount === 0) {
+      status = 'UNEXPECTED_IN_ORACLE';
+    } else {
+      status = variance > 0 ? 'SHORT_IN_ORACLE' : 'OVER_IN_ORACLE';
+    }
+
+    return {
+      ...group,
+      odooTotal,
+      oracleTotal,
+      oracleFees: round2(group.oracleFees),
+      variance,
+      status,
     };
   }
 
@@ -392,6 +762,195 @@ export class ReconciliationService {
         paymentDate: p.paymentDate,
       })),
       oracleReceipts: await this.receiptsFor(orderName),
+    };
+  }
+
+  /**
+   * Reads the invoice back out of Oracle *right now* and compares it against
+   * Odoo, instead of trusting the FusionInvoiceHeader row we wrote at push time.
+   *
+   * The stored audit trail only records what we sent. An invoice that Oracle
+   * rejected after the fact, or that someone completed, credited or adjusted in
+   * the Fusion UI, still looks perfect in our tables — this is the only check
+   * that catches it. One Oracle call per order, so it is a per-order action
+   * rather than something the window-wide scan does for thousands of rows.
+   */
+  async liveVerify(orderName: string, tolerance = DEFAULT_TOLERANCE) {
+    if (!this.oracle) {
+      throw new ServiceUnavailableException(
+        'Live Oracle lookup is not available — no Oracle REST client is configured.',
+      );
+    }
+
+    const order = await this.odooOrders.findOne({ where: { orderName } });
+    if (!order) {
+      throw new NotFoundException(
+        `No Odoo order named "${orderName}" is stored`,
+      );
+    }
+    const [row] = await this.buildRows([order], tolerance);
+
+    // The transaction number Oracle knows this invoice by. Prefer what the
+    // queue recorded, fall back to the audit header, then to the order name —
+    // the transformer uses the order name as the txn number by default.
+    const queued = await this.queue.findOne({
+      where: { odooOrderNumber: orderName },
+    });
+    const txnNumber =
+      queued?.oracleInvoiceNumber ?? row?.oracle?.invoiceNumber ?? orderName;
+
+    const startedAt = Date.now();
+    let live: OracleLiveInvoice | null = null;
+    let lines: { totalCount: number; lines: OracleLiveInvoiceLine[] } | null =
+      null;
+    let lookupError: string | null = null;
+
+    try {
+      live = await this.oracle.getInvoiceByTransactionNumber(txnNumber);
+      if (live?.customerTransactionId != null) {
+        lines = await this.oracle.getInvoiceLines(
+          live.customerTransactionId,
+          AGGREGATE_LINE_FETCH,
+        );
+      }
+    } catch (err) {
+      // A pod that is down or slow is a fact to report, not a 500 — the stored
+      // comparison beside it is still useful on its own.
+      lookupError = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Live Oracle lookup failed for txn ${txnNumber}: ${lookupError}`,
+      );
+    }
+
+    const allLines = lines?.lines ?? [];
+    // A daily invoice carries every order the store booked that day, each line
+    // tagged with its own SalesOrder. Comparing one Odoo order against the whole
+    // invoice would report the other orders on it as a shortfall, so the
+    // comparison is scoped to the lines that actually belong to this order.
+    const ownLines = allLines.filter((l) => l.salesOrder === orderName);
+    const coversOrders = new Set(
+      allLines.map((l) => l.salesOrder).filter((v): v is string => v != null),
+    );
+    const isAggregate = coversOrders.size > 1;
+    // Lines beyond the fetched page would understate this order's share, so a
+    // truncated read is reported rather than compared.
+    const linesTruncated = lines != null && lines.totalCount > allLines.length;
+
+    // Both sides net of tax: Oracle's LineAmount excludes VAT, while the Odoo
+    // order total includes it.
+    const odooTotal = row?.odoo.total ?? 0;
+    const odooNet = round2(odooTotal - (row?.odoo.tax ?? 0));
+    const oracleNet =
+      live && !linesTruncated
+        ? round2(ownLines.reduce((sum, l) => sum + (l.lineAmount ?? 0), 0))
+        : null;
+
+    const amountDifference =
+      oracleNet != null ? round2(odooNet - oracleNet) : null;
+    const oracleLineCount = linesTruncated ? null : ownLines.length;
+    const lineDifference =
+      oracleLineCount != null
+        ? (row?.odoo.lineCount ?? 0) - oracleLineCount
+        : null;
+
+    const issues: string[] = [];
+    let status: LiveVerifyStatus;
+    if (lookupError) {
+      status = 'LOOKUP_FAILED';
+      issues.push(`Oracle could not be reached: ${lookupError}`);
+    } else if (!live) {
+      status = 'NOT_IN_ORACLE';
+      issues.push(
+        `Oracle holds no invoice with transaction number ${txnNumber}.`,
+      );
+    } else if (linesTruncated) {
+      status = 'MISMATCH';
+      issues.push(
+        `Oracle invoice has ${lines?.totalCount} lines, more than the ${AGGREGATE_LINE_FETCH} read in one page — this order's share cannot be totalled reliably.`,
+      );
+    } else if (ownLines.length === 0) {
+      status = 'NOT_IN_ORACLE';
+      issues.push(
+        `Oracle invoice ${live.transactionNumber} exists but carries no line for sales order ${orderName}.`,
+      );
+    } else {
+      if (amountDifference != null && Math.abs(amountDifference) > tolerance) {
+        issues.push(
+          `Odoo ${odooNet} net of tax vs Oracle ${oracleNet} on this order's lines (difference ${amountDifference}).`,
+        );
+      }
+      if (lineDifference != null && lineDifference !== 0) {
+        issues.push(
+          `Odoo has ${row?.odoo.lineCount} line(s), Oracle has ${oracleLineCount} for this order.`,
+        );
+      }
+      // The balance is a property of the whole invoice, so on an aggregate it
+      // is reported as context rather than as this order's fault.
+      if (
+        live.balanceAmount != null &&
+        Math.abs(live.balanceAmount) > tolerance
+      ) {
+        issues.push(
+          isAggregate
+            ? `Invoice ${live.transactionNumber} (shared by ${coversOrders.size} orders) still shows ${live.balanceAmount} outstanding.`
+            : `Oracle still shows ${live.balanceAmount} outstanding on this invoice.`,
+        );
+      }
+      if (live.status && live.status.toUpperCase() !== 'COMPLETE') {
+        issues.push(`Oracle invoice status is "${live.status}".`);
+      }
+      status = issues.length === 0 ? 'VERIFIED' : 'MISMATCH';
+    }
+
+    // What we recorded at push time, so the caller can see whether our own
+    // audit row drifted from Oracle as well as whether Odoo did.
+    const stored = row?.oracle
+      ? {
+          invoiceNumber: row.oracle.invoiceNumber,
+          status: row.oracle.status,
+          total: row.oracle.total,
+          lineCount: row.oracle.lineCount,
+        }
+      : null;
+
+    return {
+      orderName,
+      txnNumber: String(txnNumber),
+      checkedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      status,
+      issues,
+      tolerance,
+      odoo: {
+        total: odooTotal,
+        /** Net of tax — the basis Oracle's LineAmount uses. */
+        net: odooNet,
+        tax: row?.odoo.tax ?? 0,
+        lineCount: row?.odoo.lineCount ?? 0,
+        paymentTotal: row?.odoo.paymentTotal ?? 0,
+        orderDate: row?.odoo.orderDate ?? null,
+        branchName: row?.odoo.branchName ?? null,
+        state: row?.odoo.state ?? null,
+      },
+      stored,
+      live: live
+        ? {
+            ...live,
+            /** This order's share of the invoice. */
+            orderNet: oracleNet,
+            lineCount: oracleLineCount,
+            lines: ownLines,
+            invoice: {
+              /** Every line on the invoice, across all orders it covers. */
+              totalLineCount: lines?.totalCount ?? 0,
+              coversOrders: coversOrders.size,
+              isAggregate,
+              linesTruncated,
+            },
+          }
+        : null,
+      amountDifference,
+      lineDifference,
     };
   }
 
@@ -501,6 +1060,7 @@ export class ReconciliationService {
       .map((a) => a.headerId)
       .filter((id): id is string => id != null);
     const headers = await this.loadHeaders(headerIds);
+    const headerOrderCounts = await this.loadHeaderOrderCounts(headerIds);
     const receipts = await this.aggregateReceipts(orderNames);
 
     return orders.map((order) => {
@@ -544,6 +1104,13 @@ export class ReconciliationService {
               header?.totalAmount != null
                 ? round2(num(header.totalAmount))
                 : null,
+            coversOrders: oracleAgg.headerId
+              ? (headerOrderCounts.get(oracleAgg.headerId) ?? 1)
+              : 1,
+            isAggregate:
+              (oracleAgg.headerId
+                ? (headerOrderCounts.get(oracleAgg.headerId) ?? 1)
+                : 1) > 1,
             lineCount: oracleAgg.count,
             receiptTotal: receipt ? round2(receipt.total) : null,
             receiptCount: receipt?.count ?? 0,
@@ -614,12 +1181,23 @@ export class ReconciliationService {
       );
     }
 
+    // Money is only comparable when the invoice bills this order alone. On an
+    // aggregated daily invoice the header total covers every order on it, and
+    // our FusionInvoiceLine rows carry no amount, so this order's share simply
+    // is not knowable from stored data — the live Oracle check reads the real
+    // per-line amounts and is the answer there.
     const amountDifference =
-      oracle.total != null ? round2(odoo.total - oracle.total) : null;
+      oracle.total != null && !oracle.isAggregate
+        ? round2(odoo.total - oracle.total)
+        : null;
     if (amountDifference != null && Math.abs(amountDifference) > tolerance) {
       statuses.push('AMOUNT_MISMATCH');
       issues.push(
         `Total differs by ${amountDifference.toFixed(2)} (Odoo ${odoo.total.toFixed(2)} vs Oracle ${oracle.total!.toFixed(2)})`,
+      );
+    } else if (oracle.isAggregate) {
+      issues.push(
+        `Billed on shared invoice ${oracle.invoiceNumber ?? '?'} covering ${oracle.coversOrders} orders — run the live Oracle check to verify this order's share`,
       );
     }
 
@@ -672,8 +1250,13 @@ export class ReconciliationService {
       queueStatus: queueRow?.status ?? null,
       queueError,
       status: worstOf(statuses),
+      // Same rule as the comparison in classify(): a total shared with other
+      // orders is not this order's to differ from, so the difference is
+      // unknown rather than huge. Keep the two in step.
       amountDifference:
-        oracle?.total != null ? round2(odoo.total - oracle.total) : null,
+        oracle?.total != null && !oracle.isAggregate
+          ? round2(odoo.total - oracle.total)
+          : null,
       paymentDifference:
         oracle?.receiptTotal != null
           ? round2(odoo.paymentTotal - oracle.receiptTotal)
@@ -767,7 +1350,7 @@ export class ReconciliationService {
       const errored = await this.invoiceLines
         .createQueryBuilder('l')
         .select('l.salesOrder', 'salesOrder')
-        .addSelect('MAX(l.message)', 'message')
+        .addSelect(`MAX(${CLOB_TO_TEXT('l.message')})`, 'message')
         .where('l.salesOrder IN (:...names)', { names: part })
         .andWhere(`UPPER(l.status) = 'ERROR'`)
         .groupBy('l.salesOrder')
@@ -779,6 +1362,31 @@ export class ReconciliationService {
           entry.message = r.message;
         }
       }
+    }
+    return out;
+  }
+
+  /**
+   * How many distinct Odoo orders each invoice header bills.
+   *
+   * The daily-invoice path posts one Oracle transaction per store per day, so a
+   * header routinely covers dozens of orders. Without this count the comparison
+   * measures every one of those orders against the whole day's total and calls
+   * each of them a shortfall.
+   */
+  private async loadHeaderOrderCounts(
+    headerIds: string[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const part of chunk([...new Set(headerIds)])) {
+      const rows = await this.invoiceLines
+        .createQueryBuilder('l')
+        .select('l.headerId', 'headerId')
+        .addSelect('COUNT(DISTINCT l.salesOrder)', 'orders')
+        .where('l.headerId IN (:...ids)', { ids: part })
+        .groupBy('l.headerId')
+        .getRawMany<{ headerId: string; orders: string }>();
+      for (const r of rows) out.set(r.headerId, num(r.orders));
     }
     return out;
   }
@@ -822,6 +1430,156 @@ export class ReconciliationService {
    * suffix is the only link available, and Oracle may replace the number
    * entirely, so a miss means "cannot verify", handled by the caller.
    */
+  /**
+   * Odoo payments split by tender name, per order.
+   *
+   * `paymentName` is the till's own label ("Mada", "Cash"); it is normalised
+   * only for grouping, never for display, so an operator still recognises it.
+   */
+  private async aggregateOdooPaymentsByMethod(
+    orderIds: number[],
+  ): Promise<Map<number, Map<string, { count: number; total: number }>>> {
+    const out = new Map<
+      number,
+      Map<string, { count: number; total: number }>
+    >();
+    if (orderIds.length === 0) return out;
+
+    for (const part of chunk([...new Set(orderIds)])) {
+      const rows = await this.odooPayments
+        .createQueryBuilder('p')
+        .select('p.orderId', 'orderId')
+        .addSelect('p.paymentName', 'method')
+        .addSelect('COUNT(*)', 'cnt')
+        .addSelect('SUM(p.amount)', 'total')
+        .where('p.orderId IN (:...ids)', { ids: part })
+        .groupBy('p.orderId')
+        .addGroupBy('p.paymentName')
+        .getRawMany<{
+          orderId: number;
+          method: string | null;
+          cnt: string;
+          total: string;
+        }>();
+
+      for (const r of rows) {
+        const orderId = num(r.orderId);
+        const method = (r.method ?? '').trim() || UNKNOWN_TENDER;
+        const perOrder =
+          out.get(orderId) ??
+          new Map<string, { count: number; total: number }>();
+        const entry = perOrder.get(method) ?? { count: 0, total: 0 };
+        entry.count += num(r.cnt);
+        entry.total += num(r.total);
+        perOrder.set(method, entry);
+        out.set(orderId, perOrder);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Oracle receipts for a set of invoice transaction numbers, with the tender
+   * recovered from the receipt number.
+   *
+   * The number is built as `<Method>-<txnNumber>` (plus `-MISC` for a fee), so
+   * the tender is everything left of the final `-<txnNumber>` occurrence.
+   * Splitting on the first `-` instead would mangle a method like
+   * "Credit-Card"; anchoring on the transaction number cannot.
+   */
+  private async receiptsByTransaction(txnNumbers: string[]): Promise<
+    Array<{
+      txnNumber: string;
+      method: string;
+      amount: number;
+      isMisc: boolean;
+    }>
+  > {
+    const out: Array<{
+      txnNumber: string;
+      method: string;
+      amount: number;
+      isMisc: boolean;
+    }> = [];
+    if (txnNumbers.length === 0) return out;
+
+    const collect = async (
+      repo: Repository<FusionStandardReceipt> | Repository<FusionMiscReceipt>,
+      alias: string,
+      isMisc: boolean,
+    ) => {
+      for (const part of chunk(txnNumbers, 200)) {
+        const qb = repo
+          .createQueryBuilder(alias)
+          .select(`${alias}.receiptNumber`, 'receiptNumber')
+          .addSelect(`${alias}.receiptAmount`, 'receiptAmount')
+          // A rejected receipt never moved money, so it must not count as
+          // takings — but it also must not hide a genuine shortfall.
+          .where(`UPPER(${alias}.status) <> 'ERROR'`);
+        qb.andWhere(
+          `(${part
+            .map((_, i) => `${alias}.receiptNumber LIKE :t${i}`)
+            .join(' OR ')})`,
+          Object.fromEntries(part.map((txn, i) => [`t${i}`, `%-${txn}%`])),
+        );
+        const rows = await qb.getRawMany<{
+          receiptNumber: string | null;
+          receiptAmount: string | null;
+        }>();
+
+        for (const r of rows) {
+          const receiptNumber = r.receiptNumber ?? '';
+          // Longest match wins, so `-2975` cannot claim `-29751`'s receipt.
+          let matched: string | null = null;
+          for (const txn of part) {
+            if (
+              receiptNumber.includes(`-${txn}`) &&
+              (matched == null || txn.length > matched.length)
+            ) {
+              matched = txn;
+            }
+          }
+          if (!matched) continue;
+          const cut = receiptNumber.lastIndexOf(`-${matched}`);
+          const method = receiptNumber.slice(0, cut).trim() || UNKNOWN_TENDER;
+          out.push({
+            txnNumber: matched,
+            method,
+            amount: num(r.receiptAmount),
+            isMisc,
+          });
+        }
+      }
+    };
+
+    await collect(this.standardReceipts, 'sr', false);
+    await collect(this.miscReceipts, 'mr', true);
+    return out;
+  }
+
+  /**
+   * Odoo tender name → the Oracle receipt method it resolves to.
+   *
+   * A mapping that is inactive or still parked on PENDING_MAPPING is loaded but
+   * marked unusable: those tenders are exactly the ones that block orders, so
+   * hiding them would remove the reason a store fails to reconcile.
+   */
+  private async loadPaymentMappings(): Promise<
+    Map<string, { oracleName: string; usable: boolean }>
+  > {
+    const out = new Map<string, { oracleName: string; usable: boolean }>();
+    const rows = await this.paymentMappings.find();
+    for (const m of rows) {
+      const usable =
+        m.isActive && m.oracleReceiptMethodName !== 'PENDING_MAPPING';
+      out.set(m.sourcePaymentName.trim().toUpperCase(), {
+        oracleName: m.oracleReceiptMethodName,
+        usable,
+      });
+    }
+    return out;
+  }
+
   private async aggregateReceipts(orderNames: string[]) {
     const out = new Map<string, { count: number; total: number }>();
 
@@ -931,11 +1689,18 @@ export class ReconciliationService {
       .addSelect('MIN(l.createdAt)', 'firstSeen')
       .where('l.salesOrder IS NOT NULL')
       .andWhere(
-        `NOT EXISTS (SELECT 1 FROM "BackupOdooOrder" bo WHERE bo."orderName" = l."salesOrder")`,
+        // The correlated reference is written as `l.salesOrder`, not
+        // `l."salesOrder"`: TypeORM only rewrites the bare `alias.property`
+        // form into the quoted `"l"."salesOrder"` it actually emits. Pre-quoting
+        // the column defeats that rewrite, leaving a bare `l` that Oracle folds
+        // to `L` and then rejects (ORA-00904) because the alias is quoted lower.
+        `NOT EXISTS (SELECT 1 FROM "BackupOdooOrder" bo WHERE bo."orderName" = l.salesOrder)`,
       )
       .groupBy('l.salesOrder')
       .orderBy('MIN(l.createdAt)', 'DESC')
-      .take(ORPHAN_LIMIT);
+      // limit(), not take(): take() is entity pagination and wraps the query in
+      // a DISTINCT id sub-select, which a raw GROUP BY projection has no id for.
+      .limit(ORPHAN_LIMIT);
 
     if (params.startDate) {
       qb.andWhere('l.createdAt >= :start', {
@@ -982,10 +1747,22 @@ export class ReconciliationService {
 
     let odooTotal = 0;
     let oracleTotal = 0;
+    const countedHeaders = new Set<string>();
+    let aggregatedOrders = 0;
     for (const row of rows) {
       counts[row.status] += 1;
       odooTotal += row.odoo.total;
-      oracleTotal += row.oracle?.total ?? 0;
+      if (row.oracle?.isAggregate) aggregatedOrders += 1;
+      // One invoice can bill many orders. Adding its total once per order
+      // would multiply the Oracle side by the number of orders sharing it.
+      if (row.oracle?.headerId) {
+        if (!countedHeaders.has(row.oracle.headerId)) {
+          countedHeaders.add(row.oracle.headerId);
+          oracleTotal += row.oracle.total ?? 0;
+        }
+      } else {
+        oracleTotal += row.oracle?.total ?? 0;
+      }
     }
 
     const problems = PROBLEM_STATUSES.reduce((sum, s) => sum + counts[s], 0);
@@ -1002,6 +1779,7 @@ export class ReconciliationService {
       matchRate:
         comparable > 0 ? round2((counts.MATCHED / comparable) * 100) : 100,
       orphanCount,
+      aggregatedOrders,
     };
   }
 
@@ -1031,7 +1809,7 @@ export class ReconciliationService {
     key: string,
     row: ReconciliationRow | null,
     groupBy: BreakdownGroupBy,
-  ): BreakdownRow {
+  ): BreakdownAccumulator {
     const bySide = groupBy !== 'date';
     return {
       key,
@@ -1054,14 +1832,26 @@ export class ReconciliationService {
       odooPayments: 0,
       oracleReceipts: 0,
       unlinkedReceiptOrders: 0,
+      countedHeaders: new Set<string>(),
     };
   }
 
-  private accumulate(group: BreakdownRow, row: ReconciliationRow): void {
+  private accumulate(
+    group: BreakdownAccumulator,
+    row: ReconciliationRow,
+  ): void {
     group.orders += 1;
     group.counts[row.status] += 1;
     group.odooTotal += row.odoo.total;
-    group.oracleTotal += row.oracle?.total ?? 0;
+    // Each shared invoice contributes to a group once, not once per order.
+    if (row.oracle?.headerId) {
+      if (!group.countedHeaders.has(row.oracle.headerId)) {
+        group.countedHeaders.add(row.oracle.headerId);
+        group.oracleTotal += row.oracle.total ?? 0;
+      }
+    } else {
+      group.oracleTotal += row.oracle?.total ?? 0;
+    }
     group.odooPayments += row.odoo.paymentTotal;
     if (row.oracle?.receiptTotal != null) {
       group.oracleReceipts += row.oracle.receiptTotal;
@@ -1071,14 +1861,16 @@ export class ReconciliationService {
   }
 
   /** Rounds once at the end so a group of pennies does not drift. */
-  private finaliseGroup(group: BreakdownRow): BreakdownRow {
+  private finaliseGroup(group: BreakdownAccumulator): BreakdownRow {
     const problems = PROBLEM_STATUSES.reduce(
       (sum, s) => sum + group.counts[s],
       0,
     );
     const comparable = group.orders - group.counts.NOT_SYNCABLE;
+    const { countedHeaders: _dedupe, ...rest } = group;
+    void _dedupe;
     return {
-      ...group,
+      ...rest,
       problems,
       matchRate:
         comparable > 0

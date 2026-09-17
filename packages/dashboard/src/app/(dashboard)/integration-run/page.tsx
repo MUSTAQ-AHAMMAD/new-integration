@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, IntegrationRunJob, IntegrationRunOutcome } from '@/lib/api';
 import { toast } from 'sonner';
@@ -11,6 +11,7 @@ import {
   FileText,
   Play,
   RefreshCw,
+  ShieldAlert,
   XCircle,
 } from 'lucide-react';
 import { downloadCsv } from '@/lib/table-export';
@@ -149,6 +150,17 @@ export default function IntegrationRunPage() {
     refetchInterval: 10_000,
   });
 
+  // A scheduled run started at 03:00 with nobody watching. When the page opens
+  // with a run still in flight, show it — otherwise the automatic runs are
+  // invisible while they are the ones you most want to watch.
+  useEffect(() => {
+    if (activeRunId) return;
+    const live = recentRuns.find(
+      (j) => j.status === 'PROCESSING' || j.status === 'PENDING',
+    );
+    if (live) setActiveRunId(live.id);
+  }, [activeRunId, recentRuns]);
+
   const { data: run } = useQuery({
     queryKey: ['integration-run', activeRunId],
     queryFn: () => api.getIntegrationRun(activeRunId as string),
@@ -159,6 +171,15 @@ export default function IntegrationRunPage() {
       const status = (q.state.data as IntegrationRunJob | undefined)?.status;
       return status === 'PROCESSING' || status === 'PENDING' ? 2_000 : false;
     },
+  });
+
+  // The gap between Odoo and Oracle for this region, straight from the same
+  // query the scheduler uses to choose its days.
+  const { data: coverage, isFetching: coverageLoading } = useQuery({
+    queryKey: ['integration-coverage', region],
+    queryFn: () => api.getIntegrationCoverage(region),
+    enabled: !!region,
+    refetchInterval: 60_000,
   });
 
   const startMutation = useMutation({
@@ -735,6 +756,105 @@ export default function IntegrationRunPage() {
         </Card>
       )}
 
+      {/* ── Coverage: is anything missing? ─────────────────────────────── */}
+      {region && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert
+                className={`h-5 w-5 ${
+                  coverage && coverage.ordersOutstanding > 0
+                    ? 'text-amber-600'
+                    : 'text-emerald-600'
+                }`}
+              />
+              Coverage — {region}
+            </CardTitle>
+            <CardDescription>
+              Orders backed up from Odoo against the lines Oracle actually
+              confirmed. This is what the automatic run posts from, so anything
+              listed here is data that has not reached Oracle yet.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {coverageLoading && !coverage ? (
+              <p className="text-sm text-slate-500">Checking Oracle…</p>
+            ) : !coverage || coverage.days.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                No orders backed up for this region in the coverage window.
+              </p>
+            ) : coverage.ordersOutstanding === 0 ? (
+              <p className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+                Every backed-up order is posted — {coverage.days.length} day(s)
+                checked, nothing outstanding.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-amber-700">
+                  {coverage.ordersOutstanding} order(s) and{' '}
+                  {coverage.linesOutstanding} line(s) are still missing from
+                  Oracle across {coverage.outstandingDays.length} day(s).
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-left text-xs text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2">Business day</th>
+                        <th className="px-3 py-2 text-right">Orders</th>
+                        <th className="px-3 py-2 text-right">Posted</th>
+                        <th className="px-3 py-2 text-right">Missing</th>
+                        <th className="px-3 py-2 text-right">Partial</th>
+                        <th className="px-3 py-2 text-right">Lines owed</th>
+                        <th className="px-3 py-2">Branches</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coverage.days
+                        .filter((d) => d.ordersMissing > 0 || d.ordersPartial > 0)
+                        .map((d) => (
+                          <tr
+                            key={d.businessDay}
+                            className="border-t border-slate-100"
+                          >
+                            <td className="px-3 py-2 font-medium">
+                              {d.businessDay}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {d.ordersTotal}
+                            </td>
+                            <td className="px-3 py-2 text-right text-emerald-700">
+                              {d.ordersComplete}
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold text-red-600">
+                              {d.ordersMissing}
+                            </td>
+                            <td className="px-3 py-2 text-right text-amber-700">
+                              {d.ordersPartial}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {d.linesOutstanding}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-slate-500">
+                              {d.branches.join(', ') || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-slate-500">
+                  The 03:00 run posts these days automatically. To clear them
+                  now, start a run above over{' '}
+                  {coverage.outstandingDays[0]} →{' '}
+                  {coverage.outstandingDays[coverage.outstandingDays.length - 1]}.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Recent runs ────────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
@@ -752,6 +872,7 @@ export default function IntegrationRunPage() {
                 <thead className="text-left text-xs text-slate-500">
                   <tr>
                     <th className="px-3 py-2">Region</th>
+                    <th className="px-3 py-2">Trigger</th>
                     <th className="px-3 py-2">Range</th>
                     <th className="px-3 py-2">Status</th>
                     <th className="px-3 py-2 text-right">Invoices ✓</th>
@@ -766,6 +887,17 @@ export default function IntegrationRunPage() {
                     return (
                       <tr key={j.id} className="border-t border-slate-100">
                         <td className="px-3 py-2 font-medium">{s?.region ?? '—'}</td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              j.createdBy === 'SCHEDULER'
+                                ? 'bg-sky-100 text-sky-800'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            {j.createdBy === 'SCHEDULER' ? 'Automatic' : 'Manual'}
+                          </span>
+                        </td>
                         <td className="px-3 py-2">
                           {s ? `${s.startDate} → ${s.endDate}` : '—'}
                         </td>

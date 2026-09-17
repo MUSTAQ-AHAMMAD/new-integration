@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   api,
   authStorage,
@@ -10,6 +10,12 @@ import {
   type ReconcileQuery,
   type ReconciliationRow,
   type ReconciliationStatus,
+  type LiveVerifyResult,
+  type LiveVerifyStatus,
+  type TenderGroupBy,
+  type TenderRow,
+  type TenderStatus,
+  type TenderMappingStatus,
 } from '@/lib/api';
 import { useRegion } from '@/providers/region-provider';
 import { Button } from '@/components/ui/button';
@@ -41,11 +47,15 @@ import {
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   Download,
+  RadioTower,
   Scale,
   Search,
   Store,
+  Wallet,
   X,
+  XCircle,
 } from 'lucide-react';
 
 const STATUS_META: Record<
@@ -315,6 +325,534 @@ function BreakdownTable({
   );
 }
 
+const TENDER_STATUS_META: Record<
+  TenderStatus,
+  { label: string; tone: string }
+> = {
+  MATCHED: {
+    label: 'Balanced',
+    tone: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  },
+  SHORT_IN_ORACLE: {
+    label: 'Short in Oracle',
+    tone: 'bg-red-100 text-red-700 ring-red-200',
+  },
+  OVER_IN_ORACLE: {
+    label: 'Over in Oracle',
+    tone: 'bg-amber-100 text-amber-800 ring-amber-200',
+  },
+  MISSING_IN_ORACLE: {
+    label: 'Never receipted',
+    tone: 'bg-red-100 text-red-700 ring-red-200',
+  },
+  UNEXPECTED_IN_ORACLE: {
+    label: 'Not in the till',
+    tone: 'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200',
+  },
+  INCOMPLETE: {
+    label: 'Window too narrow',
+    tone: 'bg-slate-100 text-slate-600 ring-slate-200',
+  },
+};
+
+const MAPPING_META: Record<
+  TenderMappingStatus,
+  { label: string; tone: string; hint: string }
+> = {
+  MAPPED: {
+    label: 'mapped',
+    tone: 'text-slate-400',
+    hint: 'Resolves to an active Oracle receipt method',
+  },
+  PENDING: {
+    label: 'pending mapping',
+    tone: 'text-amber-600 font-semibold',
+    hint: 'The mapping exists but is inactive or still PENDING_MAPPING — orders on this tender will not post',
+  },
+  UNMAPPED: {
+    label: 'unmapped',
+    tone: 'text-red-600 font-semibold',
+    hint: 'No payment-method mapping exists for this tender',
+  },
+  ORACLE_ONLY: {
+    label: 'Oracle only',
+    tone: 'text-fuchsia-600',
+    hint: 'Oracle receipted this tender but the till never reported it',
+  },
+};
+
+const TENDER_VIEWS: { value: TenderGroupBy; label: string; hint: string }[] = [
+  {
+    value: 'store-date-method',
+    label: 'Store × day × method',
+    hint: 'The cash-up grain — one row per tender a store took on a day',
+  },
+  {
+    value: 'store-method',
+    label: 'Store × method',
+    hint: 'A store\'s tender mix across the whole window',
+  },
+  {
+    value: 'date-method',
+    label: 'Day × method',
+    hint: 'How each tender behaved day by day, across all stores',
+  },
+  { value: 'method', label: 'Method only', hint: 'One row per tender' },
+];
+
+/**
+ * Takings by payment method, per store and per day.
+ *
+ * This is the grain a cash-up happens at, and the only grain where both systems
+ * can honestly be compared: Oracle numbers its receipts on the invoice, not the
+ * order, so per-order tender does not exist on its side.
+ */
+function TenderTable({
+  query,
+  tolerance,
+  onDrill,
+}: {
+  query: ReconcileQuery;
+  tolerance: number;
+  onDrill: (row: TenderRow) => void;
+}) {
+  const [groupBy, setGroupBy] = useState<TenderGroupBy>('store-date-method');
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['reconciliation-tenders', groupBy, query],
+    queryFn: () => api.reconciliationTenders({ ...query, groupBy }),
+  });
+
+  const download = async () => {
+    const token = authStorage.getToken();
+    const res = await fetch(api.tenderExportUrl({ ...query, groupBy }), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = `tenders-${groupBy}-${query.startDate}-to-${query.endDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(href);
+  };
+
+  if (error) {
+    return (
+      <ErrorState
+        message={
+          error instanceof Error ? error.message : 'Failed to reconcile tenders'
+        }
+        onRetry={() => void refetch()}
+      />
+    );
+  }
+
+  const view = TENDER_VIEWS.find((v) => v.value === groupBy);
+  const showStore = groupBy === 'store-date-method' || groupBy === 'store-method';
+  const showDate = groupBy === 'store-date-method' || groupBy === 'date-method';
+
+  const row = (r: TenderRow, isTotal: boolean) => {
+    const meta = TENDER_STATUS_META[r.status];
+    const mapping = MAPPING_META[r.mappingStatus];
+    return (
+      <TableRow
+        key={r.key}
+        className={
+          isTotal
+            ? 'border-t-2 border-slate-300 bg-slate-50 font-semibold'
+            : 'cursor-pointer'
+        }
+        onClick={isTotal ? undefined : () => onDrill(r)}
+      >
+        {showStore && (
+          <TableCell className="text-sm">
+            {isTotal ? 'All stores' : storeLabel(r)}
+          </TableCell>
+        )}
+        {showDate && (
+          <TableCell className="whitespace-nowrap text-sm text-slate-700">
+            {isTotal ? 'All days' : (r.date ?? '—')}
+          </TableCell>
+        )}
+        <TableCell>
+          <div className="font-medium text-slate-800">{r.method}</div>
+          {!isTotal && (
+            <div className={`text-[11px] ${mapping.tone}`} title={mapping.hint}>
+              {r.mappedMethod && r.mappingStatus === 'MAPPED'
+                ? `→ ${r.mappedMethod}`
+                : mapping.label}
+            </div>
+          )}
+        </TableCell>
+        <TableCell className="text-right text-xs text-slate-600">
+          {r.odooCount}
+        </TableCell>
+        <TableCell className="text-right font-mono text-xs">
+          {money(r.odooTotal)}
+        </TableCell>
+        <TableCell className="text-right text-xs text-slate-600">
+          {r.oracleCount}
+        </TableCell>
+        <TableCell className="text-right font-mono text-xs">
+          {money(r.oracleTotal)}
+        </TableCell>
+        <TableCell className="text-right font-mono text-xs text-slate-500">
+          {r.oracleFees === 0 ? '—' : money(r.oracleFees)}
+        </TableCell>
+        <TableCell
+          className={`text-right font-mono text-xs font-semibold ${
+            r.partial ? 'text-slate-300' : varianceTone(r.variance, tolerance)
+          }`}
+          title={
+            r.partial
+              ? 'An invoice behind this row bills orders outside the window, so Oracle counts a full day against a partial till. Widen the dates or raise the scan limit.'
+              : undefined
+          }
+        >
+          {r.partial ? '—' : money(r.variance)}
+        </TableCell>
+        <TableCell>
+          {!isTotal && (
+            <span
+              className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ${meta.tone}`}
+            >
+              {meta.label}
+            </span>
+          )}
+        </TableCell>
+      </TableRow>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5">
+          {TENDER_VIEWS.map((v) => (
+            <button
+              key={v.value}
+              onClick={() => setGroupBy(v.value)}
+              title={v.hint}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                groupBy === v.value
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void download()}
+          className="gap-1.5"
+        >
+          <Download className="h-4 w-4" />
+          CSV
+        </Button>
+      </div>
+
+      {view && <p className="text-xs text-slate-500">{view.hint}.</p>}
+
+      {(data?.unmappedMethods.length ?? 0) > 0 && (
+        <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            No usable Oracle receipt method for:{' '}
+            <strong>{data?.unmappedMethods.join(', ')}</strong>. Orders paid with
+            these tenders cannot post until the mapping is approved under Payment
+            Mappings.
+          </span>
+        </p>
+      )}
+
+      {data?.rows.some((r) => r.partial) && (
+        <p className="flex items-start gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Some rows sit on daily invoices that also bill orders outside this
+            window. Oracle receipts always cover the whole invoice, so those
+            variances would be pure date-filter artefacts and are withheld.
+            Widen the dates{data?.truncated ? ' or raise the scan limit' : ''} to
+            settle them.
+          </span>
+        </p>
+      )}
+
+      {isLoading ? (
+        <p className="py-8 text-center text-sm text-slate-400">Comparing…</p>
+      ) : (data?.rows.length ?? 0) === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">
+          No payments recorded in this window.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {showStore && <TableHead>Store</TableHead>}
+                  {showDate && <TableHead>Date</TableHead>}
+                  <TableHead>Payment method</TableHead>
+                  <TableHead className="text-right">Odoo #</TableHead>
+                  <TableHead className="text-right">Odoo taken</TableHead>
+                  <TableHead className="text-right">Oracle #</TableHead>
+                  <TableHead className="text-right">Oracle receipted</TableHead>
+                  <TableHead className="text-right">Fees</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data?.rows.map((r) => row(r, false))}
+                {data && row({ ...data.totals, key: '__tender_totals__' }, true)}
+              </TableBody>
+            </Table>
+          </div>
+          <p className="text-xs text-slate-400">
+            Variance is Odoo minus Oracle: positive means the till took more than
+            Oracle receipted. Fees are settlement deductions booked as
+            miscellaneous receipts, held out of the receipted column so they
+            never read as a shortfall. Click a row to see the orders behind it.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const LIVE_STATUS_META: Record<
+  LiveVerifyStatus,
+  { label: string; tone: string; icon: typeof CheckCircle2 }
+> = {
+  VERIFIED: {
+    label: 'Verified against Oracle',
+    tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    icon: CheckCircle2,
+  },
+  MISMATCH: {
+    label: 'Oracle disagrees',
+    tone: 'border-amber-200 bg-amber-50 text-amber-800',
+    icon: AlertTriangle,
+  },
+  NOT_IN_ORACLE: {
+    label: 'Not found in Oracle',
+    tone: 'border-red-200 bg-red-50 text-red-800',
+    icon: XCircle,
+  },
+  LOOKUP_FAILED: {
+    label: 'Oracle could not be reached',
+    tone: 'border-slate-200 bg-slate-50 text-slate-700',
+    icon: XCircle,
+  },
+};
+
+/**
+ * Reads the invoice back out of Oracle on demand.
+ *
+ * Deliberately a button rather than something the dialog fires on open: each
+ * click is one live call to the Fusion pod, and an accountant checking a
+ * hundred orders should not silently generate a hundred API calls.
+ */
+function LiveOraclePanel({ orderName }: { orderName: string }) {
+  const verify = useMutation<LiveVerifyResult, Error, void>({
+    mutationFn: () => api.liveVerifyOrder(orderName),
+  });
+  const result = verify.data;
+  const meta = result ? LIVE_STATUS_META[result.status] : null;
+  const Icon = meta?.icon;
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+            <RadioTower className="h-4 w-4 text-indigo-600" />
+            Live check against Oracle
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Fetches the invoice from Oracle by transaction number. The tables
+            above show what we recorded when pushing; this shows what Oracle
+            holds now.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => verify.mutate()}
+          disabled={verify.isPending}
+        >
+          {verify.isPending ? 'Checking Oracle…' : 'Check Oracle now'}
+        </Button>
+      </div>
+
+      {verify.error && (
+        <p className="mt-2 text-sm text-red-600">{verify.error.message}</p>
+      )}
+
+      {result && meta && (
+        <div className="mt-3 space-y-3">
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${meta.tone}`}
+          >
+            {Icon && <Icon className="mt-0.5 h-4 w-4 shrink-0" />}
+            <div className="text-sm">
+              <div className="font-semibold">{meta.label}</div>
+              {result.issues.length > 0 && (
+                <ul className="mt-1 list-inside list-disc space-y-0.5 text-xs">
+                  {result.issues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-1 text-[11px] opacity-75">
+                Transaction {result.txnNumber} · checked in {result.durationMs}
+                ms
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Field</TableHead>
+                  <TableHead className="text-right">Odoo</TableHead>
+                  <TableHead className="text-right">Stored at push</TableHead>
+                  <TableHead className="text-right">Oracle now</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell className="text-xs font-medium">Total</TableCell>
+                  <TableCell className="text-right font-mono text-xs">
+                    {money(result.odoo.total)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs text-slate-500">
+                    {money(result.stored?.total)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs font-semibold">
+                    {money(result.live?.enteredAmount)}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-xs font-medium">Lines</TableCell>
+                  <TableCell className="text-right text-xs">
+                    {result.odoo.lineCount}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-slate-500">
+                    {result.stored?.lineCount ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-right text-xs font-semibold">
+                    {result.live?.lineCount ?? '—'}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-xs font-medium">
+                    Paid / outstanding
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs">
+                    {money(result.odoo.paymentTotal)}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-slate-400">
+                    —
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs font-semibold">
+                    {result.live
+                      ? `${money(result.live.balanceAmount)} due`
+                      : '—'}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="text-xs font-medium">Status</TableCell>
+                  <TableCell className="text-right text-xs">
+                    {result.odoo.state ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-slate-500">
+                    {result.stored?.status ?? '—'}
+                  </TableCell>
+                  <TableCell className="text-right text-xs font-semibold">
+                    {result.live?.status ?? '—'}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+
+          {result.live && (
+            <div className="grid gap-2 rounded-lg bg-slate-50 p-3 text-xs sm:grid-cols-4">
+              <div>
+                <div className="text-slate-500">Oracle document</div>
+                <div className="font-mono text-slate-800">
+                  {result.live.documentNumber ?? '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500">Business unit</div>
+                <div className="text-slate-800">
+                  {result.live.businessUnit ?? '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500">Bill-to</div>
+                <div className="text-slate-800">
+                  {result.live.billToCustomerName ?? '—'}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-500">Oracle txn date</div>
+                <div className="text-slate-800">
+                  {result.live.transactionDate ?? '—'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(result.live?.lines.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
+                Oracle lines, as held now ({result.live?.lineCount})
+              </p>
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Price</TableHead>
+                      <TableHead>Tax code</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {result.live?.lines.map((l, i) => (
+                      <TableRow key={`${l.lineNumber ?? 'l'}-${i}`}>
+                        <TableCell className="text-xs">
+                          {l.description ?? l.itemNumber ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-right text-xs">
+                          {l.quantity ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {money(l.unitSellingPrice)}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {l.taxClassificationCode ?? '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrderDetailDialog({
   orderName,
   onClose,
@@ -359,6 +897,8 @@ function OrderDetailDialog({
                 </span>
               ))}
             </div>
+
+            <LiveOraclePanel orderName={data.summary.orderName} />
 
             <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs sm:grid-cols-4">
               <div>
@@ -745,10 +1285,18 @@ export function OdooOracleTab() {
                 />
                 <Tile label="Match rate" value={`${summary.matchRate}%`} />
                 <Tile
-                  label="Variance (Odoo − Oracle)"
+                  label={
+                    summary.aggregatedOrders > 0
+                      ? 'Variance (not comparable)'
+                      : 'Variance (Odoo − Oracle)'
+                  }
                   value={money(summary.variance)}
                   hint={`Odoo ${money(summary.odooTotal)} · Oracle ${money(summary.oracleTotal)}`}
-                  valueTone={varianceTone(summary.variance, tolerance)}
+                  valueTone={
+                    summary.aggregatedOrders > 0
+                      ? 'text-slate-400'
+                      : varianceTone(summary.variance, tolerance)
+                  }
                 />
                 <Tile
                   label="Orphans in Oracle"
@@ -759,6 +1307,21 @@ export function OdooOracleTab() {
                   }
                 />
               </div>
+
+              {summary.aggregatedOrders > 0 && (
+                <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    <strong>{summary.aggregatedOrders}</strong> of these orders
+                    are billed on daily invoices shared with other orders, so
+                    the Oracle total counts whole invoices and the variance
+                    above is <strong>not order-for-order comparable</strong>.
+                    Line counts, presence and receipts are still exact. For the
+                    money on one of these orders, open it and run the live
+                    Oracle check, which reads the real per-line amounts.
+                  </span>
+                </p>
+              )}
 
               {summary.truncated && (
                 <p className="flex items-center gap-1.5 text-xs text-amber-600">
@@ -778,6 +1341,7 @@ export function OdooOracleTab() {
             <TabsTrigger value="store">By store</TabsTrigger>
             <TabsTrigger value="date">By day</TabsTrigger>
             <TabsTrigger value="store-date">By store &amp; day</TabsTrigger>
+            <TabsTrigger value="tenders">By payment method</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
           </TabsList>
 
@@ -869,6 +1433,38 @@ export function OdooOracleTab() {
                 query={baseQuery}
                 tolerance={tolerance}
                 onDrill={drill}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tenders" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Wallet className="h-5 w-5 text-indigo-600" />
+                By payment method
+              </CardTitle>
+              <CardDescription>
+                What each store took in each tender, against what Oracle
+                receipted for it. Oracle numbers receipts on the invoice rather
+                than the order, so store × day × method is the finest slice
+                where both sides are genuinely comparable — and it is the grain
+                a cash-up happens at.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TenderTable
+                query={baseQuery}
+                tolerance={tolerance}
+                onDrill={(row) => {
+                  setScope({
+                    store: row.branchCode ?? row.branchName ?? undefined,
+                    date: row.date ?? undefined,
+                  });
+                  setPage(0);
+                  setView('orders');
+                }}
               />
             </CardContent>
           </Card>

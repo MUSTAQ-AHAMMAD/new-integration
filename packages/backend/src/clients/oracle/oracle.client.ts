@@ -105,6 +105,62 @@ export interface OracleCashBankAccount {
   [key: string]: unknown;
 }
 
+/**
+ * An AR invoice as Oracle holds it right now, read back by transaction number.
+ * Field names are the camelCase of the `receivablesInvoices` REST attributes.
+ */
+export interface OracleLiveInvoice {
+  transactionNumber: string | null;
+  customerTransactionId: number | null;
+  documentNumber: number | null;
+  /** Oracle's own lifecycle state, e.g. "Complete" / "Incomplete". */
+  status: string | null;
+  transactionDate: string | null;
+  accountingDate: string | null;
+  currencyCode: string | null;
+  transactionType: string | null;
+  transactionSource: string | null;
+  businessUnit: string | null;
+  billToCustomerName: string | null;
+  billToCustomerNumber: string | null;
+  /** Oracle's invoice total. */
+  enteredAmount: number | null;
+  /** Still outstanding; 0 means fully receipted. */
+  balanceAmount: number | null;
+}
+
+/**
+ * A credit memo as Oracle currently holds it. balanceAmount is the key field:
+ * a memo that still carries its full balance was created but never applied.
+ */
+export interface OracleLiveCreditMemo {
+  transactionNumber: string | null;
+  customerTransactionId: number | null;
+  status: string | null;
+  transactionDate: string | null;
+  currencyCode: string | null;
+  transactionType: string | null;
+  businessUnit: string | null;
+  billToCustomerName: string | null;
+  billToCustomerNumber: string | null;
+  /** Oracle's memo total (negative for a credit). */
+  enteredAmount: number | null;
+  /** Still unapplied. 0 means fully applied to an invoice. */
+  balanceAmount: number | null;
+}
+
+export interface OracleLiveInvoiceLine {
+  lineNumber: number | null;
+  description: string | null;
+  itemNumber: string | null;
+  quantity: number | null;
+  unitSellingPrice: number | null;
+  lineAmount: number | null;
+  taxClassificationCode: string | null;
+  salesOrder: string | null;
+  unitOfMeasure: string | null;
+}
+
 @Injectable()
 export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
@@ -281,6 +337,215 @@ export class OracleClient implements OnModuleInit {
             raw: response.data,
           };
         }),
+    );
+  }
+
+  /**
+   * Reads one row back out of the inventory staging interface.
+   *
+   * This is the other half of {@link createStagedInventoryTransaction}. That
+   * call only queues the row (TransactionMode 3); Oracle's transaction manager
+   * decides minutes later whether the issue actually succeeded, and a rejection
+   * — insufficient quantity for a subinventory that does not allow negative
+   * balances being the common one — is written onto the interface row rather
+   * than returned to us. Without this read-back, a rejected issue is
+   * indistinguishable from a successful one and the stock silently never moves.
+   *
+   * Three outcomes, and the caller must treat them differently:
+   *   - `found: false`  → Oracle purged the row, which is what it does once the
+   *                       transaction is processed. Success, but only after a
+   *                       grace period; before that it may simply not be
+   *                       visible yet.
+   *   - error text set  → definitively rejected; the text is Oracle's reason.
+   *   - neither         → still queued, ask again later.
+   *
+   * Field names differ slightly across pods, so every plausible spelling of the
+   * error column is checked rather than trusting one.
+   */
+  async getStagedInventoryTransaction(transactionInterfaceId: number): Promise<{
+    found: boolean;
+    processStatus: number | null;
+    errorExplanation: string | null;
+    raw: unknown;
+  }> {
+    return this.circuitBreaker.execute(
+      'oracle:getStagedInventoryTransaction',
+      () =>
+        this.withRetries(async () => {
+          const response = await this.restGate.run(() =>
+            this.http.get('inventoryStagedTransactions', {
+              params: {
+                q: `TransactionInterfaceId=${transactionInterfaceId}`,
+                onlyData: true,
+                limit: 1,
+              },
+            }),
+          );
+          const data = this.isRecord(response.data) ? response.data : {};
+          const items = Array.isArray(data['items']) ? data['items'] : [];
+          const row = items.find((i) => this.isRecord(i));
+          if (!row || !this.isRecord(row)) {
+            return {
+              found: false,
+              processStatus: null,
+              errorExplanation: null,
+              raw: response.data,
+            };
+          }
+
+          const text = (...keys: string[]): string | null => {
+            for (const key of keys) {
+              const v = row[key];
+              if (typeof v === 'string' && v.trim()) return v.trim();
+            }
+            return null;
+          };
+          const num = (key: string): number | null => {
+            const v = row[key];
+            if (typeof v === 'number') return v;
+            if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) {
+              return Number(v);
+            }
+            return null;
+          };
+
+          return {
+            found: true,
+            processStatus: num('ProcessStatus') ?? num('ProcessFlag'),
+            errorExplanation: text(
+              'ErrorExplanation',
+              'ErrorMessage',
+              'ErrorCode',
+              'TransactionErrorExplanation',
+            ),
+            raw: row,
+          };
+        }),
+    );
+  }
+
+  /**
+   * Reads an AR invoice back out of Oracle by its transaction number — the
+   * number the SOAP AutoInvoice call returned when we created it.
+   *
+   * This is what makes reconciliation trustworthy. The FusionInvoiceHeader rows
+   * record what we *sent*; only Oracle knows what it *holds* now. An invoice
+   * that was completed, credited, adjusted or deleted in Oracle after the push
+   * is invisible to the stored audit trail but obvious here.
+   *
+   * Returns null when Oracle has no such invoice — the resource answers a
+   * missing transaction number with HTTP 200 and an empty `items` array, not a
+   * 404, so an empty result is a real answer rather than an error.
+   */
+  async getInvoiceByTransactionNumber(
+    transactionNumber: string | number,
+  ): Promise<OracleLiveInvoice | null> {
+    return this.circuitBreaker.execute(
+      'oracle:getInvoiceByTransactionNumber',
+      () =>
+        this.withRetries(async () => {
+          const response = await this.restGate.run(() =>
+            this.http.get('receivablesInvoices', {
+              params: {
+                q: `TransactionNumber=${transactionNumber}`,
+                onlyData: true,
+                limit: 1,
+              },
+            }),
+          );
+          const data = this.isRecord(response.data) ? response.data : {};
+          const items = Array.isArray(data['items']) ? data['items'] : [];
+          const first = items.find((i) => this.isRecord(i));
+          if (!first || !this.isRecord(first)) return null;
+
+          const str = (key: string): string | null =>
+            typeof first[key] === 'string' ? first[key] : null;
+          const numOrNull = (key: string): number | null => {
+            const v = first[key];
+            if (typeof v === 'number') return v;
+            if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) {
+              return Number(v);
+            }
+            return null;
+          };
+
+          return {
+            transactionNumber: str('TransactionNumber'),
+            customerTransactionId: numOrNull('CustomerTransactionId'),
+            documentNumber: numOrNull('DocumentNumber'),
+            status: str('InvoiceStatus'),
+            transactionDate: str('TransactionDate'),
+            accountingDate: str('AccountingDate'),
+            currencyCode: str('InvoiceCurrencyCode'),
+            transactionType: str('TransactionType'),
+            transactionSource: str('TransactionSource'),
+            businessUnit: str('BusinessUnit'),
+            billToCustomerName: str('BillToCustomerName'),
+            billToCustomerNumber: str('BillToCustomerNumber'),
+            // Oracle's own total for the invoice, and how much of it is still
+            // outstanding. A zero balance is proof the receipts landed and
+            // applied — stronger evidence than matching receipt rows by number.
+            enteredAmount: numOrNull('EnteredAmount'),
+            balanceAmount: numOrNull('InvoiceBalanceAmount'),
+          };
+        }),
+    );
+  }
+
+  /**
+   * The invoice's lines as Oracle currently holds them.
+   *
+   * `totalResults` is requested so the caller gets a truthful line count even
+   * when more lines exist than the page returns — silently comparing against a
+   * truncated page would invent line mismatches that are not real.
+   */
+  async getInvoiceLines(
+    customerTransactionId: string | number,
+    limit = 200,
+  ): Promise<{ totalCount: number; lines: OracleLiveInvoiceLine[] }> {
+    return this.circuitBreaker.execute('oracle:getInvoiceLines', () =>
+      this.withRetries(async () => {
+        const response = await this.restGate.run(() =>
+          this.http.get(
+            `receivablesInvoices/${customerTransactionId}/child/receivablesInvoiceLines`,
+            { params: { onlyData: true, totalResults: true, limit } },
+          ),
+        );
+        const data = this.isRecord(response.data) ? response.data : {};
+        const items = Array.isArray(data['items']) ? data['items'] : [];
+        const totalRaw = data['totalResults'];
+        const lines: OracleLiveInvoiceLine[] = items
+          .filter((i): i is Record<string, unknown> => this.isRecord(i))
+          .map((i) => ({
+            lineNumber:
+              typeof i['LineNumber'] === 'number' ? i['LineNumber'] : null,
+            description:
+              typeof i['Description'] === 'string' ? i['Description'] : null,
+            itemNumber:
+              typeof i['ItemNumber'] === 'string' ? i['ItemNumber'] : null,
+            quantity: typeof i['Quantity'] === 'number' ? i['Quantity'] : null,
+            unitSellingPrice:
+              typeof i['UnitSellingPrice'] === 'number'
+                ? i['UnitSellingPrice']
+                : null,
+            lineAmount:
+              typeof i['LineAmount'] === 'number' ? i['LineAmount'] : null,
+            taxClassificationCode:
+              typeof i['TaxClassificationCode'] === 'string'
+                ? i['TaxClassificationCode']
+                : null,
+            salesOrder:
+              typeof i['SalesOrder'] === 'string' ? i['SalesOrder'] : null,
+            unitOfMeasure:
+              typeof i['UnitOfMeasure'] === 'string'
+                ? i['UnitOfMeasure']
+                : null,
+          }));
+        return {
+          totalCount: typeof totalRaw === 'number' ? totalRaw : lines.length,
+          lines,
+        };
+      }),
     );
   }
 
@@ -535,6 +800,112 @@ export class OracleClient implements OnModuleInit {
 
     this.itemExistsCache.set(key, exists);
     return exists;
+  }
+
+  private readonly itemIdCache = new Map<string, string | null>();
+
+  /**
+   * Oracle's numeric InventoryItemId for an item number.
+   *
+   * CreditMemoService identifies a line's item by id, while everything upstream
+   * (Odoo, VendHQ, our own tables) only knows the item number. Returns null
+   * when Oracle has no such item — the caller then sends a description-only
+   * line rather than failing the whole memo, matching how the REST path already
+   * handles unknown items. Cached per item number, including the misses.
+   */
+  async resolveItemId(itemNumber: string): Promise<string | null> {
+    const item = (itemNumber ?? '').trim();
+    if (!item) return null;
+
+    const cached = this.itemIdCache.get(item);
+    if (cached !== undefined) return cached;
+
+    const id = await this.circuitBreaker.execute('oracle:resolveItemId', () =>
+      this.withRetries(async () => {
+        const response = await this.http.get('items', {
+          params: {
+            q: `ItemNumber=${item}`,
+            limit: 1,
+            onlyData: true,
+            fields: 'ItemId',
+          },
+        });
+        const data = this.isRecord(response.data) ? response.data : {};
+        const items = Array.isArray(data['items']) ? data['items'] : [];
+        const first = items.find((i) => this.isRecord(i));
+        if (!first || !this.isRecord(first)) return null;
+        const raw = first['ItemId'];
+        return typeof raw === 'number' || typeof raw === 'string'
+          ? String(raw)
+          : null;
+      }),
+    );
+
+    this.itemIdCache.set(item, id);
+    return id;
+  }
+
+  /**
+   * Reads a credit memo back out of Oracle by its transaction number.
+   *
+   * This is what makes "did the memo actually land?" answerable. Our own
+   * RefundTracking row records what we *sent*; only Oracle knows what it
+   * *holds*. A non-zero balance means the memo exists but is still sitting
+   * on-account — i.e. created but not applied.
+   *
+   * Returns null when Oracle has no such memo: the resource answers an unknown
+   * transaction number with HTTP 200 and an empty items array, so an empty
+   * result is a real answer rather than an error.
+   */
+  async getCreditMemoByTransactionNumber(
+    transactionNumber: string | number,
+  ): Promise<OracleLiveCreditMemo | null> {
+    return this.circuitBreaker.execute(
+      'oracle:getCreditMemoByTransactionNumber',
+      () =>
+        this.withRetries(async () => {
+          const response = await this.restGate.run(() =>
+            this.http.get('receivablesCreditMemos', {
+              params: {
+                q: `TransactionNumber=${transactionNumber}`,
+                onlyData: true,
+                limit: 1,
+              },
+            }),
+          );
+          const data = this.isRecord(response.data) ? response.data : {};
+          const items = Array.isArray(data['items']) ? data['items'] : [];
+          const first = items.find((i) => this.isRecord(i));
+          if (!first || !this.isRecord(first)) return null;
+
+          const str = (key: string): string | null =>
+            typeof first[key] === 'string' ? first[key] : null;
+          const numOrNull = (key: string): number | null => {
+            const v = first[key];
+            if (typeof v === 'number') return v;
+            if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) {
+              return Number(v);
+            }
+            return null;
+          };
+
+          return {
+            transactionNumber: str('TransactionNumber'),
+            customerTransactionId: numOrNull('CustomerTransactionId'),
+            status: str('CreditMemoStatus') ?? str('Status'),
+            transactionDate: str('TransactionDate'),
+            currencyCode: str('CreditMemoCurrency') ?? str('Currency'),
+            transactionType: str('TransactionType'),
+            businessUnit: str('BusinessUnit'),
+            billToCustomerName: str('BillToCustomerName'),
+            billToCustomerNumber: str('BillToCustomerNumber'),
+            enteredAmount: numOrNull('EnteredAmount') ?? numOrNull('Amount'),
+            balanceAmount:
+              numOrNull('CreditMemoBalanceAmount') ??
+              numOrNull('BalanceAmount'),
+          };
+        }),
+    );
   }
 
   /**

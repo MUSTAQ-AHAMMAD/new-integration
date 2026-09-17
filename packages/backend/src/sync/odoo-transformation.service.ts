@@ -808,6 +808,18 @@ export class OdooTransformationService {
       conversionDate: memoDate,
       originalTransactionNumber: opts.originalTransactionNumber,
       reason: opts.reason,
+      // Numeric ids for the CreditMemoService SOAP payload. Missing ids are not
+      // an error here — the caller checks them and falls back to the REST
+      // create, which identifies everything by name instead.
+      orgId:
+        storeConfig.oracleOperatingUnitId != null
+          ? String(storeConfig.oracleOperatingUnitId)
+          : undefined,
+      billToCustomerId: storeConfig.billToCustomerId ?? undefined,
+      billToSiteUseId: storeConfig.billToSiteUseId ?? undefined,
+      paymentTermsId: storeConfig.paymentTermsId ?? undefined,
+      batchSourceSequenceId: storeConfig.batchSourceSequenceId ?? undefined,
+      customerTrxTypeSequenceId: storeConfig.creditMemoTrxTypeId ?? undefined,
       creditMemoLines: [],
     };
 

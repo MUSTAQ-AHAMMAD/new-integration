@@ -145,4 +145,22 @@ export class RefundsController {
   pushCreditMemo(@Param('id') id: string) {
     return this.creditMemoService.pushRefund(id);
   }
+
+  @Post(':id/apply')
+  @ApiOperation({
+    summary:
+      'Apply this refund\'s existing Oracle credit memo to the invoice it credits',
+  })
+  applyCreditMemo(@Param('id') id: string) {
+    return this.creditMemoService.applyExisting(id);
+  }
+
+  @Get(':id/verify')
+  @ApiOperation({
+    summary:
+      'Read the credit memo (and credited invoice) back from Oracle to confirm it landed and was applied',
+  })
+  verifyCreditMemo(@Param('id') id: string) {
+    return this.creditMemoService.verify(id);
+  }
 }

@@ -90,8 +90,9 @@ runs.
 
 Confirm with the Oracle admin:
 1. The "Manage Inventory Transactions" / transaction-manager ESS job is scheduled.
-2. The transaction type is correct for your setup — default is `Account Issue`; override
-   with `ORACLE_INVENTORY_TXN_TYPE` if you use a specific one (e.g. `Vend Sales Issue`).
+2. The transaction types exist on the pod: a sales issue posts as `Vend Sales Issue`,
+   a refund return as `Vend Sales`. Override with `ORACLE_INVENTORY_TXN_TYPE` /
+   `ORACLE_INVENTORY_REFUND_TXN_TYPE` if your setup names them differently.
 3. Spot-check that a posted `FusionInvTxn` (status SUCCESS) actually relieves on-hand
    quantity a few minutes later.
 

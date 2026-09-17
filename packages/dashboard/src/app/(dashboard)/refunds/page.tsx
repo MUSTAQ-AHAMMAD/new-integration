@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, PlusCircle, Send } from 'lucide-react';
+import { CheckCircle2, Download, Link2, PlusCircle, Send, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { authStorage } from '@/lib/api';
 import { getApiBase } from '@/lib/runtime-config';
@@ -35,6 +35,40 @@ interface Refund {
   branchCode?: string;
 }
 
+interface OracleCreditMemoSnapshot {
+  transactionNumber: string | null;
+  status: string | null;
+  transactionDate: string | null;
+  currencyCode: string | null;
+  transactionType: string | null;
+  businessUnit: string | null;
+  billToCustomerName: string | null;
+  enteredAmount: number | null;
+  balanceAmount: number | null;
+}
+
+interface OracleInvoiceSnapshot {
+  transactionNumber: string | null;
+  status: string | null;
+  enteredAmount: number | null;
+  balanceAmount: number | null;
+}
+
+/** What Oracle actually holds for a refund, read back live. */
+interface CreditMemoVerification {
+  refundId: string;
+  refundOrderNumber: string;
+  refundAmount: number;
+  creditMemoNumber: string | null;
+  creditMemoFound: boolean;
+  creditMemo: OracleCreditMemoSnapshot | null;
+  amountMatches: boolean;
+  applied: boolean;
+  invoiceNumber: string | null;
+  invoice: OracleInvoiceSnapshot | null;
+  problems: string[];
+}
+
 interface ManualCreditMemoForm {
   originalOrderId: string;
   originalOrderNumber: string;
@@ -46,6 +80,31 @@ interface ManualCreditMemoForm {
 }
 
 const apiBase = getApiBase();
+
+/** A single pass/fail line in the verification dialog. */
+function VerifyCheck({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-lg border p-2 text-sm ${
+        ok
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-red-200 bg-red-50 text-red-800'
+      }`}
+    >
+      {ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function VerifyRow({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="break-all text-right font-medium">{value ?? '—'}</dd>
+    </div>
+  );
+}
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const token = authStorage.getToken();
@@ -121,6 +180,7 @@ export default function RefundsPage() {
   const [selectedRefund, setSelectedRefund] = useState<Refund | null>(null);
   const [reconcileRefund, setReconcileRefund] = useState<Refund | null>(null);
   const [reconcileNote, setReconcileNote] = useState('');
+  const [verification, setVerification] = useState<CreditMemoVerification | null>(null);
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualForm, setManualForm] = useState<ManualCreditMemoForm>(EMPTY_MANUAL_FORM);
 
@@ -193,6 +253,39 @@ export default function RefundsPage() {
         toast.error(result.error || `Credit memo push ${result.status.toLowerCase()}`);
       }
       void queryClient.invalidateQueries({ queryKey: ['refunds'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Apply an already-created memo to the invoice it credits. Memos created
+  // while application was switched off are sitting on-account; this clears them
+  // without creating a second memo.
+  const applyMutation = useMutation({
+    mutationFn: (refundId: string) =>
+      apiRequest<{ applied: boolean; creditMemoNumber: string; invoiceNumber: string; note: string | null }>(
+        `/refunds/${refundId}/apply`,
+        { method: 'POST' },
+      ),
+    onSuccess: (result) => {
+      if (result.applied) {
+        toast.success(`Credit memo ${result.creditMemoNumber} applied to invoice ${result.invoiceNumber}`);
+      } else {
+        toast.error(result.note || 'Oracle did not apply the credit memo');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['refunds'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // Read the memo (and the invoice it credits) back out of Oracle.
+  const verifyMutation = useMutation({
+    mutationFn: (refundId: string) =>
+      apiRequest<CreditMemoVerification>(`/refunds/${refundId}/verify`),
+    onSuccess: (result) => {
+      setVerification(result);
+      if (result.problems.length === 0) {
+        toast.success('Verified in Oracle: memo created, amount matches, fully applied');
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -359,6 +452,28 @@ export default function RefundsPage() {
                           <Send className="h-3.5 w-3.5" /> {refund.creditMemoStatus === 'FAILED' ? 'Retry Push' : 'Push to Oracle'}
                         </Button>
                       )}
+                      {refund.oracleCreditMemoNumber && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => applyMutation.mutate(refund.id)}
+                            disabled={applyMutation.isPending}
+                            title="Apply this credit memo to the invoice it credits"
+                          >
+                            <Link2 className="h-3.5 w-3.5" /> Apply
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => verifyMutation.mutate(refund.id)}
+                            disabled={verifyMutation.isPending}
+                            title="Read this memo back out of Oracle"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Verify
+                          </Button>
+                        </>
+                      )}
                       {!refund.isReconciled && (
                         <Button size="sm" variant="outline" onClick={() => { setReconcileRefund(refund); setReconcileNote(refund.reconcileNote ?? ''); }}>
                           Reconcile
@@ -393,6 +508,125 @@ export default function RefundsPage() {
               </div>
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!verification} onOpenChange={(open) => { if (!open) setVerification(null); }}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Oracle Verification</DialogTitle>
+            <DialogDescription>
+              Read live from Oracle — not from what we recorded when the memo was pushed.
+            </DialogDescription>
+          </DialogHeader>
+          {verification && (
+            <div className="space-y-4">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <VerifyCheck ok={verification.creditMemoFound} label="Memo exists in Oracle" />
+                <VerifyCheck ok={verification.amountMatches} label="Amount matches refund" />
+                <VerifyCheck ok={verification.applied} label="Applied to invoice" />
+              </div>
+
+              {verification.problems.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Needs attention
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">
+                    {verification.problems.map((problem) => (
+                      <li key={problem}>{problem}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-gray-200 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                    Credit memo
+                  </p>
+                  {verification.creditMemo ? (
+                    <dl className="mt-2 space-y-1 text-sm text-gray-800">
+                      <VerifyRow label="Number" value={verification.creditMemo.transactionNumber} />
+                      <VerifyRow label="Status" value={verification.creditMemo.status} />
+                      <VerifyRow label="Type" value={verification.creditMemo.transactionType} />
+                      <VerifyRow label="Business unit" value={verification.creditMemo.businessUnit} />
+                      <VerifyRow label="Customer" value={verification.creditMemo.billToCustomerName} />
+                      <VerifyRow label="Date" value={verification.creditMemo.transactionDate} />
+                      <VerifyRow
+                        label="Amount"
+                        value={
+                          verification.creditMemo.enteredAmount != null
+                            ? `${verification.creditMemo.enteredAmount} ${verification.creditMemo.currencyCode ?? ''}`
+                            : null
+                        }
+                      />
+                      <VerifyRow
+                        label="Unapplied balance"
+                        value={
+                          verification.creditMemo.balanceAmount != null
+                            ? String(verification.creditMemo.balanceAmount)
+                            : null
+                        }
+                      />
+                    </dl>
+                  ) : (
+                    <p className="mt-2 text-sm text-gray-500">
+                      {verification.creditMemoNumber
+                        ? `Oracle returned nothing for ${verification.creditMemoNumber}.`
+                        : 'No credit memo has been created yet.'}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-gray-200 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                    Credited invoice
+                  </p>
+                  {verification.invoice ? (
+                    <dl className="mt-2 space-y-1 text-sm text-gray-800">
+                      <VerifyRow label="Number" value={verification.invoice.transactionNumber} />
+                      <VerifyRow label="Status" value={verification.invoice.status} />
+                      <VerifyRow
+                        label="Amount"
+                        value={
+                          verification.invoice.enteredAmount != null
+                            ? String(verification.invoice.enteredAmount)
+                            : null
+                        }
+                      />
+                      <VerifyRow
+                        label="Balance"
+                        value={
+                          verification.invoice.balanceAmount != null
+                            ? String(verification.invoice.balanceAmount)
+                            : null
+                        }
+                      />
+                    </dl>
+                  ) : (
+                    <p className="mt-2 text-sm text-gray-500">
+                      {verification.invoiceNumber
+                        ? `Could not read invoice ${verification.invoiceNumber}.`
+                        : 'No original invoice linked to this refund.'}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                {verification.creditMemoFound && !verification.applied && verification.invoiceNumber && (
+                  <Button
+                    onClick={() => applyMutation.mutate(verification.refundId)}
+                    disabled={applyMutation.isPending}
+                  >
+                    <Link2 className="h-3.5 w-3.5" /> Apply now
+                  </Button>
+                )}
+                <Button variant="outline" onClick={() => setVerification(null)}>Close</Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

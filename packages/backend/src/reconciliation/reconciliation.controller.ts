@@ -11,6 +11,8 @@ import {
 import { ApiOperation, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import {
   type BreakdownGroupBy,
+  type TenderGroupBy,
+  type TenderRow,
   PROBLEM_STATUSES,
   ReconciliationRow,
   ReconciliationService,
@@ -96,6 +98,23 @@ class BreakdownQueryDto extends ReconcileQueryDto {
   groupBy?: string;
 }
 
+const TENDER_GROUP_BY_VALUES: TenderGroupBy[] = [
+  'store-date-method',
+  'store-method',
+  'date-method',
+  'method',
+];
+
+class TenderQueryDto extends ReconcileQueryDto {
+  @ApiPropertyOptional({
+    enum: TENDER_GROUP_BY_VALUES,
+    default: 'store-date-method',
+  })
+  @IsOptional()
+  @IsIn(TENDER_GROUP_BY_VALUES)
+  groupBy?: string;
+}
+
 type CsvValue = string | number | Date | null | undefined;
 
 /** Escapes a value for CSV: quote it and double any embedded quotes. */
@@ -155,6 +174,77 @@ export class ReconciliationController {
       ? (query.groupBy as BreakdownGroupBy)
       : 'store';
     return this.reconciliation.breakdown(query, groupBy);
+  }
+
+  @Get('tenders')
+  @ApiOperation({
+    summary: 'Reconcile takings by payment method, per store and per day',
+  })
+  tenders(@Query() query: TenderQueryDto) {
+    const groupBy: TenderGroupBy = TENDER_GROUP_BY_VALUES.includes(
+      query.groupBy as TenderGroupBy,
+    )
+      ? (query.groupBy as TenderGroupBy)
+      : 'store-date-method';
+    return this.reconciliation.tenderBreakdown(query, groupBy);
+  }
+
+  @Get('tenders/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header(
+    'Content-Disposition',
+    'attachment; filename="tender-reconciliation.csv"',
+  )
+  @ApiOperation({ summary: 'Download the tender reconciliation as CSV' })
+  async exportTenders(@Query() query: TenderQueryDto): Promise<string> {
+    const groupBy: TenderGroupBy = TENDER_GROUP_BY_VALUES.includes(
+      query.groupBy as TenderGroupBy,
+    )
+      ? (query.groupBy as TenderGroupBy)
+      : 'store-date-method';
+    const result = await this.reconciliation.tenderBreakdown(
+      { ...query, maxScan: query.maxScan ?? 20000 },
+      groupBy,
+    );
+
+    const header = [
+      'Branch Code',
+      'Branch Name',
+      'Region',
+      'Date',
+      'Payment Method',
+      'Mapped Oracle Method',
+      'Mapping',
+      'Status',
+      'Odoo Payments',
+      'Odoo Total',
+      'Oracle Receipts',
+      'Oracle Total',
+      'Oracle Fees',
+      'Variance',
+    ].join(',');
+
+    const line = (r: TenderRow) =>
+      [
+        r.branchCode,
+        r.branchName,
+        r.region,
+        r.date,
+        r.method,
+        r.mappedMethod,
+        r.mappingStatus,
+        r.status,
+        r.odooCount,
+        r.odooTotal,
+        r.oracleCount,
+        r.oracleTotal,
+        r.oracleFees,
+        r.variance,
+      ]
+        .map(csvCell)
+        .join(',');
+
+    return [header, ...result.rows.map(line), line(result.totals)].join('\n');
   }
 
   @Get('export')
@@ -231,6 +321,22 @@ export class ReconciliationController {
         .join(',');
 
     return [header, ...result.rows.map(line)].join('\n');
+  }
+
+  @Get('orders/:orderName/live')
+  @ApiOperation({
+    summary:
+      'Read the invoice back out of Oracle by transaction number and compare it to Odoo',
+  })
+  liveVerify(
+    @Param('orderName') orderName: string,
+    @Query('tolerance') tolerance?: string,
+  ) {
+    const parsed = tolerance != null ? Number(tolerance) : undefined;
+    return this.reconciliation.liveVerify(
+      orderName,
+      Number.isFinite(parsed) ? parsed : undefined,
+    );
   }
 
   @Get('orders/:orderName')

@@ -47,8 +47,13 @@ import { OdooTransformationService } from './odoo-transformation.service';
 /** Placeholder used in receipt numbers until Oracle issues the transaction number. */
 export const TXN_PLACEHOLDER = '__TXN__';
 
-/** States that must never be invoiced. Mirrors the ingest-side rules. */
-const NON_INVOICEABLE_STATES = new Set([
+/**
+ * States that must never be invoiced. Mirrors the ingest-side rules. Exported
+ * so IntegrationCoverageService measures the same eligibility this service
+ * applies — coverage that counted orders the aggregator refuses to post would
+ * report gaps that can never close.
+ */
+export const NON_INVOICEABLE_STATES = new Set([
   'draft',
   'cancel',
   'cancelled',
@@ -129,11 +134,18 @@ interface RegionTaxContext {
   regionDefault: string | null;
 }
 
-/** A planned inventory issue, before the Oracle organisation id is resolved. */
+/** A planned inventory movement, before the Oracle organisation id is resolved. */
 export interface InventoryTransactionPlan {
+  /**
+   * Which side of the movement this is. A sale issues stock out under the
+   * "Vend Sales Issue" transaction type; a refund returns it under "Vend
+   * Sales". Absent means SALE — the only kind this aggregation plans today,
+   * since refunds go down the credit-memo path.
+   */
+  kind?: 'SALE' | 'REFUND';
   itemNumber: string;
   subinventoryCode: string;
-  /** Positive magnitude; the client negates it for an issue. */
+  /** Positive magnitude; the poster signs it from `kind`. */
   quantity: number;
   uomCode: string;
   transactionDate: Date;
@@ -308,6 +320,15 @@ export class DailyAggregationService {
       this.logger.warn(`Unknown timezone "${timeZone}" — treating as UTC`);
       return 0;
     }
+  }
+
+  /**
+   * The store-local timezone a region's orders are bucketed into business days
+   * by. Business days are local, not UTC — a 01:30 Riyadh sale belongs to the
+   * previous UTC day — so anything reasoning about days needs this same map.
+   */
+  timeZoneForRegion(region: string): string {
+    return REGION_TIMEZONE[(region ?? '').trim()] ?? DEFAULT_TIMEZONE;
   }
 
   /** Store-local calendar day (YYYY-MM-DD) for an instant. */
@@ -539,6 +560,7 @@ export class DailyAggregationService {
         // One issue per line — never aggregated by item.
         if (itemNumber && uomCode && subinventory && qty > 0) {
           inventoryPlans.push({
+            kind: 'SALE',
             itemNumber,
             subinventoryCode: subinventory,
             quantity: qty,

@@ -8,13 +8,16 @@ import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.enti
 import { FusionStandardReceipt } from '../database/entities/fusion-standard-receipt.entity';
 import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
+import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
+import { OracleModule } from '../clients/oracle/oracle.module';
 import { ReconciliationController } from './reconciliation.controller';
 import { ReconciliationService } from './reconciliation.service';
 
 /**
  * Odoo ↔ Oracle reconciliation. Read-only: it compares the stored Odoo backup
- * against the Fusion audit rows written when each order was pushed, so running
- * it can never move money.
+ * against the Fusion audit rows written when each order was pushed, and can
+ * read an invoice back out of Oracle by transaction number to check what Oracle
+ * actually holds now. Every path is a GET, so running it can never move money.
  */
 @Module({
   imports: [
@@ -27,7 +30,11 @@ import { ReconciliationService } from './reconciliation.service';
       FusionStandardReceipt,
       FusionMiscReceipt,
       OrderSyncQueue,
+      PaymentMethodMapping,
     ]),
+    // Supplies OracleClient for the live read-back; the stored comparison does
+    // not need it.
+    OracleModule,
   ],
   controllers: [ReconciliationController],
   providers: [ReconciliationService],

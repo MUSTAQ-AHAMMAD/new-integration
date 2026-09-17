@@ -165,6 +165,19 @@ export const api = {
     apiRequest<ReconciliationDetail>(
       `/reconciliation/orders/${encodeURIComponent(orderName)}`,
     ),
+  /** Takings by payment method, per store and per day. */
+  reconciliationTenders: (
+    params: ReconcileQuery & { groupBy: TenderGroupBy },
+  ) => apiRequest<TenderResult>(`/reconciliation/tenders${buildQuery(params)}`),
+  tenderExportUrl: (params: ReconcileQuery & { groupBy: TenderGroupBy }) =>
+    `${getApiBase()}/reconciliation/tenders/export${buildQuery(params)}`,
+  /** Reads the invoice back out of Oracle by transaction number, right now. */
+  liveVerifyOrder: (orderName: string, tolerance?: number) =>
+    apiRequest<LiveVerifyResult>(
+      `/reconciliation/orders/${encodeURIComponent(orderName)}/live${
+        tolerance != null ? `?tolerance=${tolerance}` : ''
+      }`,
+    ),
   reconciliationExportUrl: (params: ReconcileQuery) =>
     `${getApiBase()}/reconciliation/export${buildQuery(params)}`,
 
@@ -234,6 +247,12 @@ export const api = {
     apiRequest<IntegrationRunJob[]>(`/sync/integration-run${limit ? `?limit=${limit}` : ''}`),
   getIntegrationRun: (id: string) =>
     apiRequest<IntegrationRunJob>(`/sync/integration-run/${id}`),
+  getIntegrationCoverage: (region: string, days?: number) =>
+    apiRequest<IntegrationCoverage>(
+      `/sync/integration-coverage?region=${encodeURIComponent(region)}${
+        days ? `&days=${days}` : ''
+      }`,
+    ),
 
   createSyncJob: (data: CreateSyncJobDto) => apiRequest<SyncJob>('/sync/jobs', { method: 'POST', body: JSON.stringify(data) }),
   listSyncJobs: (status?: string) => apiRequest<SyncJob[]>(`/sync/jobs${status ? `?status=${status}` : ''}`),
@@ -789,6 +808,28 @@ export interface IntegrationRunJob extends Omit<SyncJob, 'scopeValue'> {
   completedAt?: string | null;
 }
 
+/** One business day's gap between what Odoo holds and what Oracle confirmed. */
+export interface DayCoverage {
+  region: string;
+  businessDay: string;
+  ordersTotal: number;
+  ordersComplete: number;
+  ordersMissing: number;
+  ordersPartial: number;
+  linesOutstanding: number;
+  amountOutstanding: number;
+  branches: string[];
+  sampleOrderNumbers: string[];
+}
+
+export interface IntegrationCoverage {
+  region: string;
+  days: DayCoverage[];
+  outstandingDays: string[];
+  ordersOutstanding: number;
+  linesOutstanding: number;
+}
+
 export interface OrderQueueEntry {
   id: string;
   odooOrderId: string;
@@ -855,6 +896,13 @@ export interface StoreConfig {
   transactionSource: string;
   transactionType: string;
   invoiceCurrencyCode: string;
+  creditMemoTransactionType: string | null;
+  // Oracle ids the CreditMemoService SOAP payload needs. Null until set here.
+  billToCustomerId: string | null;
+  billToSiteUseId: string | null;
+  paymentTermsId: string | null;
+  batchSourceSequenceId: string | null;
+  creditMemoTrxTypeId: string | null;
   isActive: boolean;
   validationStatus: string;
   validationErrors: string[] | null;
@@ -880,6 +928,12 @@ export interface UpsertStoreConfigDto {
   transactionSource?: string;
   transactionType?: string;
   invoiceCurrencyCode?: string;
+  creditMemoTransactionType?: string;
+  billToCustomerId?: string;
+  billToSiteUseId?: string;
+  paymentTermsId?: string;
+  batchSourceSequenceId?: string;
+  creditMemoTrxTypeId?: string;
   isActive?: boolean;
   createdBy: string;
 }
@@ -1372,6 +1426,8 @@ export interface ReconciliationResult {
     variance: number;
     matchRate: number;
     orphanCount: number;
+    /** Orders billed on an invoice shared with other orders. */
+    aggregatedOrders: number;
   };
   rows: ReconciliationRow[];
   orphans: ReconciliationOrphan[];
@@ -1407,6 +1463,121 @@ export interface BreakdownResult {
   truncated: boolean;
   rows: BreakdownRow[];
   totals: BreakdownRow;
+}
+
+export type TenderGroupBy =
+  | 'store-date-method'
+  | 'store-method'
+  | 'date-method'
+  | 'method';
+
+export type TenderMappingStatus =
+  | 'MAPPED'
+  | 'PENDING'
+  | 'UNMAPPED'
+  | 'ORACLE_ONLY';
+
+export type TenderStatus =
+  | 'MATCHED'
+  | 'SHORT_IN_ORACLE'
+  | 'OVER_IN_ORACLE'
+  | 'MISSING_IN_ORACLE'
+  | 'UNEXPECTED_IN_ORACLE'
+  /** Not all orders behind this tender's invoices were in the window. */
+  | 'INCOMPLETE';
+
+export interface TenderRow {
+  key: string;
+  branchCode: string | null;
+  branchName: string | null;
+  region: string | null;
+  date: string | null;
+  method: string;
+  mappedMethod: string | null;
+  mappingStatus: TenderMappingStatus;
+  odooCount: number;
+  odooTotal: number;
+  oracleCount: number;
+  oracleTotal: number;
+  /** Settlement fees — normally negative, held out of `oracleTotal`. */
+  oracleFees: number;
+  variance: number;
+  /** An invoice behind this row bills orders outside the window. */
+  partial: boolean;
+  status: TenderStatus;
+}
+
+export interface TenderResult {
+  groupBy: TenderGroupBy;
+  tolerance: number;
+  scanned: number;
+  truncated: boolean;
+  rows: TenderRow[];
+  totals: TenderRow;
+  unmappedMethods: string[];
+}
+
+export type LiveVerifyStatus =
+  | 'VERIFIED'
+  | 'MISMATCH'
+  | 'NOT_IN_ORACLE'
+  | 'LOOKUP_FAILED';
+
+export interface OracleLiveInvoiceLine {
+  lineNumber: number | null;
+  description: string | null;
+  itemNumber: string | null;
+  quantity: number | null;
+  unitSellingPrice: number | null;
+  lineAmount: number | null;
+  taxClassificationCode: string | null;
+  salesOrder: string | null;
+  unitOfMeasure: string | null;
+}
+
+export interface LiveVerifyResult {
+  orderName: string;
+  txnNumber: string;
+  checkedAt: string;
+  durationMs: number;
+  status: LiveVerifyStatus;
+  issues: string[];
+  tolerance: number;
+  odoo: {
+    total: number;
+    lineCount: number;
+    paymentTotal: number;
+    orderDate: string | null;
+    branchName: string | null;
+    state: string | null;
+  };
+  /** What we recorded at push time, for spotting drift in our own audit row. */
+  stored: {
+    invoiceNumber: string | null;
+    status: string | null;
+    total: number | null;
+    lineCount: number;
+  } | null;
+  live: {
+    transactionNumber: string | null;
+    customerTransactionId: number | null;
+    documentNumber: number | null;
+    status: string | null;
+    transactionDate: string | null;
+    accountingDate: string | null;
+    currencyCode: string | null;
+    transactionType: string | null;
+    transactionSource: string | null;
+    businessUnit: string | null;
+    billToCustomerName: string | null;
+    billToCustomerNumber: string | null;
+    enteredAmount: number | null;
+    balanceAmount: number | null;
+    lineCount: number | null;
+    lines: OracleLiveInvoiceLine[];
+  } | null;
+  amountDifference: number | null;
+  lineDifference: number | null;
 }
 
 export interface ReconciliationDetail {
