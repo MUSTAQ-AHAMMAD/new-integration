@@ -25,7 +25,7 @@ export const AREA_ROUTES: Record<string, string[]> = {
   reports: ['/reports'],
   'ai-monitor': ['/admin/ai-monitor'],
   stores: ['/stores'],
-  'sync-control': ['/admin/sync-control'],
+  'sync-control': ['/admin/sync-control', '/admin/automation'],
   exceptions: ['/skipped-orders', '/failed', '/failed-transactions'],
   alerts: ['/alerts'],
   payments: ['/payments'],
@@ -69,6 +69,7 @@ export const AREA_ROUTES: Record<string, string[]> = {
     '/admin/fusion-journal-headers',
     '/admin/fusion-journal-lines',
     '/admin/fusion-inv-txns',
+    '/admin/inventory-holds',
   ],
   'admin.backup-archive': [
     '/admin/backup-vendhq',

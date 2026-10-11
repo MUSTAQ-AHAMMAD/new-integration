@@ -168,6 +168,9 @@ export interface OracleLiveInvoiceLine {
   unitOfMeasure: string | null;
 }
 
+/** How long "item not in Oracle" is trusted before re-checking. */
+const ITEM_MISS_TTL_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
@@ -419,8 +422,9 @@ export class OracleClient implements OnModuleInit {
   /**
    * Reads one row back out of the inventory staging interface.
    *
-   * This is the other half of {@link createStagedInventoryTransaction}. That
-   * call only queues the row (TransactionMode 3); Oracle's transaction manager
+   * Used for rows queued with TransactionMode 3 (the earlier per-line
+   * inventory path; current posting uses {@link postInventoryStagedTransaction}
+   * with TransactionMode 1). A mode-3 call only queues the row; Oracle's transaction manager
    * decides minutes later whether the issue actually succeeded, and a rejection
    * — insufficient quantity for a subinventory that does not allow negative
    * balances being the common one — is written onto the interface row rather

@@ -196,11 +196,11 @@ export interface CreditMemoHeader {
 export function hasCreditMemoSoapIds(h: CreditMemoHeader): boolean {
   return Boolean(
     h.orgId &&
-      h.billToCustomerId &&
-      h.billToSiteUseId &&
-      h.paymentTermsId &&
-      h.batchSourceSequenceId &&
-      h.customerTrxTypeSequenceId,
+    h.billToCustomerId &&
+    h.billToSiteUseId &&
+    h.paymentTermsId &&
+    h.batchSourceSequenceId &&
+    h.customerTrxTypeSequenceId,
   );
 }
 
@@ -373,9 +373,9 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
           ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${escapeXml(l.itemNumber)}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
-          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(l.unitSellingPrice)}</typ1:UnitSellingPrice>
-          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
+          <typ1:Quantity unitCode="${escapeXml(l.uomCode || 'Ea')}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${escapeXml(l.currencyCode)}">${money2(l.unitSellingPrice)}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${escapeXml(l.taxClassificationCode)}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
         </typ1:InvoiceLine>`,
@@ -448,9 +448,9 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
           ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
           ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${escapeXml(l.itemNumber)}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
-          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${money2(-Math.abs(l.unitSellingPrice))}</typ1:UnitSellingPrice>
-          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
+          <typ1:Quantity unitCode="${escapeXml(l.uomCode || 'Ea')}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${escapeXml(l.currencyCode)}">${money2(-Math.abs(l.unitSellingPrice))}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${escapeXml(l.taxClassificationCode)}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
         </typ1:InvoiceLine>`,
@@ -545,7 +545,8 @@ function cmNamespaces(): { nsTypes: string; nsModel: string } {
  */
 function buildCreateCreditMemoSoap(header: CreditMemoHeader): string {
   const { nsTypes, nsModel } = cmNamespaces();
-  const currency = header.invoiceCurrencyCode;
+  // Escaped once here: it is interpolated into attributes and elements below.
+  const currency = escapeXml(header.invoiceCurrencyCode);
   const comments =
     header.reason ??
     (header.originalTransactionNumber
@@ -568,7 +569,8 @@ function buildCreateCreditMemoSoap(header: CreditMemoHeader): string {
           uom ? ` unitCode="${escapeXml(uom)}"` : ''
         }>${-qty}</cred:InvoicedQuantity>`,
       ];
-      if (uom) parts.push(`          <cred:UOMCode>${escapeXml(uom)}</cred:UOMCode>`);
+      if (uom)
+        parts.push(`          <cred:UOMCode>${escapeXml(uom)}</cred:UOMCode>`);
       parts.push(
         `          <cred:UnitSellingPrice currencyCode="${currency}">${price}</cred:UnitSellingPrice>`,
         `          <cred:ExtendedAmount currencyCode="${currency}">${-extended}</cred:ExtendedAmount>`,
@@ -599,7 +601,9 @@ function buildCreateCreditMemoSoap(header: CreditMemoHeader): string {
     `        <cred:BillToSiteUseId>${escapeXml(header.billToSiteUseId ?? '')}</cred:BillToSiteUseId>`,
   ];
   if (comments) {
-    headerParts.push(`        <cred:Comments>${escapeXml(comments)}</cred:Comments>`);
+    headerParts.push(
+      `        <cred:Comments>${escapeXml(comments)}</cred:Comments>`,
+    );
   }
   headerParts.push(
     `        <cred:TrxDate>${xmlDate(header.memoDate)}</cred:TrxDate>`,
@@ -774,7 +778,7 @@ function buildJournalSoap(header: JournalHeader): string {
           ${opt('Segment8', l.segment8)}
           ${opt('Segment9', l.segment9)}
           ${opt('Segment10', l.segment10)}
-          <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
+          <typ1:CurrencyCode>${escapeXml(l.currencyCode)}</typ1:CurrencyCode>
           ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${money2(l.enteredDrAmount)}</typ1:EnteredDrAmount>` : ''}
           ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${money2(l.enteredCrAmount)}</typ1:EnteredCrAmount>` : ''}
           ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${money2(l.accountedDr)}</typ1:AccountedDr>` : ''}

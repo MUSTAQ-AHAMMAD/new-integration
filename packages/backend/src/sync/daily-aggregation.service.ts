@@ -165,26 +165,6 @@ interface RegionTaxContext {
   regionDefault: string | null;
 }
 
-/** A planned inventory movement, before the Oracle organisation id is resolved. */
-export interface InventoryTransactionPlan {
-  /**
-   * Which side of the movement this is. A sale issues stock out under the
-   * "Vend Sales Issue" transaction type; a refund returns it under "Vend
-   * Sales". Absent means SALE — the only kind this aggregation plans today,
-   * since refunds go down the credit-memo path.
-   */
-  kind?: 'SALE' | 'REFUND';
-  itemNumber: string;
-  subinventoryCode: string;
-  /** Positive magnitude; the poster signs it from `kind`. */
-  quantity: number;
-  uomCode: string;
-  transactionDate: Date;
-  /** Source order number, for the Oracle TransactionSourceName + audit trail. */
-  salesOrder: string;
-  salesOrderLine: number;
-}
-
 /** Receipt accumulator keyed by payment method + register. */
 interface ReceiptBucket {
   paymentMethod: string;
@@ -360,6 +340,11 @@ export class DailyAggregationService {
    */
   timeZoneForRegion(region: string): string {
     return REGION_TIMEZONE[(region ?? '').trim()] ?? DEFAULT_TIMEZONE;
+  }
+
+  /** Alias of {@link timeZoneForRegion} (used by scheduler + reconciliation). */
+  regionTimeZone(region: string): string {
+    return this.timeZoneForRegion(region);
   }
 
   /** Store-local calendar day (YYYY-MM-DD) for an instant. */
@@ -636,24 +621,8 @@ export class DailyAggregationService {
         const itemNumber = line.productCode?.trim();
         const uomCode = itemNumber ? (uomCodes.get(itemNumber) ?? null) : null;
 
-        // Plan the inventory issue for EVERY line that names a real item —
-        // even lines whose invoice was already posted. Inventory is deduped
-        // per line at post time (sourceLineRef), so this never double-pushes,
-        // but it does mean an interrupted run that posted the invoice but not
-        // the inventory can still relieve stock on retry (no stranded stock).
-        // One issue per line — never aggregated by item.
-        if (itemNumber && uomCode && subinventory && qty > 0) {
-          inventoryPlans.push({
-            kind: 'SALE',
-            itemNumber,
-            subinventoryCode: subinventory,
-            quantity: qty,
-            uomCode,
-            transactionDate: saleDate,
-            salesOrder: orderNumber,
-            salesOrderLine: sourceLineNo,
-          });
-        }
+        // Inventory is NOT planned here: InventoryUploadService posts the
+        // day's stock movements (sales + refunds) separately, reference-style.
 
         const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
         if (priorInvoice) {

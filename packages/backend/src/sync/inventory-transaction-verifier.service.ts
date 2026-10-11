@@ -2,8 +2,12 @@
  * InventoryTransactionVerifierService — asks Oracle what actually happened to
  * the inventory issues we queued.
  *
- * DailyInvoiceService posts each issue into Oracle's staging interface with
- * TransactionMode 3, so the POST returns as soon as the row is queued. Whether
+ * Applies to rows queued with TransactionMode 3 (status PENDING + an
+ * interface id), as the earlier per-line inventory path did. Inventory is now
+ * posted by InventoryUploadService with TransactionMode 1, which answers
+ * synchronously (SUCCESS / ERROR / NEGATIVE_INVENTORY) and never leaves rows
+ * PENDING — so this service settles legacy rows only. With mode 3 the POST
+ * returns as soon as the row is queued. Whether
  * the stock actually moved is decided minutes later by Oracle's transaction
  * manager, and a rejection — insufficient quantity on a subinventory that does
  * not permit negative balances being the usual one — is written onto the
@@ -67,7 +71,9 @@ export interface VerifySummary {
 
 @Injectable()
 export class InventoryTransactionVerifierService {
-  private readonly logger = new Logger(InventoryTransactionVerifierService.name);
+  private readonly logger = new Logger(
+    InventoryTransactionVerifierService.name,
+  );
   private isRunning = false;
 
   constructor(
