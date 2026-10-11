@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FusionInvToVendHqService } from './fusion-inv-to-vendhq.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('inventory-sync')
 @Controller('inventory-sync')
@@ -19,6 +20,7 @@ export class FusionInvToVendHqController {
    * Manually trigger Oracle → VendHQ inventory sync for all regions.
    * Mirrors the Java "triggerInventorySyncNow" button in the ADF UI.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -36,6 +38,7 @@ export class FusionInvToVendHqController {
   /**
    * Manually trigger inventory sync for a specific region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger inventory sync for a specific region' })

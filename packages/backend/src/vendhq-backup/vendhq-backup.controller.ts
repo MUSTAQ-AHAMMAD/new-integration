@@ -13,6 +13,7 @@ import { Repository } from 'typeorm';
 import { VendHqCredential } from '../database/entities/vend-hq-credential.entity';
 import { VendHqSalesBackupService } from './vendhq-backup.service';
 import { VendHqToOracleSyncService } from './vendhq-to-oracle-sync.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('vendhq-backup')
 @Controller('vendhq-backup')
@@ -28,6 +29,7 @@ export class VendHqBackupController {
    * Manually trigger a full sales backup for all active credentials.
    * Mirrors the Java "triggerSalesJobNow" button in the ADF scheduler UI.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -41,6 +43,7 @@ export class VendHqBackupController {
   /**
    * Manually trigger backup for a single credential (by credential id).
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger/:credentialId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -63,6 +66,7 @@ export class VendHqBackupController {
   /**
    * Manually trigger backup for all active credentials in a named region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger-region/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -132,6 +136,7 @@ export class VendHqBackupController {
    * Start (enable) the integration for a specific region.
    * The next scheduled cron run will include this region again.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('region/:region/start')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable VendHQ backup integration for a region' })
@@ -143,6 +148,7 @@ export class VendHqBackupController {
    * Stop (disable) the integration for a specific region.
    * The scheduled cron will skip this region until it is re-enabled.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('region/:region/stop')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable VendHQ backup integration for a region' })
@@ -156,6 +162,7 @@ export class VendHqBackupController {
    * Manually trigger the VendHQ→Oracle Fusion sync for all pending sales
    * across all regions.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('sync-to-oracle')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -169,6 +176,7 @@ export class VendHqBackupController {
   /**
    * Manually trigger the VendHQ→Oracle Fusion sync for a specific region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('sync-to-oracle/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

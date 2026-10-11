@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import { IsNotEmpty, IsNumber, IsString, Min } from 'class-validator';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
+import { Roles } from '../auth/roles.decorator';
 
 class UpdateAlertThresholdsDto {
   @ApiProperty({ type: Number })
@@ -65,6 +66,7 @@ class ValidateCronDto {
 
 @ApiTags('settings')
 @Controller('settings')
+@Roles('ADMIN')
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
 

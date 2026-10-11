@@ -51,6 +51,10 @@ import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
 import { InventoryUploadService } from './inventory-upload.service';
 import { InventoryHoldsController } from './inventory-holds.controller';
+import { AutomationController } from './automation.controller';
+import { IntegrationSchedule } from '../database/entities/integration-schedule.entity';
+import { ReconciliationController } from './reconciliation.controller';
+import { ReconciliationService } from './reconciliation.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
 import { IntegrationRunService } from './integration-run.service';
 import { IntegrationSchedulerService } from './integration-scheduler.service';
@@ -82,6 +86,7 @@ import { BulkRetryService } from './bulk-retry.service';
       FusionCustomerAccount,
       FusionInvoiceLine,
       FusionInvTxn,
+      IntegrationSchedule,
       VendHqItemMeta,
       VendHqTaxMeta,
       OutletIntegrationConfig,
@@ -114,7 +119,12 @@ import { BulkRetryService } from './bulk-retry.service';
     forwardRef(() => OdooBackupModule),
     forwardRef(() => IbqBackupModule),
   ],
-  controllers: [SyncController, InventoryHoldsController],
+  controllers: [
+    SyncController,
+    InventoryHoldsController,
+    ReconciliationController,
+    AutomationController,
+  ],
   providers: [
     SyncService,
     OrderSyncService,
@@ -126,6 +136,7 @@ import { BulkRetryService } from './bulk-retry.service';
     DailyAggregationService,
     DailyInvoiceService,
     InventoryUploadService,
+    ReconciliationService,
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationRunService,

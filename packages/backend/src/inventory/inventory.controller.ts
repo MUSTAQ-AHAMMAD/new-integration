@@ -8,6 +8,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { InventoryService } from './inventory.service';
+import { Roles } from '../auth/roles.decorator';
 
 class NegativeInventoryQueryDto {
   @ApiPropertyOptional()
@@ -67,6 +68,7 @@ export class InventoryController {
     return this.inventoryService.getAlertHistory(query.limit ?? 50);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Put(':id/review')
   @ApiOperation({ summary: 'Mark a negative inventory record as reviewed' })
   markAsReviewed(@Param('id') id: string, @Body() body: ReviewInventoryDto) {

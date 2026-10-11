@@ -13,6 +13,10 @@ out/
 .env
 .env.local
 .env.*.local
+# Any env variant or backup (e.g. .env.bak.*, .env_prod) carries real secrets.
+.env.*
+*.env.bak*
+.env_*
 !.env.example
 !.env.local.example
 

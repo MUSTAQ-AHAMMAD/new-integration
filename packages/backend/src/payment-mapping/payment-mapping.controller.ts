@@ -14,6 +14,7 @@ import { Repository } from 'typeorm';
 import { Response } from 'express';
 import { PaymentMappingService } from './payment-mapping.service';
 import { PaymentMethodMapping } from '../database/entities/payment-method-mapping.entity';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('payment-mappings')
 @Controller('payment-mappings')
@@ -60,6 +61,7 @@ export class PaymentMappingController {
     res.send(csv);
   }
 
+  @Roles('ADMIN')
   @Post()
   @ApiOperation({ summary: 'Create payment method mapping' })
   create(
@@ -75,6 +77,7 @@ export class PaymentMappingController {
     return this.service.createMapping(body);
   }
 
+  @Roles('ADMIN')
   @Put(':id/approve')
   @ApiOperation({ summary: 'Approve pending payment method mapping' })
   approve(@Param('id') id: string, @Body() body: { approvedBy: string }) {

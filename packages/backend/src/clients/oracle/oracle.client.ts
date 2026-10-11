@@ -112,6 +112,9 @@ export interface OracleCashBankAccount {
   [key: string]: unknown;
 }
 
+/** How long "item not in Oracle" is trusted before re-checking. */
+const ITEM_MISS_TTL_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class OracleClient implements OnModuleInit {
   private readonly logger = new Logger(OracleClient.name);
@@ -259,6 +262,105 @@ export class OracleClient implements OnModuleInit {
       }),
     );
     return { status: response.status, data: response.data };
+  }
+
+  /**
+   * Finds an AR invoice Oracle already holds for any of `salesOrders` — used
+   * to settle an invoice call whose outcome is unknown (timeout) before
+   * creating it again, so a slow Oracle can never produce a duplicate invoice.
+   *
+   * Candidates are narrowed by transaction date + source (+ bill-to number when
+   * the pod supports that filter), then matched on the SalesOrder each line
+   * carries (the integration stamps every line with its Odoo order number).
+   *
+   * Returns null when Oracle confirms no such invoice; THROWS when it cannot be
+   * determined, so the caller never treats "unknown" as "absent".
+   */
+  async findInvoiceForSalesOrders(params: {
+    transactionDate: string;
+    transactionSource: string;
+    billToAccountNumber?: string;
+    salesOrders: string[];
+  }): Promise<{ transactionNumber: string; customerTrxId: string } | null> {
+    const wanted = new Set(params.salesOrders.filter(Boolean));
+    if (wanted.size === 0) return null;
+    const quote = (v: string) => `'${v.replace(/'/g, "''")}'`;
+    const base = [
+      `TransactionDate=${quote(params.transactionDate)}`,
+      `TransactionSource=${quote(params.transactionSource)}`,
+    ];
+    const variants = params.billToAccountNumber
+      ? [
+          [
+            ...base,
+            `BillToCustomerNumber=${quote(params.billToAccountNumber)}`,
+          ],
+          base,
+        ]
+      : [base];
+
+    let candidates: Array<Record<string, unknown>> | null = null;
+    let lastError: unknown = null;
+    for (const q of variants) {
+      try {
+        const res = await this.restGate.run(() =>
+          this.http.get('receivablesInvoices', {
+            params: {
+              q: q.join(';'),
+              limit: 200,
+              onlyData: true,
+              fields: 'CustomerTransactionId,TransactionNumber',
+            },
+          }),
+        );
+        const data = this.isRecord(res.data) ? res.data : {};
+        candidates = (Array.isArray(data['items']) ? data['items'] : []).filter(
+          (i): i is Record<string, unknown> => this.isRecord(i),
+        );
+        break;
+      } catch (err) {
+        lastError = err; // e.g. filter attribute unsupported → try the next one
+      }
+    }
+    if (candidates === null) {
+      throw new Error(
+        `Could not query Oracle invoices: ${
+          lastError instanceof Error ? lastError.message : String(lastError)
+        }`,
+      );
+    }
+
+    for (const inv of candidates) {
+      const rawId = inv['CustomerTransactionId'];
+      if (typeof rawId !== 'string' && typeof rawId !== 'number') continue;
+      const id = String(rawId);
+      const res = await this.restGate.run(() =>
+        this.http.get(
+          `receivablesInvoices/${encodeURIComponent(id)}/child/receivablesInvoiceLines`,
+          { params: { limit: 500, onlyData: true, fields: 'SalesOrder' } },
+        ),
+      );
+      const data = this.isRecord(res.data) ? res.data : {};
+      const lines = Array.isArray(data['items']) ? data['items'] : [];
+      const hit = lines.some(
+        (l) =>
+          this.isRecord(l) &&
+          (typeof l['SalesOrder'] === 'string' ||
+            typeof l['SalesOrder'] === 'number') &&
+          wanted.has(String(l['SalesOrder'])),
+      );
+      if (hit) {
+        return {
+          transactionNumber:
+            typeof inv['TransactionNumber'] === 'string' ||
+            typeof inv['TransactionNumber'] === 'number'
+              ? String(inv['TransactionNumber'])
+              : '',
+          customerTrxId: id,
+        };
+      }
+    }
+    return null;
   }
 
   /**
@@ -463,7 +565,16 @@ export class OracleClient implements OnModuleInit {
    * Cleared on process restart (which also happens on credential changes),
    * so a newly-created Oracle item is picked up after the next restart.
    */
-  private readonly itemExistsCache = new Map<string, boolean>();
+  /**
+   * item(@org) → { exists, at }. A positive answer is kept for the process
+   * lifetime; a NEGATIVE one only for ITEM_MISS_TTL_MS, so an item added to
+   * Oracle afterwards is picked up on the next run instead of its orders being
+   * held back until a restart.
+   */
+  private readonly itemExistsCache = new Map<
+    string,
+    { exists: boolean; at: number }
+  >();
 
   /**
    * Returns true when an item with the given ItemNumber exists in Oracle's
@@ -479,6 +590,8 @@ export class OracleClient implements OnModuleInit {
   async itemExists(
     itemNumber: string,
     organizationId?: number | null,
+    /** Ignore the cache (used after Oracle rejected an item it was told exists). */
+    fresh = false,
   ): Promise<boolean> {
     const item = (itemNumber ?? '').trim();
     if (!item) return false;
@@ -488,14 +601,23 @@ export class OracleClient implements OnModuleInit {
     // AR still rejects the invoice (AR_INVALID_INVENTORY_ITEM / AR-856749).
     const key = organizationId != null ? `${item}@${organizationId}` : item;
     const cached = this.itemExistsCache.get(key);
-    if (cached !== undefined) return cached;
+    if (
+      !fresh &&
+      cached &&
+      (cached.exists || Date.now() - cached.at < ITEM_MISS_TTL_MS)
+    ) {
+      return cached.exists;
+    }
 
     const exists = await this.circuitBreaker.execute('oracle:itemExists', () =>
       this.withRetries(async () => {
+        // Quoted: a code containing ';', spaces or quotes would otherwise
+        // break (or alter) the filter and read as "not found".
+        const quoted = `'${item.replace(/'/g, "''")}'`;
         const q =
           organizationId != null
-            ? `ItemNumber=${item};OrganizationId=${organizationId}`
-            : `ItemNumber=${item}`;
+            ? `ItemNumber=${quoted};OrganizationId=${organizationId}`
+            : `ItemNumber=${quoted}`;
         const response = await this.http.get('items', {
           params: {
             q,
@@ -510,7 +632,7 @@ export class OracleClient implements OnModuleInit {
       }),
     );
 
-    this.itemExistsCache.set(key, exists);
+    this.itemExistsCache.set(key, { exists, at: Date.now() });
     return exists;
   }
 

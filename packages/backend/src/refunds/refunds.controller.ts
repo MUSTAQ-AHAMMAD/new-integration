@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { CreditMemoService } from './credit-memo.service';
 import { RefundsService } from './refunds.service';
+import { Roles } from '../auth/roles.decorator';
 
 class ListRefundsQueryDto {
   @ApiPropertyOptional()
@@ -118,18 +119,21 @@ export class RefundsController {
     return this.refundsService.getRefund(id);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Put(':id/reconcile')
   @ApiOperation({ summary: 'Mark a refund as reconciled' })
   reconcileRefund(@Param('id') id: string, @Body() body: ReconcileRefundDto) {
     return this.refundsService.reconcileRefund(id, body.reconcileNote);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('credit-memo')
   @ApiOperation({ summary: 'Create a manual credit memo entry' })
   createManualCreditMemo(@Body() body: CreateManualCreditMemoDto) {
     return this.refundsService.createManualCreditMemo(body);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('process-pending')
   @ApiOperation({
     summary: 'Push all PENDING refunds to Oracle as credit memos now',
@@ -138,6 +142,7 @@ export class RefundsController {
     return this.creditMemoService.processPending();
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post(':id/push')
   @ApiOperation({
     summary: 'Build and push the credit memo for a single refund to Oracle',

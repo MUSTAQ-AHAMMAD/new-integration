@@ -15,7 +15,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
 import { StoreConfiguration } from '../database/entities/store-configuration.entity';
-import { DailyInvoiceService, DailyInvoiceOutcome } from './daily-invoice.service';
+import {
+  DailyInvoiceService,
+  DailyInvoiceOutcome,
+} from './daily-invoice.service';
 import { SyncControlService } from './sync-control.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -73,7 +76,20 @@ export class DailyInvoiceSchedulerService {
         return [];
       }
 
+      // Regions on the cut-off–based automatic integration (Admin → Automation
+      // & Cut-off) are owned by that scheduler; posting them here as well would
+      // give the same days two automatic posters with different windows.
+      const automationOn = await this.syncControl.isEnabled('integration-auto');
       for (const region of regions) {
+        if (
+          automationOn &&
+          (await this.syncControl.isEnabled('integration-auto', region))
+        ) {
+          this.logger.log(
+            `[${region}] skipped — handled by the automatic integration schedule`,
+          );
+          continue;
+        }
         const { startDate, days } = await this.catchUpWindow(region);
         this.logger.log(
           `[${region}] daily invoicing: ${days} day(s) from ${startDate}`,
@@ -105,8 +121,8 @@ export class DailyInvoiceSchedulerService {
         `Daily invoicing finished in ${elapsedS}s — ` +
           `${created} invoice(s) created, ${failed} failed across ${regions.length} region(s)`,
       );
-      await this.emailRunSummary(outcomes, regions, elapsedS).catch(() =>
-        undefined,
+      await this.emailRunSummary(outcomes, regions, elapsedS).catch(
+        () => undefined,
       );
       return outcomes;
     } finally {
@@ -150,7 +166,9 @@ export class DailyInvoiceSchedulerService {
       lines.push('');
       lines.push(`Failures: ${failed.length}`);
       for (const o of failed) {
-        lines.push(`  • ${o.branchCode} ${o.businessDay}: ${o.error ?? 'unknown'}`);
+        lines.push(
+          `  • ${o.branchCode} ${o.businessDay}: ${o.error ?? 'unknown'}`,
+        );
       }
     }
     if (excluded.length) {

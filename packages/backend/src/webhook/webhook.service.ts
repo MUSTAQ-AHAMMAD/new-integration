@@ -26,12 +26,18 @@ export class WebhookService {
     rawBody: Buffer,
     signature?: string,
   ) {
-    // Verify HMAC signature if a secret is configured
+    // Verify the HMAC signature. The endpoint is public, so in production an
+    // unsigned event is never accepted — without a secret anyone could inject
+    // orders. (Outside production an unset secret is tolerated for local dev.)
     if (this.webhookSecret) {
       if (!signature) {
         throw new UnauthorizedException('Missing x-odoo-signature header');
       }
       this.verifySignature(rawBody, signature);
+    } else if (process.env.NODE_ENV === 'production') {
+      throw new UnauthorizedException(
+        'Webhook rejected: WEBHOOK_SECRET is not configured on the server',
+      );
     }
 
     const eventType = (payload.event_type as string) || 'unknown';

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ItemSyncService } from './item-sync.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('item-sync')
 @Controller('item-sync')
@@ -19,6 +20,7 @@ export class ItemSyncController {
    * Manually trigger item sync for all active credentials.
    * Mirrors the Java "triggerItemSyncNow" button in the ADF UI.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -35,6 +37,7 @@ export class ItemSyncController {
   /**
    * Manually trigger item sync for a specific region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger item sync for a specific region' })

@@ -24,6 +24,7 @@ import { Type } from 'class-transformer';
 import { BackupIbqOrder } from '../database/entities/backup-ibq-order.entity';
 import { IbqCredential } from '../database/entities/ibq-credential.entity';
 import { IbqBackupService } from './ibq-backup.service';
+import { Roles } from '../auth/roles.decorator';
 
 // ---------------------------------------------------------------------------
 // DTOs
@@ -107,6 +108,7 @@ export class IbqBackupController {
   /**
    * Manually trigger a full IBQ backup for all active credentials.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -123,6 +125,7 @@ export class IbqBackupController {
   /**
    * Manually trigger backup for a single credential (by id).
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger/:credentialId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger IBQ backup for a specific credential' })
@@ -143,6 +146,7 @@ export class IbqBackupController {
   /**
    * Manually trigger backup for all active credentials in a named region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('trigger-region/:region')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -208,6 +212,7 @@ export class IbqBackupController {
   /**
    * Enable the IBQ backup integration for a region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('region/:region/start')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Enable IBQ backup integration for a region' })
@@ -218,6 +223,7 @@ export class IbqBackupController {
   /**
    * Disable the IBQ backup integration for a region.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('region/:region/stop')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Disable IBQ backup integration for a region' })
@@ -245,6 +251,7 @@ export class IbqBackupController {
   /**
    * Create a new IBQ credential.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('credentials')
   @ApiOperation({ summary: 'Create a new IBQ credential' })
   async createCredential(@Body() dto: CreateIbqCredentialDto) {
@@ -263,6 +270,7 @@ export class IbqBackupController {
   /**
    * Update an existing IBQ credential.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Put('credentials/:id')
   @ApiOperation({ summary: 'Update an IBQ credential' })
   async updateCredential(
@@ -286,6 +294,7 @@ export class IbqBackupController {
   /**
    * Delete an IBQ credential.
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Delete('credentials/:id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete an IBQ credential' })

@@ -292,12 +292,15 @@ describe('OracleSoapClient', () => {
       await assertion;
     });
 
-    it('retries on network failure and succeeds on third attempt', async () => {
+    it('retries when the request never reached Oracle and succeeds on the third attempt', async () => {
       const successXml = buildSuccessXml({ TransactionNumber: 'INV-001' });
+      const refused = Object.assign(new Error('connect ECONNREFUSED'), {
+        code: 'ECONNREFUSED',
+      });
 
       mockHttpPost
-        .mockRejectedValueOnce(new Error('ETIMEDOUT'))
-        .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+        .mockRejectedValueOnce(refused)
+        .mockRejectedValueOnce(refused)
         .mockResolvedValueOnce({ data: successXml });
 
       const promise = client.createSimpleInvoice(makeInvoiceHeader());
@@ -311,14 +314,50 @@ describe('OracleSoapClient', () => {
       expect(result.transactionNumber).toBe('INV-001');
     });
 
-    it('throws after exhausting all retries', async () => {
-      mockHttpPost.mockRejectedValue(new Error('persistent failure'));
+    it('does NOT retry a timeout (Oracle may have created the invoice) and flags it UNKNOWN_OUTCOME', async () => {
+      const timeout = Object.assign(new Error('timeout of 30000ms exceeded'), {
+        code: 'ECONNABORTED',
+      });
+      mockHttpPost.mockRejectedValue(timeout);
 
       const promise = client.createSimpleInvoice(makeInvoiceHeader());
-      const assertion = expect(promise).rejects.toThrow('persistent failure');
+      const assertion = expect(promise).rejects.toMatchObject({
+        kind: 'UNKNOWN_OUTCOME',
+      });
+      await jest.runAllTimersAsync();
+      await assertion;
+      expect(mockHttpPost).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws after exhausting retries when Oracle stays unreachable', async () => {
+      mockHttpPost.mockRejectedValue(
+        Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+          code: 'ENOTFOUND',
+        }),
+      );
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toMatchObject({
+        kind: 'NOT_SENT',
+      });
       await jest.runAllTimersAsync();
       await assertion;
       expect(mockHttpPost).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not retry an Oracle rejection (SOAP fault)', async () => {
+      mockHttpPost.mockResolvedValue({
+        status: 500,
+        data: '<env:Envelope><env:Body><env:Fault><faultcode>env:Server</faultcode><faultstring>AR_INVALID_INVENTORY_ITEM</faultstring></env:Fault></env:Body></env:Envelope>',
+      });
+
+      const promise = client.createSimpleInvoice(makeInvoiceHeader());
+      const assertion = expect(promise).rejects.toMatchObject({
+        kind: 'REJECTED',
+      });
+      await jest.runAllTimersAsync();
+      await assertion;
+      expect(mockHttpPost).toHaveBeenCalledTimes(1);
     });
 
     it('throws on Status E with standard ErrorMessage tag', async () => {

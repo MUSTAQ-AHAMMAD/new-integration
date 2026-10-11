@@ -21,7 +21,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Decimal } from 'decimal.js';
-import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
+import {
+  OracleSoapClient,
+  oracleFailureKind,
+} from '../clients/oracle/oracle-soap.client';
+import { OracleClient } from '../clients/oracle/oracle.client';
 import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
 import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
 import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
@@ -51,6 +55,9 @@ const POST_CONCURRENCY = Math.max(
   parseInt(process.env.DAILY_POST_CONCURRENCY ?? '12', 10) || 12,
 );
 
+/** Invoice attempt whose outcome Oracle never confirmed (timeout). */
+const UNCERTAIN = 'UNCERTAIN';
+
 export interface DailyInvoiceOutcome {
   branchCode: string;
   /** Human-readable store name for the UI (e.g. "Mahmal Center"). */
@@ -77,6 +84,12 @@ export interface DailyInvoiceOutcome {
   inventoryNegativeHeld?: number;
   /** Orders held back because Oracle does not know one of their items. */
   excludedOrders?: Array<{ orderNumber: string; reason: string }>;
+  /**
+   * Steps AFTER the invoice that failed (receipt / apply / journal /
+   * inventory). The invoice can be CREATED while these still need attention,
+   * so a run is only "completed" when this is empty.
+   */
+  stepFailures?: string[];
   error?: string;
 }
 
@@ -98,9 +111,13 @@ export type IntegrationTrigger = 'MANUAL' | 'AUTOMATIC' | 'ALL';
 export class DailyInvoiceService {
   private readonly logger = new Logger(DailyInvoiceService.name);
 
+  /** Store/days being posted right now (see postDay). */
+  private readonly inFlight = new Set<string>();
+
   constructor(
     private readonly aggregation: DailyAggregationService,
     private readonly soap: OracleSoapClient,
+    private readonly oracleClient: OracleClient,
     private readonly inventoryUpload: InventoryUploadService,
     @InjectRepository(FusionInvoiceHeader)
     private readonly invoiceHeaderRepo: Repository<FusionInvoiceHeader>,
@@ -193,13 +210,58 @@ export class DailyInvoiceService {
     businessDay: string,
     trigger: IntegrationTrigger = 'MANUAL',
   ): Promise<DailyInvoiceOutcome[]> {
-    if (!(await this.outletAllows(branchCode, trigger))) return [];
+    if (!(await this.outletAllows(branchCode, trigger))) {
+      // Reported (not silently dropped) so a run shows WHY a store is absent.
+      return [
+        this.emptyOutcome(
+          branchCode,
+          businessDay,
+          'SKIPPED',
+          `Outlet integration mode does not allow a ${trigger} run`,
+        ),
+      ];
+    }
 
-    const groups = await this.aggregation.buildDailyGroups(
-      branchCode,
-      businessDay,
-    );
-    const outcomes: DailyInvoiceOutcome[] = [];
+    // One poster per store/day at a time, whichever path started it (manual
+    // run, automatic run, daily-invoice cron, API). Two concurrent posts of the
+    // same day would both see "nothing posted yet" and create two invoices.
+    const lockKey = `${branchCode}|${businessDay}`;
+    if (this.inFlight.has(lockKey)) {
+      this.logger.warn(
+        `[${branchCode} ${businessDay}] already being posted by another run — skipped`,
+      );
+      return [
+        this.emptyOutcome(
+          branchCode,
+          businessDay,
+          'SKIPPED',
+          'Already being posted by another run',
+        ),
+      ];
+    }
+    this.inFlight.add(lockKey);
+    try {
+      return await this.postDayUnlocked(branchCode, businessDay);
+    } finally {
+      this.inFlight.delete(lockKey);
+    }
+  }
+
+  private async postDayUnlocked(
+    branchCode: string,
+    businessDay: string,
+  ): Promise<DailyInvoiceOutcome[]> {
+    const { groups, failures } =
+      await this.aggregation.buildDailyGroupsWithFailures(
+        branchCode,
+        businessDay,
+      );
+    const outcomes: DailyInvoiceOutcome[] = failures.map((f) => ({
+      ...this.emptyOutcome(branchCode, businessDay, 'FAILED', f.error),
+      groupKey: f.groupKey,
+      customerType: f.customerType,
+      sourceOrderCount: f.orderNumbers.length,
+    }));
     if (groups.length === 0) {
       this.logger.log(
         `[${branchCode} ${businessDay}] no invoice to post — no eligible orders or already fully posted`,
@@ -219,6 +281,11 @@ export class DailyInvoiceService {
         outcomes[0].inventoryTransactions = inv.success;
         outcomes[0].inventoryFailures = inv.failed;
         outcomes[0].inventoryNegativeHeld = inv.negativeHeld;
+        if (inv.failed > 0) {
+          (outcomes[0].stepFailures ??= []).push(
+            `Inventory: ${inv.failed} row(s) failed (see Admin → Inventory Holds)`,
+          );
+        }
       }
     } catch (err) {
       this.logger.error(
@@ -360,6 +427,7 @@ export class DailyInvoiceService {
       miscReceipts: 0,
       journals: 0,
       inventoryTransactions: 0,
+      stepFailures: [...group.buildProblems],
       excludedOrders: group.excludedOrders.length
         ? group.excludedOrders
         : undefined,
@@ -388,17 +456,19 @@ export class DailyInvoiceService {
     // journals are outstanding.
     let txnNumber: string;
     if (group.postInvoice) {
-      let customerTrxId: string;
-      try {
-        const result = await this.soap.createSimpleInvoice(group.invoiceHeader);
-        txnNumber = result.transactionNumber;
-        customerTrxId = result.customerTrxId;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.persistInvoiceFailure(group, message);
-        return { ...base, error: message };
+      const created = await this.createInvoiceSafely(group);
+      if (!created.ok) {
+        await this.persistInvoiceFailure(
+          group,
+          created.error,
+          created.uncertain,
+        );
+        return { ...base, error: created.error };
       }
-      await this.persistInvoiceSuccess(group, txnNumber, customerTrxId);
+      txnNumber = created.transactionNumber;
+      if (created.note) base.stepFailures?.push(created.note);
+      await this.persistInvoiceSuccess(group, txnNumber, created.customerTrxId);
+      await this.clearUncertain(group);
     } else {
       txnNumber = group.existingTransactionNumber as string;
       this.logger.log(
@@ -457,6 +527,9 @@ export class DailyInvoiceService {
         this.logger.error(
           `[${group.branchCode}] standard receipt ${receipt.receiptNumber} failed: ${message}`,
         );
+        base.stepFailures?.push(
+          `Standard receipt ${receipt.receiptNumber}: ${message}`,
+        );
         await this.saveReceipt(this.stdReceiptRepo, {
           ...stdRow,
           status: 'ERROR',
@@ -504,6 +577,9 @@ export class DailyInvoiceService {
         this.logger.error(
           `[${group.branchCode}] misc receipt ${receipt.receiptNumber} failed: ${message}`,
         );
+        base.stepFailures?.push(
+          `Misc receipt ${receipt.receiptNumber}: ${message}`,
+        );
         await this.saveReceipt(this.miscReceiptRepo, {
           ...miscRow,
           status: 'ERROR',
@@ -546,6 +622,9 @@ export class DailyInvoiceService {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(
           `[${group.branchCode}] apply receipt ${apply.receiptNumber} failed: ${message}`,
+        );
+        base.stepFailures?.push(
+          `Apply receipt ${apply.receiptNumber}: ${message}`,
         );
         await this.saveReceipt(this.applyReceiptRepo, {
           ...applyRow,
@@ -611,6 +690,7 @@ export class DailyInvoiceService {
         this.logger.error(
           `[${group.branchCode}] journal import failed: ${message}`,
         );
+        base.stepFailures?.push(`GL journal: ${message}`);
         await this.journalHeaderRepo.save(
           this.journalHeaderRepo.create({
             id: generateId(),
@@ -645,6 +725,240 @@ export class DailyInvoiceService {
       ...base,
       status: group.postInvoice ? 'CREATED' : 'SKIPPED',
       transactionNumber: txnNumber,
+    };
+  }
+
+  /**
+   * Creates the group's invoice so that a sale is never lost and never
+   * invoiced twice:
+   *   • a line left UNCERTAIN by an earlier timeout is first checked in Oracle —
+   *     if the invoice is there it is adopted, not recreated;
+   *   • a timeout now is settled the same way (verify, then create only if
+   *     Oracle confirms it has no such invoice);
+   *   • an item Oracle rejects is re-checked fresh and moved to the fallback
+   *     memo line (when configured), then the invoice is retried once;
+   *   • any other rejection fails the group with Oracle's reason.
+   */
+  private async createInvoiceSafely(group: DailyInvoiceGroup): Promise<
+    | {
+        ok: true;
+        transactionNumber: string;
+        customerTrxId: string;
+        note?: string;
+      }
+    | { ok: false; error: string; uncertain: boolean }
+  > {
+    const tag = `[${group.branchCode} ${group.businessDay}]`;
+
+    if (await this.hasUncertainLines(group)) {
+      const v = await this.verifyInOracle(group);
+      if (v.state === 'FOUND') {
+        this.logger.warn(
+          `${tag} earlier timed-out invoice found in Oracle (${v.transactionNumber}) — adopted, not recreated`,
+        );
+        return { ok: true, ...v.invoice, note: undefined };
+      }
+      if (v.state === 'UNKNOWN') {
+        return {
+          ok: false,
+          uncertain: true,
+          error:
+            `An earlier attempt for these lines timed out and Oracle cannot be ` +
+            `queried to confirm whether it was created (${v.error}). Not ` +
+            `re-sent to avoid a duplicate — the next run re-checks automatically.`,
+        };
+      }
+    }
+
+    let itemRetryDone = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const r = await this.soap.createSimpleInvoice(group.invoiceHeader);
+        return {
+          ok: true,
+          transactionNumber: r.transactionNumber,
+          customerTrxId: r.customerTrxId,
+          note: itemRetryDone
+            ? 'Some items were unknown to Oracle and posted on the fallback memo line'
+            : undefined,
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const kind = oracleFailureKind(err);
+
+        if (kind === 'UNKNOWN_OUTCOME') {
+          // Oracle may have created it. Give it a moment, then look.
+          let confirmedAbsent = false;
+          for (const waitMs of [10_000, 30_000, 60_000]) {
+            await new Promise((r) => setTimeout(r, waitMs));
+            const v = await this.verifyInOracle(group);
+            if (v.state === 'FOUND') {
+              this.logger.warn(
+                `${tag} invoice call timed out but Oracle has it (${v.transactionNumber}) — adopted`,
+              );
+              return { ok: true, ...v.invoice };
+            }
+            if (v.state === 'ABSENT') {
+              confirmedAbsent = true; // not created → safe to send again
+              break;
+            }
+          }
+          if (!confirmedAbsent) {
+            return {
+              ok: false,
+              uncertain: true,
+              error: `${message} — outcome unknown and could not be confirmed in Oracle; not re-sent (re-checked next run).`,
+            };
+          }
+          continue; // Oracle confirms absence → retry the create
+        }
+
+        if (
+          kind === 'REJECTED' &&
+          !itemRetryDone &&
+          /AR_INVALID_INVENTORY_ITEM|AR-856749|inventory item/i.test(message) &&
+          this.aggregation.fallbackMemoLine
+        ) {
+          itemRetryDone = true;
+          const missing = await this.freshMissingItems(group);
+          if (this.aggregation.convertItemsToMemo(group, missing) > 0) {
+            this.logger.warn(
+              `${tag} Oracle rejected item(s) ${[...missing].join(', ')} — retrying on memo line "${this.aggregation.fallbackMemoLine}"`,
+            );
+            continue;
+          }
+        }
+
+        // NOT_SENT was already retried with back-off inside the client; the
+        // next run retries it again. Nothing was created either way.
+        return { ok: false, uncertain: false, error: message };
+      }
+    }
+    return {
+      ok: false,
+      uncertain: false,
+      error: 'Invoice could not be created after retries',
+    };
+  }
+
+  /** Items on the group's lines that Oracle (checked fresh) does not know. */
+  private async freshMissingItems(
+    group: DailyInvoiceGroup,
+  ): Promise<Set<string>> {
+    const items = new Set(
+      group.invoiceHeader.invoiceLines
+        .map((l) => l.itemNumber)
+        .filter((i): i is string => !!i),
+    );
+    const missing = new Set<string>();
+    await mapWithConcurrency([...items], 8, async (item) => {
+      try {
+        if (!(await this.oracleClient.itemExists(item, null, true)))
+          missing.add(item);
+      } catch {
+        /* unknown → leave as is */
+      }
+    });
+    return missing;
+  }
+
+  private async verifyInOracle(group: DailyInvoiceGroup): Promise<
+    | {
+        state: 'FOUND';
+        transactionNumber: string;
+        invoice: { transactionNumber: string; customerTrxId: string };
+      }
+    | { state: 'ABSENT' }
+    | { state: 'UNKNOWN'; error: string }
+  > {
+    try {
+      const found = await this.oracleClient.findInvoiceForSalesOrders({
+        transactionDate: group.businessDay,
+        transactionSource: group.invoiceHeader.transactionSource,
+        billToAccountNumber: group.invoiceHeader.billToAccountNumber,
+        salesOrders: [
+          ...new Set(
+            group.invoiceHeader.invoiceLines
+              .map((l) => l.salesOrder)
+              .filter((o): o is string => !!o),
+          ),
+        ],
+      });
+      return found
+        ? {
+            state: 'FOUND',
+            transactionNumber: found.transactionNumber,
+            invoice: found,
+          }
+        : { state: 'ABSENT' };
+    } catch (err) {
+      return {
+        state: 'UNKNOWN',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  private groupSalesOrders(group: DailyInvoiceGroup): string[] {
+    return [
+      ...new Set(
+        group.invoiceHeader.invoiceLines
+          .map((l) => l.salesOrder)
+          .filter((o): o is string => !!o),
+      ),
+    ];
+  }
+
+  private async hasUncertainLines(group: DailyInvoiceGroup): Promise<boolean> {
+    const orders = this.groupSalesOrders(group);
+    for (let i = 0; i < orders.length; i += 900) {
+      const n = await this.invoiceLineRepo.count({
+        where: {
+          salesOrder: In(orders.slice(i, i + 900)),
+          region: group.region,
+          status: UNCERTAIN,
+        },
+      });
+      if (n > 0) return true;
+    }
+    return false;
+  }
+
+  /** Once the invoice is settled, earlier UNCERTAIN markers are obsolete. */
+  private async clearUncertain(group: DailyInvoiceGroup): Promise<void> {
+    const orders = this.groupSalesOrders(group);
+    for (let i = 0; i < orders.length; i += 900) {
+      await this.invoiceLineRepo
+        .update(
+          {
+            salesOrder: In(orders.slice(i, i + 900)),
+            region: group.region,
+            status: UNCERTAIN,
+          },
+          { status: 'SUPERSEDED' },
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  private emptyOutcome(
+    branchCode: string,
+    businessDay: string,
+    status: DailyInvoiceOutcome['status'],
+    error: string,
+  ): DailyInvoiceOutcome {
+    return {
+      branchCode,
+      businessDay,
+      groupKey: `${branchCode}|${businessDay}`,
+      customerType: 'ALL',
+      status,
+      sourceOrderCount: 0,
+      invoiceLineCount: 0,
+      standardReceipts: 0,
+      miscReceipts: 0,
+      journals: 0,
+      error,
     };
   }
 
@@ -730,14 +1044,46 @@ export class DailyInvoiceService {
   private async persistInvoiceFailure(
     group: DailyInvoiceGroup,
     message: string,
+    uncertain = false,
   ): Promise<void> {
     this.logger.error(
       `[${group.branchCode} ${group.businessDay}] invoice creation failed: ${message}`,
     );
+    if (uncertain) {
+      // Remember which lines MAY now be in Oracle, so the next run verifies
+      // with Oracle before creating them again (never a blind duplicate).
+      await this.invoiceLineRepo
+        .save(
+          group.invoiceHeader.invoiceLines.map((l) =>
+            this.invoiceLineRepo.create({
+              id: generateId(),
+              status: UNCERTAIN,
+              message: message.slice(0, 4000),
+              requestDate: new Date(),
+              region: group.region,
+              currencyCode: group.invoiceHeader.invoiceCurrencyCode,
+              itemNumber: l.itemNumber ?? null,
+              description: l.description ?? null,
+              quantity: l.quantity,
+              salesOrder: l.salesOrder ?? null,
+              salesOrderLine:
+                l.salesOrderLine != null ? Number(l.salesOrderLine) : null,
+            } as Partial<FusionInvoiceLine>),
+          ),
+          { chunk: 200 },
+        )
+        .catch((err) =>
+          this.logger.error(
+            `[${group.branchCode}] could not record uncertain lines: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
     await this.invoiceHeaderRepo.save(
       this.invoiceHeaderRepo.create({
         id: generateId(),
-        status: 'ERROR',
+        status: uncertain ? UNCERTAIN : 'ERROR',
         message,
         region: group.region,
         ...this.headerPayloadColumns(group),

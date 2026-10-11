@@ -16,6 +16,65 @@ import {
 } from '../../common/utils/timeout';
 import { Semaphore } from '../../common/utils/semaphore';
 
+/**
+ * What a failed Oracle call means for the data:
+ *   REJECTED         Oracle answered and refused (SOAP fault, status E, 4xx/500
+ *                    with a fault). Nothing was created. Retrying the same
+ *                    payload cannot succeed.
+ *   NOT_SENT         The request never reached Oracle (DNS, refused connection,
+ *                    502/503/429 from a gateway). Safe to retry.
+ *   UNKNOWN_OUTCOME  Sent, but no answer (timeout, connection reset, 504).
+ *                    Oracle MAY have created the document — never blindly
+ *                    retried; the caller must verify first.
+ */
+export type OracleFailureKind = 'REJECTED' | 'NOT_SENT' | 'UNKNOWN_OUTCOME';
+
+export class OracleCallError extends Error {
+  constructor(
+    message: string,
+    readonly kind: OracleFailureKind,
+    readonly operation: string,
+  ) {
+    super(message);
+    this.name = 'OracleCallError';
+  }
+}
+
+/** Failure kind of any error thrown by the Oracle clients. */
+export function oracleFailureKind(err: unknown): OracleFailureKind {
+  if (err instanceof OracleCallError) return err.kind;
+  const e = err as { code?: string; response?: { status?: number } } | null;
+  const code = e?.code ?? '';
+  if (!e?.response) {
+    if (
+      [
+        'ECONNREFUSED',
+        'ENOTFOUND',
+        'EAI_AGAIN',
+        'ENETUNREACH',
+        'EHOSTUNREACH',
+      ].includes(code)
+    ) {
+      return 'NOT_SENT';
+    }
+    if (
+      [
+        'ECONNABORTED',
+        'ETIMEDOUT',
+        'ECONNRESET',
+        'EPIPE',
+        'ERR_CANCELED',
+      ].includes(code)
+    ) {
+      return 'UNKNOWN_OUTCOME';
+    }
+  }
+  const status = e?.response?.status;
+  if (status === 502 || status === 503 || status === 429) return 'NOT_SENT';
+  if (status === 504) return 'UNKNOWN_OUTCOME';
+  return 'REJECTED';
+}
+
 // ──────────────────────────────────────────────────────────────
 // Domain models (mirrors Java fusion/soap/model/*.java)
 // ──────────────────────────────────────────────────────────────
@@ -266,7 +325,7 @@ function xmlDate(d: Date): string {
 
 function opt(tag: string, val: string | number | undefined | null): string {
   if (val === undefined || val === null || val === '') return '';
-  return `<typ:${tag}>${val}</typ:${tag}>`;
+  return `<typ:${tag}>${escapeXml(val)}</typ:${tag}>`;
 }
 
 function buildInvoiceSoap(header: InvoiceHeader): string {
@@ -276,11 +335,11 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
         <typ1:InvoiceLine>
           <typ1:LineNumber>${l.lineNumber}</typ1:LineNumber>
           ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
-          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
+          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${escapeXml(l.itemNumber)}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
-          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${l.unitSellingPrice}</typ1:UnitSellingPrice>
-          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
+          <typ1:Quantity unitCode="${escapeXml(l.uomCode || 'Ea')}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${escapeXml(l.currencyCode)}">${l.unitSellingPrice}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${escapeXml(l.taxClassificationCode)}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
         </typ1:InvoiceLine>`,
@@ -305,7 +364,7 @@ function buildInvoiceSoap(header: InvoiceHeader): string {
         <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
         <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
         ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
-        <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
+        <typ1:InvoiceCurrencyCode>${escapeXml(header.invoiceCurrencyCode)}</typ1:InvoiceCurrencyCode>
         ${
           // Conversion info is only valid for a genuine cross-currency invoice
           // billed with a 'User' (user-supplied) rate. These are domestic sales
@@ -351,11 +410,11 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
         <typ1:InvoiceLine>
           <typ1:LineNumber>${l.lineNumber}</typ1:LineNumber>
           ${l.memoLineName ? `<typ1:MemoLineName>${escapeXml(l.memoLineName)}</typ1:MemoLineName>` : ''}
-          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${l.itemNumber}</typ1:ItemNumber>` : ''}
+          ${l.itemNumber && !l.memoLineName ? `<typ1:ItemNumber>${escapeXml(l.itemNumber)}</typ1:ItemNumber>` : ''}
           ${l.description ? `<typ1:Description>${escapeXml(l.description)}</typ1:Description>` : ''}
-          <typ1:Quantity unitCode="${l.uomCode || 'Ea'}">${l.quantity}</typ1:Quantity>
-          <typ1:UnitSellingPrice currencyCode="${l.currencyCode}">${-Math.abs(l.unitSellingPrice)}</typ1:UnitSellingPrice>
-          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${l.taxClassificationCode}</typ1:TaxClassificationCode>` : ''}
+          <typ1:Quantity unitCode="${escapeXml(l.uomCode || 'Ea')}">${l.quantity}</typ1:Quantity>
+          <typ1:UnitSellingPrice currencyCode="${escapeXml(l.currencyCode)}">${-Math.abs(l.unitSellingPrice)}</typ1:UnitSellingPrice>
+          ${l.taxClassificationCode ? `<typ1:TaxClassificationCode>${escapeXml(l.taxClassificationCode)}</typ1:TaxClassificationCode>` : ''}
           ${l.salesOrder ? `<typ1:SalesOrder>${escapeXml(l.salesOrder)}</typ1:SalesOrder>` : ''}
           ${l.salesOrderLine ? `<typ1:SalesOrderLine>${l.salesOrderLine}</typ1:SalesOrderLine>` : ''}
         </typ1:InvoiceLine>`,
@@ -389,7 +448,7 @@ function buildCreditMemoSoap(header: CreditMemoHeader): string {
         <typ1:BillToAccountNumber>${escapeXml(header.billToAccountNumber)}</typ1:BillToAccountNumber>
         <typ1:BillToLocation>${escapeXml(header.billToLocation)}</typ1:BillToLocation>
         ${header.paymentTermsName ? `<typ1:PaymentTermsName>${escapeXml(header.paymentTermsName)}</typ1:PaymentTermsName>` : ''}
-        <typ1:InvoiceCurrencyCode>${header.invoiceCurrencyCode}</typ1:InvoiceCurrencyCode>
+        <typ1:InvoiceCurrencyCode>${escapeXml(header.invoiceCurrencyCode)}</typ1:InvoiceCurrencyCode>
         ${
           header.conversionRateType === 'User'
             ? `<typ1:ConversionRateType>User</typ1:ConversionRateType>
@@ -445,7 +504,7 @@ function buildApplyCreditMemoSoap(req: ApplyCreditMemoRequest): string {
         <typ1:TransactionNumber>${escapeXml(req.transactionNumber)}</typ1:TransactionNumber>
         <typ1:CreditMemoNumber>${escapeXml(req.creditMemoNumber)}</typ1:CreditMemoNumber>
         <typ1:AmountApplied>${Math.abs(req.amountApplied)}</typ1:AmountApplied>
-        <typ1:CurrencyCode>${req.currencyCode}</typ1:CurrencyCode>
+        <typ1:CurrencyCode>${escapeXml(req.currencyCode)}</typ1:CurrencyCode>
       </typ:creditMemoApplication>
     </typ:applyCreditMemo>
   </soapenv:Body>
@@ -462,7 +521,7 @@ function buildStandardReceiptSoap(req: StandardReceiptRequest): string {
   <soapenv:Body>
     <typ:createStandardReceipt>
       <typ:standardReceipt>
-        <typ1:CurrencyCode>${req.currencyCode}</typ1:CurrencyCode>
+        <typ1:CurrencyCode>${escapeXml(req.currencyCode)}</typ1:CurrencyCode>
         <typ1:ReceiptDate>${xmlDate(req.saleDate)}</typ1:ReceiptDate>
         <typ1:ReceiptMethodId>${req.receiptMethodId}</typ1:ReceiptMethodId>
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
@@ -507,7 +566,7 @@ function buildApplyReceiptSoap(req: ApplyReceiptRequest): string {
         <typ1:TransactionNumber>${escapeXml(req.transactionNumber)}</typ1:TransactionNumber>
         <typ1:ReceiptNumber>${escapeXml(req.receiptNumber)}</typ1:ReceiptNumber>
         <typ1:AmountApplied>${req.amountApplied}</typ1:AmountApplied>
-        <typ1:ReceiptCurrencyCode>${req.receiptCurrency}</typ1:ReceiptCurrencyCode>
+        <typ1:ReceiptCurrencyCode>${escapeXml(req.receiptCurrency)}</typ1:ReceiptCurrencyCode>
         <typ1:TransactionSource>${escapeXml(req.transactionSource)}</typ1:TransactionSource>
       </typ:applyReceipt>
     </typ:createApplyReceipt>
@@ -525,7 +584,7 @@ function buildMiscReceiptSoap(req: MiscReceiptRequest): string {
   <soapenv:Body>
     <typ:createMiscellaneousReceipt>
       <typ:miscellaneousReceipt>
-        <typ1:CurrencyCode>${req.currencyCode}</typ1:CurrencyCode>
+        <typ1:CurrencyCode>${escapeXml(req.currencyCode)}</typ1:CurrencyCode>
         <typ1:ReceiptDate>${xmlDate(req.saleDate)}</typ1:ReceiptDate>
         <typ1:ReceiptMethodId>${req.receiptMethodId}</typ1:ReceiptMethodId>
         <typ1:ReceiptMethodName>${escapeXml(req.receiptMethodName)}</typ1:ReceiptMethodName>
@@ -563,7 +622,7 @@ function buildJournalSoap(header: JournalHeader): string {
         <typ1:GlInterface>
           <typ1:LedgerId>${l.ledgerId}</typ1:LedgerId>
           ${l.groupId !== undefined ? `<typ1:GroupId>${l.groupId}</typ1:GroupId>` : ''}
-          ${l.periodName ? `<typ1:PeriodName>${l.periodName}</typ1:PeriodName>` : ''}
+          ${l.periodName ? `<typ1:PeriodName>${escapeXml(l.periodName)}</typ1:PeriodName>` : ''}
           <typ1:AccountingDate>${xmlDate(l.accountingDate)}</typ1:AccountingDate>
           <typ1:UserJeSourceName>${escapeXml(l.userJeSourceName)}</typ1:UserJeSourceName>
           <typ1:UserJeCategoryName>${escapeXml(l.jeCategoryName)}</typ1:UserJeCategoryName>
@@ -578,13 +637,13 @@ function buildJournalSoap(header: JournalHeader): string {
           ${opt('Segment8', l.segment8)}
           ${opt('Segment9', l.segment9)}
           ${opt('Segment10', l.segment10)}
-          <typ1:CurrencyCode>${l.currencyCode}</typ1:CurrencyCode>
+          <typ1:CurrencyCode>${escapeXml(l.currencyCode)}</typ1:CurrencyCode>
           ${l.enteredDrAmount !== undefined ? `<typ1:EnteredDrAmount>${l.enteredDrAmount}</typ1:EnteredDrAmount>` : ''}
           ${l.enteredCrAmount !== undefined ? `<typ1:EnteredCrAmount>${l.enteredCrAmount}</typ1:EnteredCrAmount>` : ''}
           ${l.accountedDr !== undefined ? `<typ1:AccountedDr>${l.accountedDr}</typ1:AccountedDr>` : ''}
           ${l.accountedCr !== undefined ? `<typ1:AccountedCr>${l.accountedCr}</typ1:AccountedCr>` : ''}
           ${l.currencyConversionRate !== undefined ? `<typ1:CurrencyConversionRate>${l.currencyConversionRate}</typ1:CurrencyConversionRate>` : ''}
-          ${l.currencyConversionType ? `<typ1:CurrencyConversionType>${l.currencyConversionType}</typ1:CurrencyConversionType>` : ''}
+          ${l.currencyConversionType ? `<typ1:CurrencyConversionType>${escapeXml(l.currencyConversionType)}</typ1:CurrencyConversionType>` : ''}
           ${l.currencyConversionDate ? `<typ1:CurrencyConversionDate>${xmlDate(l.currencyConversionDate)}</typ1:CurrencyConversionDate>` : ''}
           ${l.transactionDate ? `<typ1:TransactionDate>${xmlDate(l.transactionDate)}</typ1:TransactionDate>` : ''}
         </typ1:GlInterface>`,
@@ -653,8 +712,16 @@ function buildItemMasterSoap(itemNumber: string): string {
 </soapenv:Envelope>`;
 }
 
-function escapeXml(s: string): string {
-  return s
+/**
+ * Escapes text for an XML element or attribute. Every value that can originate
+ * outside this code (Odoo item codes, UoMs, names, currencies…) must go through
+ * it — an unescaped "<" or "&" breaks the envelope, and a crafted value could
+ * inject extra SOAP elements.
+ */
+function escapeXml(
+  value: string | number | boolean | null | undefined,
+): string {
+  return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -849,12 +916,12 @@ export class OracleSoapClient implements OnModuleInit {
    * WSDL: /fscmService/RecInvoiceService?WSDL
    */
   async createSimpleInvoice(header: InvoiceHeader): Promise<InvoiceResponse> {
-    return this.circuitBreaker.execute('oracle:createSimpleInvoice', () =>
+    return this.breaker('oracle:createSimpleInvoice', () =>
       this.withRetries(async () => {
         this.logger.log(`Creating invoice for ${header.billToCustomerName}...`);
 
         // ✅ Log complete invoice payload structure before sending
-        this.logger.log(
+        this.logger.debug(
           `📤 Oracle Invoice Payload Details:\n` +
             `  Header:\n` +
             `    - Business Unit: ${header.businessUnit}\n` +
@@ -1002,7 +1069,7 @@ export class OracleSoapClient implements OnModuleInit {
   async createCreditMemo(
     header: CreditMemoHeader,
   ): Promise<CreditMemoResponse> {
-    return this.circuitBreaker.execute('oracle:createCreditMemo', () =>
+    return this.breaker('oracle:createCreditMemo', () =>
       this.withRetries(async () => {
         const memoTotal = header.creditMemoLines.reduce(
           (s, l) => s + Math.abs(l.unitSellingPrice) * l.quantity,
@@ -1016,7 +1083,9 @@ export class OracleSoapClient implements OnModuleInit {
 
         const body = buildCreditMemoSoap(header);
         const truncatedBody =
-          body.length > 5000 ? body.substring(0, 5000) + '\n... (truncated)' : body;
+          body.length > 5000
+            ? body.substring(0, 5000) + '\n... (truncated)'
+            : body;
         this.logger.debug(
           `📤 Oracle Credit Memo SOAP XML Payload (${body.length} chars):\n${truncatedBody}`,
         );
@@ -1107,7 +1176,7 @@ export class OracleSoapClient implements OnModuleInit {
     const soapAction =
       process.env.ORACLE_CM_APPLY_SOAP_ACTION ?? CM_APPLY_DEFAULTS.soapAction;
 
-    return this.circuitBreaker.execute('oracle:applyCreditMemo', () =>
+    return this.breaker('oracle:applyCreditMemo', () =>
       this.withRetries(async () => {
         this.logger.log(
           `Applying credit memo ${req.creditMemoNumber} to invoice ` +
@@ -1166,7 +1235,7 @@ export class OracleSoapClient implements OnModuleInit {
   async createStandardReceipt(
     req: StandardReceiptRequest,
   ): Promise<StandardReceiptResponse> {
-    return this.circuitBreaker.execute('oracle:createStandardReceipt', () =>
+    return this.breaker('oracle:createStandardReceipt', () =>
       this.withRetries(async () => {
         const body = buildStandardReceiptSoap(req);
         const xml = await this.soapPost(
@@ -1253,7 +1322,7 @@ export class OracleSoapClient implements OnModuleInit {
   async createApplyReceipt(
     req: ApplyReceiptRequest,
   ): Promise<ApplyReceiptResponse> {
-    return this.circuitBreaker.execute('oracle:createApplyReceipt', () =>
+    return this.breaker('oracle:createApplyReceipt', () =>
       this.withRetries(async () => {
         const body = buildApplyReceiptSoap(req);
         const xml = await this.soapPost(
@@ -1350,91 +1419,88 @@ export class OracleSoapClient implements OnModuleInit {
   async createMiscellaneousReceipt(
     req: MiscReceiptRequest,
   ): Promise<MiscReceiptResponse> {
-    return this.circuitBreaker.execute(
-      'oracle:createMiscellaneousReceipt',
-      () =>
-        this.withRetries(async () => {
-          const body = buildMiscReceiptSoap(req);
-          const xml = await this.soapPost(
-            '/fscmService/MiscellaneousReceiptService',
-            body,
-            'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
-            'createMiscellaneousReceipt',
-          );
-          this.assertNoFault(xml, 'createMiscellaneousReceipt');
+    return this.breaker('oracle:createMiscellaneousReceipt', () =>
+      this.withRetries(async () => {
+        const body = buildMiscReceiptSoap(req);
+        const xml = await this.soapPost(
+          '/fscmService/MiscellaneousReceiptService',
+          body,
+          'http://xmlns.oracle.com/apps/financials/receivables/receipts/shared/miscellaneousReceiptService/commonService/createMiscellaneousReceipt',
+          'createMiscellaneousReceipt',
+        );
+        this.assertNoFault(xml, 'createMiscellaneousReceipt');
 
-          // Parse the response properly - handle both case variations
-          const serviceStatus =
-            extractTag(xml, 'ServiceStatus') ||
-            extractTag(xml, 'serviceStatus') ||
-            'SUCCESS';
-          const receivablesTransactionId =
-            extractTag(xml, 'ReceivablesTransactionId') ||
-            extractTag(xml, 'receivablesTransactionId');
-          const receiptNumber =
-            extractTag(xml, 'ReceiptNumber') ||
-            extractTag(xml, 'receiptNumber');
+        // Parse the response properly - handle both case variations
+        const serviceStatus =
+          extractTag(xml, 'ServiceStatus') ||
+          extractTag(xml, 'serviceStatus') ||
+          'SUCCESS';
+        const receivablesTransactionId =
+          extractTag(xml, 'ReceivablesTransactionId') ||
+          extractTag(xml, 'receivablesTransactionId');
+        const receiptNumber =
+          extractTag(xml, 'ReceiptNumber') || extractTag(xml, 'receiptNumber');
 
-          // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
-          if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
-            // Extract error details from response using comprehensive extraction
-            const errorMessage = extractErrorMessage(xml);
+        // ✅ CRITICAL FIX: Check for Status E and throw error to stop sync cycle
+        if (serviceStatus === 'E' || serviceStatus === 'ERROR') {
+          // Extract error details from response using comprehensive extraction
+          const errorMessage = extractErrorMessage(xml);
 
-            // Log the full XML for debugging if error message is empty
-            if (!errorMessage || errorMessage === '') {
-              this.logger.error(
-                `⚠️  Status E detected but NO error message found in response!\n` +
-                  `  This may indicate an Oracle API issue or unexpected XML format.\n` +
-                  `  Receipt Number: ${receiptNumber || 'null'}\n` +
-                  `  Requested Receipt Number: ${req.receiptNumber}\n` +
-                  `  Receipt Amount: ${req.receiptAmount}\n` +
-                  `  Status: ${serviceStatus}\n` +
-                  `  FULL Response XML (for debugging):\n${xml}`,
-              );
-            } else {
-              this.logger.error(
-                `❌ Misc receipt creation failed with Status E:\n` +
-                  `  Receipt Number: ${receiptNumber || 'null'}\n` +
-                  `  Requested Receipt Number: ${req.receiptNumber}\n` +
-                  `  Receipt Amount: ${req.receiptAmount}\n` +
-                  `  Status: ${serviceStatus}\n` +
-                  `  Error Message: ${errorMessage}\n` +
-                  `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
-              );
-            }
-
-            // Throw with appropriate error message
-            const displayError =
-              errorMessage ||
-              'Oracle returned Status E without error details. Check logs for full XML response.';
-
-            throw new Error(
-              `Oracle misc receipt creation failed with Status E: ${displayError} ` +
-                `Receipt Number: ${receiptNumber || 'null'}, ` +
-                `Requested: ${req.receiptNumber}, Amount: ${req.receiptAmount}`,
-            );
-          }
-
-          // ✅ Validate receipt number was returned
-          if (!receiptNumber || receiptNumber.trim() === '') {
+          // Log the full XML for debugging if error message is empty
+          if (!errorMessage || errorMessage === '') {
             this.logger.error(
-              `❌ Misc receipt creation returned empty receipt number:\n` +
+              `⚠️  Status E detected but NO error message found in response!\n` +
+                `  This may indicate an Oracle API issue or unexpected XML format.\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
                 `  Requested Receipt Number: ${req.receiptNumber}\n` +
                 `  Receipt Amount: ${req.receiptAmount}\n` +
                 `  Status: ${serviceStatus}\n` +
-                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+                `  FULL Response XML (for debugging):\n${xml}`,
             );
-            throw new Error(
-              `Oracle misc receipt creation failed: no receipt number returned. ` +
-                `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`,
+          } else {
+            this.logger.error(
+              `❌ Misc receipt creation failed with Status E:\n` +
+                `  Receipt Number: ${receiptNumber || 'null'}\n` +
+                `  Requested Receipt Number: ${req.receiptNumber}\n` +
+                `  Receipt Amount: ${req.receiptAmount}\n` +
+                `  Status: ${serviceStatus}\n` +
+                `  Error Message: ${errorMessage}\n` +
+                `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
             );
           }
 
-          this.logger.log(
-            `✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`,
+          // Throw with appropriate error message
+          const displayError =
+            errorMessage ||
+            'Oracle returned Status E without error details. Check logs for full XML response.';
+
+          throw new Error(
+            `Oracle misc receipt creation failed with Status E: ${displayError} ` +
+              `Receipt Number: ${receiptNumber || 'null'}, ` +
+              `Requested: ${req.receiptNumber}, Amount: ${req.receiptAmount}`,
           );
-          return { receivablesTransactionId, receiptNumber };
-        }),
+        }
+
+        // ✅ Validate receipt number was returned
+        if (!receiptNumber || receiptNumber.trim() === '') {
+          this.logger.error(
+            `❌ Misc receipt creation returned empty receipt number:\n` +
+              `  Requested Receipt Number: ${req.receiptNumber}\n` +
+              `  Receipt Amount: ${req.receiptAmount}\n` +
+              `  Status: ${serviceStatus}\n` +
+              `  Full Response XML (first 2000 chars):\n${xml.substring(0, 2000)}`,
+          );
+          throw new Error(
+            `Oracle misc receipt creation failed: no receipt number returned. ` +
+              `Status: ${serviceStatus}, Requested: ${req.receiptNumber}`,
+          );
+        }
+
+        this.logger.log(
+          `✅ Misc receipt created: ${receiptNumber} (amount: ${req.receiptAmount})`,
+        );
+        return { receivablesTransactionId, receiptNumber };
+      }),
     );
   }
 
@@ -1445,7 +1511,7 @@ export class OracleSoapClient implements OnModuleInit {
    * WSDL: /fscmService/JournalImportService?WSDL
    */
   async importJournalEntry(header: JournalHeader): Promise<number | null> {
-    return this.circuitBreaker.execute('oracle:importJournalEntry', () =>
+    return this.breaker('oracle:importJournalEntry', () =>
       this.withRetries(async () => {
         const body = buildJournalSoap(header);
         const xml = await this.soapPost(
@@ -1528,7 +1594,7 @@ export class OracleSoapClient implements OnModuleInit {
    * WSDL: /fscmService/CustomerProfileService?WSDL
    */
   async getCustomerProfile(accountNumber: string): Promise<CustomerProfile> {
-    return this.circuitBreaker.execute('oracle:getCustomerProfile', () =>
+    return this.breaker('oracle:getCustomerProfile', () =>
       this.withRetries(async () => {
         const body = buildCustomerProfileSoap(accountNumber);
         const resp = await this.http.post(
@@ -1565,7 +1631,7 @@ export class OracleSoapClient implements OnModuleInit {
    * WSDL: /fscmService/ItemServiceV2?WSDL
    */
   async getItemMaster(itemNumber: string): Promise<ItemMasterResult | null> {
-    return this.circuitBreaker.execute('oracle:getItemMaster', () =>
+    return this.breaker('oracle:getItemMaster', () =>
       this.withRetries(async () => {
         const body = buildItemMasterSoap(itemNumber);
         const resp = await this.http.post('/fscmService/ItemServiceV2', body, {
@@ -1647,15 +1713,35 @@ export class OracleSoapClient implements OnModuleInit {
   ): Promise<string> {
     // Every SOAP request passes through the global concurrency gate so the POST
     // phase can parallelize freely while the real load on Oracle stays bounded.
-    const resp = await this.soapGate.run(() =>
-      this.http.post(path, body, {
-        headers: { SOAPAction: soapAction },
-        validateStatus: () => true,
-      }),
-    );
+    let resp: { status: number; data: unknown };
+    try {
+      resp = await this.soapGate.run(() =>
+        this.http.post(path, body, {
+          headers: { SOAPAction: soapAction },
+          validateStatus: () => true,
+        }),
+      );
+    } catch (err) {
+      const kind = oracleFailureKind(err);
+      throw new OracleCallError(
+        `Oracle ${operation} ${
+          kind === 'NOT_SENT' ? 'could not be reached' : 'got no response'
+        }: ${err instanceof Error ? err.message : String(err)}`,
+        kind,
+        operation,
+      );
+    }
     const xml =
-      typeof resp.data === 'string' ? resp.data : String(resp.data ?? '');
+      typeof resp.data === 'string'
+        ? resp.data
+        : resp.data == null
+          ? ''
+          : JSON.stringify(resp.data);
     if (resp.status >= 400) {
+      const hasFault =
+        xml.includes('<faultcode>') ||
+        xml.includes(':Fault>') ||
+        xml.includes('<faultstring>');
       const detail =
         extractErrorMessage(xml) ||
         extractTag(xml, 'faultstring') ||
@@ -1669,11 +1755,15 @@ export class OracleSoapClient implements OnModuleInit {
       // is generic; the specific field/row reason lives in nested <serviceErrors>
       // / <detail> elements. Log the full raw fault body so failures are
       // diagnosable without Oracle-side access.
-      this.logger.error(
+      this.logger.debug(
         `[${operation}] Raw Oracle fault body:\n${xml.slice(0, 5000)}`,
       );
-      throw new Error(
+      throw new OracleCallError(
         `Oracle ${operation} failed (HTTP ${resp.status}): ${detail}`,
+        hasFault
+          ? 'REJECTED'
+          : oracleFailureKind({ response: { status: resp.status } }),
+        operation,
       );
     }
     return xml;
@@ -1684,8 +1774,40 @@ export class OracleSoapClient implements OnModuleInit {
       const faultString =
         extractTag(xml, 'faultstring') || extractTag(xml, 'text');
       this.logger.error(`SOAP fault on ${operation}: ${faultString}`);
-      throw new Error(`Oracle SOAP fault [${operation}]: ${faultString}`);
+      throw new OracleCallError(
+        `Oracle SOAP fault [${operation}]: ${faultString}`,
+        'REJECTED',
+        operation,
+      );
     }
+  }
+
+  /**
+   * Retries ONLY when the request provably never reached Oracle. A rejection
+   * would fail identically (and used to cost 15 s per failed document), and a
+   * timeout may already have created the document — retrying that blindly is
+   * how duplicate invoices/receipts happen.
+   */
+  /**
+   * Circuit breaker that only counts infrastructure failures. A business
+   * rejection (bad item, bad customer…) is a per-document answer from a healthy
+   * Oracle; counting it used to open the circuit after 10 bad invoices and fail
+   * EVERY following invoice for a minute — the main source of "skipped"
+   * invoices in big runs.
+   */
+  private async breaker<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const outcome = await this.circuitBreaker.execute(name, async () => {
+      try {
+        return { ok: true as const, value: await fn() };
+      } catch (err) {
+        if (oracleFailureKind(err) === 'REJECTED') {
+          return { ok: false as const, error: err };
+        }
+        throw err;
+      }
+    });
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
   }
 
   private async withRetries<T>(
@@ -1695,6 +1817,7 @@ export class OracleSoapClient implements OnModuleInit {
     try {
       return await operation();
     } catch (error: unknown) {
+      if (oracleFailureKind(error) !== 'NOT_SENT') throw error;
       if (attempt >= 3) {
         this.logger.error('Oracle SOAP request failed after retries');
         throw error;
