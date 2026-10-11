@@ -486,16 +486,20 @@ export class OdooBackupService {
       const backupIdByOrderId = await this.mapBackupIds(refundOrders);
       let refundsIngested = 0;
       let refundsSkipped = 0;
-      await mapWithConcurrency(refundOrders, INGEST_CONCURRENCY, async (order) => {
-        const r = await this.ingestSingleBackupOrder(
-          order,
-          cred,
-          branchIdMap,
-          backupIdByOrderId,
-        );
-        if (r === 'ingested') refundsIngested++;
-        else refundsSkipped++;
-      });
+      await mapWithConcurrency(
+        refundOrders,
+        INGEST_CONCURRENCY,
+        async (order) => {
+          const r = await this.ingestSingleBackupOrder(
+            order,
+            cred,
+            branchIdMap,
+            backupIdByOrderId,
+          );
+          if (r === 'ingested') refundsIngested++;
+          else refundsSkipped++;
+        },
+      );
       this.logger.log(
         `Odoo credential backup done for region=${cred.region}: ` +
           `backup.saved=${result.saved} backup.skipped=${result.skipped} ` +
@@ -609,7 +613,8 @@ export class OdooBackupService {
   private isRefundOrder(order: OdooOrder): boolean {
     const amt = Number(order.amount_total ?? 0);
     return (
-      Boolean((order as unknown as { is_refund?: unknown }).is_refund) || amt < 0
+      Boolean((order as unknown as { is_refund?: unknown }).is_refund) ||
+      amt < 0
     );
   }
 
@@ -837,6 +842,70 @@ export class OdooBackupService {
         status,
         apiTotal: null,
         sampleCount: 0,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
+   * Read-only snapshot of every order Odoo returns for a date range — nothing
+   * is persisted. Used by reconciliation to compare Odoo order-by-order against
+   * the backup. The endpoint ignores `offset` but honours a large `limit`, so
+   * the whole range is fetched in one request; `complete` is false when Odoo
+   * advertises more rows than it returned. Never throws.
+   */
+  async fetchOrdersSnapshot(
+    cred: {
+      baseUrl: string;
+      apiKey: string;
+      region: string;
+      apiPath?: string | null;
+      rejectUnauthorizedSsl?: boolean | null;
+    },
+    params: { startDate: string; endDate: string; limit?: number },
+  ): Promise<{
+    ok: boolean;
+    orders: OdooOrder[];
+    apiTotal: number | null;
+    complete: boolean;
+    error: string | null;
+  }> {
+    const rawBase = cred.baseUrl.replace(/\/$/, '');
+    const baseUrl = /^https?:\/\//i.test(rawBase)
+      ? rawBase
+      : `https://${rawBase}`;
+    const apiPath =
+      normalizeApiPath(cred.apiPath) ?? DEFAULT_ODOO_ORDERS_API_PATH;
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: cred.rejectUnauthorizedSsl !== false,
+    });
+    try {
+      const response = await axios.get<unknown>(`${baseUrl}${apiPath}`, {
+        headers: { 'x-api-key': cred.apiKey },
+        params: {
+          start_date: toApiDatetime(params.startDate),
+          end_date: toApiDatetime(params.endDate, { end: true }),
+          limit: params.limit ?? 100_000,
+          offset: 0,
+        },
+        httpsAgent,
+        timeout: Math.max(CREDENTIAL_FETCH_TIMEOUT_MS, 180_000),
+      });
+      const orders = this.extractOrderList(response.data);
+      const apiTotal = this.extractTotalFromResponse(response.data);
+      return {
+        ok: true,
+        orders,
+        apiTotal,
+        complete: apiTotal == null || orders.length >= apiTotal,
+        error: null,
+      };
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        orders: [],
+        apiTotal: null,
+        complete: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -1141,7 +1210,10 @@ export class OdooBackupService {
                 cred.region,
                 (doneCount) => {
                   const done = baseline + doneCount;
-                  if (onProgress && (done % 100 === 0 || doneCount === remaining.length)) {
+                  if (
+                    onProgress &&
+                    (done % 100 === 0 || doneCount === remaining.length)
+                  ) {
                     onProgress({ phase: 'BACKUP', done, total: backupTotal });
                   }
                 },

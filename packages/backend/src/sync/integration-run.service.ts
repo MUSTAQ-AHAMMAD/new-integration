@@ -31,6 +31,7 @@ import { generateId } from '../database/id.util';
 import {
   DailyInvoiceOutcome,
   DailyInvoiceService,
+  IntegrationTrigger,
 } from './daily-invoice.service';
 
 /** Hard cap so an operator cannot accidentally walk a year of history. */
@@ -50,12 +51,18 @@ export interface IntegrationRunScope {
   startDate: string;
   endDate: string;
   phase: 'PENDING' | 'PULL' | 'POST' | 'DONE';
+  /** Which outlets this run may post (see DailyInvoiceService.outletAllows). */
+  trigger: IntegrationTrigger;
+  /** Who started it: ADMIN_UI, SCHEDULER, AUTOMATION_TEST, … */
+  source: string;
   pull: {
     credentials: number;
     saved: number;
     skipped: number;
     ingested: number;
     ingestSkipped: number;
+    /** Credentials whose Odoo pull failed (message per credential). */
+    failures: string[];
   };
   post: {
     daysPlanned: number;
@@ -67,7 +74,11 @@ export interface IntegrationRunScope {
     miscReceipts: number;
     journals: number;
     inventoryTransactions: number;
+    /** Receipt / apply / journal / inventory failures after the invoice. */
+    stepFailures: number;
   };
+  /** Why the run did not post, when it stopped before POST. */
+  blockedReason?: string;
   /** Per (store, day, group) Oracle outcome rows for the results table. */
   results: DailyInvoiceOutcome[];
   events: IntegrationRunEvent[];
@@ -159,6 +170,16 @@ export class IntegrationRunService implements OnApplicationBootstrap {
     startDate: string;
     endDate: string;
     createdBy?: string;
+    /** Defaults to 'ALL' (operator run posts MANUAL and AUTOMATIC outlets). */
+    trigger?: IntegrationTrigger;
+    /**
+     * Post from already-backed-up data even when the Odoo pull fails. Off by
+     * default: posting a day whose pull failed invoices only part of it, and
+     * the rest of that day then lands on a second invoice.
+     */
+    postIfPullFails?: boolean;
+    /** Called once the run reaches a final status (never throws into the run). */
+    onDone?: (job: SyncJob | null, scope: IntegrationRunScope) => void;
   }): Promise<SyncJob> {
     const region = (params.region ?? '').trim().toUpperCase();
     if (!region) throw new BadRequestException('region is required');
@@ -203,12 +224,15 @@ export class IntegrationRunService implements OnApplicationBootstrap {
       startDate: params.startDate,
       endDate: params.endDate,
       phase: 'PENDING',
+      trigger: params.trigger ?? 'ALL',
+      source: params.createdBy ?? 'ADMIN_UI',
       pull: {
         credentials: creds.length,
         saved: 0,
         skipped: 0,
         ingested: 0,
         ingestSkipped: 0,
+        failures: [],
       },
       post: {
         daysPlanned: days,
@@ -220,6 +244,7 @@ export class IntegrationRunService implements OnApplicationBootstrap {
         miscReceipts: 0,
         journals: 0,
         inventoryTransactions: 0,
+        stepFailures: 0,
       },
       results: [],
       events: [],
@@ -239,9 +264,22 @@ export class IntegrationRunService implements OnApplicationBootstrap {
 
     this.runningRegions.add(region);
     // Fire and forget — progress is observable via GET + websocket.
-    void this.execute(job.id, scope, creds).finally(() => {
-      this.runningRegions.delete(region);
-    });
+    void this.execute(job.id, scope, creds, params.postIfPullFails ?? false)
+      .finally(() => {
+        this.runningRegions.delete(region);
+      })
+      .then(async () => {
+        if (!params.onDone) return;
+        try {
+          params.onDone(await this.getRun(job.id), scope);
+        } catch (err) {
+          this.logger.warn(
+            `onDone hook for run ${job.id} failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      });
     return job;
   }
 
@@ -298,6 +336,11 @@ export class IntegrationRunService implements OnApplicationBootstrap {
     });
   }
 
+  /** True when a run for this region is executing in this process. */
+  isRegionRunning(region: string): boolean {
+    return this.runningRegions.has(region.trim().toUpperCase());
+  }
+
   async listRuns(limit = 20): Promise<SyncJob[]> {
     return this.jobs.find({
       where: { jobType: JobType.INTEGRATION_RUN },
@@ -312,6 +355,7 @@ export class IntegrationRunService implements OnApplicationBootstrap {
     jobId: string,
     scope: IntegrationRunScope,
     creds: OdooCredential[],
+    postIfPullFails: boolean,
   ): Promise<void> {
     const save = async (status?: JobStatus, patch?: Partial<SyncJob>) => {
       await this.jobs.update(jobId, {
@@ -370,8 +414,13 @@ export class IntegrationRunService implements OnApplicationBootstrap {
           const r = await this.odooBackup.backupAndIngestForCredential(
             cred,
             {
-              startDate: `${scope.startDate} 00:00:00`,
-              endDate: `${scope.endDate} 23:59:59`,
+              // One extra day each side: posting groups by the STORE-LOCAL
+              // day, while Odoo filters on its own clock — without the margin,
+              // sales just after local midnight fell outside the pull and were
+              // never invoiced. Extra orders are harmless (upserted, and only
+              // the requested days are posted).
+              startDate: `${this.addDays(scope.startDate, -1)} 00:00:00`,
+              endDate: `${this.addDays(scope.endDate, 1)} 23:59:59`,
               // The POST phase aggregates straight from the backup tables, so the
               // per-order OrderSyncQueue ingest is pure overhead here — skip it.
               skipIngest: true,
@@ -400,11 +449,35 @@ export class IntegrationRunService implements OnApplicationBootstrap {
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
+          scope.pull.failures.push(`${cred.baseUrl}: ${msg}`);
           await log(
             'PULL',
-            `⚠ Pull failed for credential ${cred.baseUrl}: ${msg} — continuing with backed-up data.`,
+            `❌ Pull failed for credential ${cred.baseUrl}: ${msg}`,
           );
         }
+      }
+
+      // A failed pull means the backup may hold only part of these days.
+      // Posting now would invoice that part, and the remainder would become a
+      // second invoice later — so stop here unless explicitly allowed.
+      if (scope.pull.failures.length > 0 && !postIfPullFails) {
+        scope.phase = 'DONE';
+        scope.blockedReason =
+          `Odoo pull failed (${scope.pull.failures.length} credential(s)) — nothing ` +
+          `was posted to Oracle, so no partial day was invoiced. Fix the Odoo ` +
+          `connection and re-run; already-posted stores are skipped.`;
+        await this.jobs.update(jobId, {
+          completedAt: new Date(),
+          errorMessage: scope.blockedReason,
+        });
+        await log('DONE', `❌ ${scope.blockedReason}`, JobStatus.FAILED);
+        return;
+      }
+      if (scope.pull.failures.length > 0) {
+        await log(
+          'PULL',
+          '⚠ Continuing with already backed-up data (post-if-pull-fails is on).',
+        );
       }
 
       // ── Phase 2: one invoice per store per day + full Oracle cycle ──────
@@ -424,6 +497,7 @@ export class IntegrationRunService implements OnApplicationBootstrap {
         scope.post.miscReceipts += o.miscReceipts;
         scope.post.journals += o.journals;
         scope.post.inventoryTransactions += o.inventoryTransactions ?? 0;
+        scope.post.stepFailures += o.stepFailures?.length ?? 0;
       };
       for (let i = 0; i < scope.post.daysPlanned; i++) {
         const day = this.addDays(scope.startDate, i);
@@ -434,16 +508,13 @@ export class IntegrationRunService implements OnApplicationBootstrap {
             region: scope.region,
             startDate: day,
             days: 1,
-            trigger: 'ALL',
+            trigger: scope.trigger,
           },
           (p) => {
             for (const o of p.outcomes) applyOutcome(o);
             scope.results.push(...p.outcomes);
             const now = Date.now();
-            if (
-              now - lastPostEmit < 800 &&
-              p.storesDone < p.storesTotal
-            )
+            if (now - lastPostEmit < 800 && p.storesDone < p.storesTotal)
               return;
             lastPostEmit = now;
             void log(
@@ -472,12 +543,19 @@ export class IntegrationRunService implements OnApplicationBootstrap {
 
       // ── Wrap up ─────────────────────────────────────────────────────────
       scope.phase = 'DONE';
-      const finalStatus =
-        scope.post.invoicesFailed === 0
-          ? JobStatus.COMPLETED
-          : scope.post.invoicesCreated > 0
-            ? JobStatus.PARTIAL
-            : JobStatus.FAILED;
+      // COMPLETED only when nothing at all failed — a created invoice whose
+      // receipts, journal or inventory failed still needs attention.
+      const anyFailure =
+        scope.post.invoicesFailed > 0 ||
+        scope.post.stepFailures > 0 ||
+        scope.pull.failures.length > 0;
+      const finalStatus = !anyFailure
+        ? JobStatus.COMPLETED
+        : scope.post.invoicesFailed > 0 &&
+            scope.post.invoicesCreated === 0 &&
+            scope.post.invoicesSkipped === 0
+          ? JobStatus.FAILED
+          : JobStatus.PARTIAL;
       await this.jobs.update(jobId, { completedAt: new Date() });
       await log(
         'DONE',
@@ -486,7 +564,8 @@ export class IntegrationRunService implements OnApplicationBootstrap {
           `${scope.post.standardReceipts} standard + ${scope.post.miscReceipts} misc receipt(s), ` +
           `${scope.post.journals} journal(s), ` +
           `${scope.post.inventoryTransactions} inventory transaction(s), ` +
-          `${scope.post.invoicesFailed} failure(s).`,
+          `${scope.post.invoicesFailed} invoice failure(s), ` +
+          `${scope.post.stepFailures} receipt/journal/inventory failure(s).`,
         finalStatus,
       );
     } catch (err) {

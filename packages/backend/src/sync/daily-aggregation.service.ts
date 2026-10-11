@@ -43,6 +43,7 @@ import { StoreConfiguration } from '../database/entities/store-configuration.ent
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 import { OracleClient } from '../clients/oracle/oracle.client';
 import { OdooTransformationService } from './odoo-transformation.service';
+import { mapWithConcurrency } from '../common/utils/concurrency';
 
 /** Placeholder used in receipt numbers until Oracle issues the transaction number. */
 export const TXN_PLACEHOLDER = '__TXN__';
@@ -115,9 +116,39 @@ export interface DailyInvoiceGroup {
   miscReceipts: MiscReceiptRequest[];
   applyReceipts: ApplyReceiptRequest[];
   journalHeaders: JournalHeader[];
-  /** One inventory issue per contributing line, to relieve Oracle stock. */
-  inventoryTransactions: InventoryTransactionPlan[];
+  /**
+   * Receipts / journals that could not even be BUILT (e.g. a register with no
+   * bank account mapped). The invoice still posts; these are reported as step
+   * failures instead of silently dropping the whole store-day.
+   */
+  buildProblems: string[];
 }
+
+/** A group that could not be built at all (reported, never silently dropped). */
+export interface DailyGroupFailure {
+  groupKey: string;
+  customerType: string;
+  orderNumbers: string[];
+  error: string;
+}
+
+/**
+ * Oracle Standard Memo Line used for a sale line whose item Oracle does not
+ * know (or that has no item code). When set, such lines post against this memo
+ * line — the revenue lands on the invoice and the order is never held back.
+ * When unset, the legacy behaviour applies: the whole order is held back.
+ */
+const UNKNOWN_ITEM_MEMO_LINE =
+  process.env.ORACLE_UNKNOWN_ITEM_MEMO_LINE?.trim() || null;
+
+/** Parallel Oracle item lookups per group. */
+const ITEM_CHECK_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.ITEM_CHECK_CONCURRENCY ?? '8', 10) || 8,
+);
+
+/** Oracle IN-list limit. */
+const IN_CHUNK = 900;
 
 /**
  * Per-region tax lookup, built once from VendHqTaxMeta. Mirrors the Java
@@ -338,16 +369,21 @@ export class DailyAggregationService {
   }
 
   /**
-   * Builds every Oracle invoice group for one branch on one store-local day.
-   *
-   * Returns an empty array when the day has nothing left to post — either no
-   * eligible orders, or every line already posted by an earlier run.
+   * Every Odoo order (sales AND refunds, any state) of one branch on one
+   * store-local day, with lines and payments. Shared by invoice aggregation and
+   * the inventory upload so both see exactly the same day window.
    */
-  async buildDailyGroups(
+  async loadDayOrders(
     branchCode: string,
     businessDay: string,
     timeZoneOverride?: string,
-  ): Promise<DailyInvoiceGroup[]> {
+  ): Promise<{
+    storeConfig: StoreConfiguration;
+    region: string;
+    orders: BackupOdooOrder[];
+    start: Date;
+    end: Date;
+  }> {
     const storeConfig = await this.storeConfigRepo.findOne({
       where: { branchCode },
     });
@@ -373,6 +409,24 @@ export class DailyAggregationService {
       relations: { orderLines: true, orderPayments: true },
       order: { dateOrder: 'ASC', orderId: 'ASC' },
     });
+    return { storeConfig, region, orders, start, end };
+  }
+
+  /**
+   * Builds every Oracle invoice group for one branch on one store-local day.
+   *
+   * Returns an empty array when the day has nothing left to post — either no
+   * eligible orders, or every line already posted by an earlier run.
+   */
+  async buildDailyGroups(
+    branchCode: string,
+    businessDay: string,
+    timeZoneOverride?: string,
+    /** Receives groups that could not be built (see buildDailyGroupsWithFailures). */
+    failures?: DailyGroupFailure[],
+  ): Promise<DailyInvoiceGroup[]> {
+    const { storeConfig, region, orders, start, end } =
+      await this.loadDayOrders(branchCode, businessDay, timeZoneOverride);
 
     const eligible = orders.filter((o) => this.isInvoiceable(o));
     if (eligible.length === 0) {
@@ -413,16 +467,51 @@ export class DailyAggregationService {
 
     const groups: DailyInvoiceGroup[] = [];
     for (const [key, groupOrders] of buckets) {
-      const group = await this.buildGroup(
-        key,
-        groupOrders,
-        storeConfig,
-        region,
-        businessDay,
-      );
-      if (group) groups.push(group);
+      try {
+        const group = await this.buildGroup(
+          key,
+          groupOrders,
+          storeConfig,
+          region,
+          businessDay,
+        );
+        if (group) groups.push(group);
+      } catch (err) {
+        // One group's problem (e.g. no bill-to for a provider) must not take
+        // the store's other groups down with it.
+        const error = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `[${branchCode} ${businessDay}] group ${key} could not be built: ${error}`,
+        );
+        failures?.push({
+          groupKey: `${branchCode}|${key}`,
+          customerType: key.split('|')[1] ?? 'UNKNOWN',
+          orderNumbers: groupOrders.map(
+            (o) => o.orderName ?? String(o.orderId),
+          ),
+          error,
+        });
+      }
     }
     return groups;
+  }
+
+  /**
+   * {@link buildDailyGroups} plus the groups that could not be built, so the
+   * caller can report them as FAILED instead of the day silently shrinking.
+   */
+  async buildDailyGroupsWithFailures(
+    branchCode: string,
+    businessDay: string,
+  ): Promise<{ groups: DailyInvoiceGroup[]; failures: DailyGroupFailure[] }> {
+    const failures: DailyGroupFailure[] = [];
+    const groups = await this.buildDailyGroups(
+      branchCode,
+      businessDay,
+      undefined,
+      failures,
+    );
+    return { groups, failures };
   }
 
   /** Paid, not cancelled, not a refund (refunds go down the credit-memo path). */
@@ -463,16 +552,11 @@ export class DailyAggregationService {
     // tax engine computes and posts the VAT (Java-reference parity). Prices stay
     // ex-tax; Oracle adds the tax line.
     const taxCtx = await this.resolveRegionTaxContext(region);
-    // Subinventory that stock is issued from — the store's metadata value, e.g.
-    // "RYDAVNUMAL". Absent → inventory relief is skipped for the whole group.
-    const subinventory = salesMeta.subinventory?.trim() || null;
-    const inventoryPlans: InventoryTransactionPlan[] = [];
-    // The legacy system stamps the group with the first sale's timestamp; keep
-    // that so TrxDate/GlDate land inside the business day being posted.
-    const saleDate =
-      first.dateOrder instanceof Date
-        ? first.dateOrder
-        : new Date(String(first.dateOrder ?? new Date()));
+    // TrxDate/GlDate must be the business day being posted, so pin to midday
+    // UTC of that day. The SOAP builders send the UTC calendar date, so the
+    // first sale's own timestamp (e.g. 00:30 local = 21:30Z the day before in
+    // UTC+3) used to date the whole invoice — and its receipts — a day early.
+    const saleDate = new Date(`${businessDay}T12:00:00.000Z`);
 
     const invoiceHeader: InvoiceHeader = {
       billToCustomerName: salesMeta.billToName,
@@ -528,7 +612,7 @@ export class DailyAggregationService {
     } catch {
       branchOrgId = null; // lookup outage → fall back to the global item check
     }
-    const { excludedOrders, excludedOrderNumbers } =
+    const { excludedOrders, excludedOrderNumbers, missingItems } =
       await this.excludeOrdersWithUnknownItems(orders, branchOrgId);
 
     for (const order of orders) {
@@ -573,8 +657,7 @@ export class DailyAggregationService {
 
         const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
         if (priorInvoice) {
-          // Invoice line already posted — don't re-add it to the invoice
-          // header, but its inventory plan (above) still stands for retry.
+          // Invoice line already posted — don't re-add it to the invoice header.
           alreadyPostedLines += 1;
           existingTransactionNumber ??= priorInvoice;
           continue;
@@ -589,6 +672,7 @@ export class DailyAggregationService {
             invoiceHeader.invoiceCurrencyCode,
             uomCode,
             this.resolveLineTaxCode(line, taxCtx),
+            missingItems,
           ),
         );
       }
@@ -632,30 +716,53 @@ export class DailyAggregationService {
       customerType.toUpperCase(),
     );
 
-    const { standardReceipts, miscReceipts, applyReceipts } =
-      isServiceProviderGroup
-        ? { standardReceipts: [], miscReceipts: [], applyReceipts: [] }
-        : await this.buildAggregatedReceipts(
-            contributingOrders,
-            storeConfig,
-            region,
-            invoiceHeader,
-            salesMeta,
-            buMap,
-            saleDate,
-            isCredit,
-          );
+    // A receipt or journal that cannot be built (missing bank account, missing
+    // customer account id, …) must not stop the INVOICE — the sale still has to
+    // reach Oracle. The problem is carried on the group and reported as a step
+    // failure, and the next run retries the receipts once the config is fixed.
+    const buildProblems: string[] = [];
+    let receipts: {
+      standardReceipts: StandardReceiptRequest[];
+      miscReceipts: MiscReceiptRequest[];
+      applyReceipts: ApplyReceiptRequest[];
+    } = { standardReceipts: [], miscReceipts: [], applyReceipts: [] };
+    if (!isServiceProviderGroup) {
+      try {
+        receipts = await this.buildAggregatedReceipts(
+          contributingOrders,
+          storeConfig,
+          region,
+          invoiceHeader,
+          salesMeta,
+          buMap,
+          saleDate,
+          isCredit,
+        );
+      } catch (err) {
+        buildProblems.push(
+          `Receipts not built: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    const { standardReceipts, miscReceipts, applyReceipts } = receipts;
 
-    const journalHeaders =
-      await this.transformation.buildJournalHeadersForAggregate(
-        customerType,
-        region,
-        storeConfig.branchName,
-        storeConfig.branchCode,
-        invoiceHeader,
-        saleDate,
-        TXN_PLACEHOLDER,
+    let journalHeaders: JournalHeader[] = [];
+    try {
+      journalHeaders =
+        await this.transformation.buildJournalHeadersForAggregate(
+          customerType,
+          region,
+          storeConfig.branchName,
+          storeConfig.branchCode,
+          invoiceHeader,
+          saleDate,
+          TXN_PLACEHOLDER,
+        );
+    } catch (err) {
+      buildProblems.push(
+        `GL journal not built: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
 
     return {
       groupKey: `${storeConfig.branchCode}|${groupKey}`,
@@ -679,7 +786,7 @@ export class DailyAggregationService {
       miscReceipts,
       applyReceipts,
       journalHeaders,
-      inventoryTransactions: inventoryPlans,
+      buildProblems,
     };
   }
 
@@ -698,6 +805,8 @@ export class DailyAggregationService {
   ): Promise<{
     excludedOrders: Array<{ orderNumber: string; reason: string }>;
     excludedOrderNumbers: Set<string>;
+    /** Items Oracle does not know — posted on the fallback memo line. */
+    missingItems: Set<string>;
   }> {
     const excludedOrders: Array<{ orderNumber: string; reason: string }> = [];
     const excludedOrderNumbers = new Set<string>();
@@ -710,19 +819,38 @@ export class DailyAggregationService {
       }
     }
     const missing = new Set<string>();
-    for (const item of itemNumbers) {
-      try {
-        if (!(await this.oracleClient.itemExists(item, organizationId)))
-          missing.add(item);
-      } catch (err) {
-        // A lookup outage must not silently drop the day's sales — let the order
-        // through and allow Oracle itself to accept or reject the line.
+    // Checked in parallel (results are cached in the client), instead of one
+    // sequential Oracle round-trip per distinct item.
+    await mapWithConcurrency(
+      [...itemNumbers],
+      ITEM_CHECK_CONCURRENCY,
+      async (item) => {
+        try {
+          if (!(await this.oracleClient.itemExists(item, organizationId)))
+            missing.add(item);
+        } catch (err) {
+          // A lookup outage must not silently drop the day's sales — let the
+          // order through and allow Oracle itself to accept or reject the line.
+          this.logger.warn(
+            `Item existence check failed for "${item}": ${
+              err instanceof Error ? err.message : String(err)
+            } — treating as present`,
+          );
+        }
+      },
+    );
+
+    // With a fallback memo line configured nothing is held back: unknown and
+    // code-less lines post on the memo line (see buildLine), so the order's
+    // revenue is always invoiced.
+    if (UNKNOWN_ITEM_MEMO_LINE) {
+      if (missing.size > 0) {
         this.logger.warn(
-          `Item existence check failed for "${item}": ${
-            err instanceof Error ? err.message : String(err)
-          } — treating as present`,
+          `${missing.size} item(s) unknown to Oracle posted on memo line ` +
+            `"${UNKNOWN_ITEM_MEMO_LINE}": ${[...missing].slice(0, 20).join(', ')}`,
         );
       }
+      return { excludedOrders, excludedOrderNumbers, missingItems: missing };
     }
     for (const order of orders) {
       const orderNumber = order.orderName ?? String(order.orderId);
@@ -752,12 +880,14 @@ export class DailyAggregationService {
       }
 
       if (reasons.length === 0) continue;
-      const reason = `${reasons.join('; ')} — order held back so the rest of the day can post`;
+      const reason =
+        `${reasons.join('; ')} — order held back so the rest of the day can post. ` +
+        `Add the item to Oracle, or set ORACLE_UNKNOWN_ITEM_MEMO_LINE so such lines post on a memo line.`;
       excludedOrders.push({ orderNumber, reason });
       excludedOrderNumbers.add(orderNumber);
       this.logger.warn(`[${orderNumber}] ${reason}`);
     }
-    return { excludedOrders, excludedOrderNumbers };
+    return { excludedOrders, excludedOrderNumbers, missingItems: missing };
   }
 
   /**
@@ -772,18 +902,25 @@ export class DailyAggregationService {
     const orderNumbers = orders.map((o) => o.orderName ?? String(o.orderId));
     if (orderNumbers.length === 0) return new Map();
 
-    const rows = await this.invoiceLineRepo.find({
-      where: {
-        salesOrder: In(orderNumbers),
-        region,
-        status: In(['SUCCESS', 'S']),
-      },
-      select: {
-        salesOrder: true,
-        salesOrderLine: true,
-        invoiceNumber: true,
-      },
-    });
+    // Chunked: Oracle rejects an IN list of more than 1000 values (ORA-01795),
+    // which used to fail every store-day with over 1000 orders.
+    const rows: FusionInvoiceLine[] = [];
+    for (let i = 0; i < orderNumbers.length; i += IN_CHUNK) {
+      rows.push(
+        ...(await this.invoiceLineRepo.find({
+          where: {
+            salesOrder: In(orderNumbers.slice(i, i + IN_CHUNK)),
+            region,
+            status: In(['SUCCESS', 'S']),
+          },
+          select: {
+            salesOrder: true,
+            salesOrderLine: true,
+            invoiceNumber: true,
+          },
+        })),
+      );
+    }
 
     const map = new Map<string, string>();
     for (const row of rows) {
@@ -871,6 +1008,7 @@ export class DailyAggregationService {
     currencyCode: string,
     uomCode: string | null,
     taxClassificationCode?: string,
+    missingItems?: Set<string>,
   ): InvoiceLine {
     let qty = Number(line.qty ?? 1);
     const total =
@@ -884,12 +1022,21 @@ export class DailyAggregationService {
     // a negative line (discount / promotion) posts as negative quantity.
     // Ex-tax unit price (Java parity: totalPrice/qty). Oracle adds the VAT from
     // the line's TaxClassificationCode, so the price must stay tax-EXCLUSIVE.
+    //
+    // Accuracy: the price is the line's NET ex-tax amount per unit
+    // (priceSubtotal / qty), i.e. AFTER line discounts, so Σ invoice lines equals
+    // Odoo's untaxed sales. priceUnit is the list price BEFORE the discount and
+    // overstated every discounted line; it is only a fallback now.
+    const netExTax =
+      line.priceSubtotal != null ? toSafeNumber(line.priceSubtotal) : null;
     const unitPrice =
-      line.priceUnit != null
-        ? Math.abs(toSafeNumber(line.priceUnit))
-        : qty !== 0
-          ? Math.abs(total / qty)
-          : 0;
+      netExTax != null && qty !== 0
+        ? Math.abs(netExTax / qty)
+        : line.priceUnit != null
+          ? Math.abs(toSafeNumber(line.priceUnit))
+          : qty !== 0
+            ? Math.abs(total / qty)
+            : 0;
     if (total < 0 && qty > 0) qty = -qty;
 
     const productName = line.productName ?? '';
@@ -899,15 +1046,31 @@ export class DailyAggregationService {
     // Both map to the AR memo line — an ItemNumber must NEVER be invented from
     // the Odoo product id, which Oracle rejects with AR_INVALID_INVENTORY_ITEM.
     const isDiscount = this.isDiscountLine(line);
+    const code = line.productCode?.trim() || null;
+    // Unknown to Oracle (or no item code at all): post on the fallback memo
+    // line, keeping the barcode in the description for traceability.
+    const useFallbackMemo =
+      !isDiscount &&
+      !!UNKNOWN_ITEM_MEMO_LINE &&
+      (!code || (missingItems?.has(code) ?? false));
 
     return {
       lineNumber,
-      itemNumber: !isDiscount ? (line.productCode ?? undefined) : undefined,
-      memoLineName: isDiscount ? 'Discount Item' : undefined,
-      description:
-        productName ||
-        line.lineName ||
-        (isDiscount ? 'Discount' : `POS product ${line.productId ?? ''}`),
+      itemNumber:
+        !isDiscount && !useFallbackMemo ? (code ?? undefined) : undefined,
+      memoLineName: isDiscount
+        ? 'Discount Item'
+        : useFallbackMemo
+          ? (UNKNOWN_ITEM_MEMO_LINE ?? undefined)
+          : undefined,
+      description: useFallbackMemo
+        ? `${productName || line.lineName || 'POS product'} [${code ?? `product ${line.productId ?? '?'}`}]`.slice(
+            0,
+            240,
+          )
+        : productName ||
+          line.lineName ||
+          (isDiscount ? 'Discount' : `POS product ${line.productId ?? ''}`),
       quantity: isDiscount && total > 0 ? 1 : qty,
       // A valid short Oracle UOM code resolved from the item master (e.g. "Ea",
       // "G") — NOT the Odoo display name "Gram", which Oracle rejects as too
@@ -1186,6 +1349,32 @@ export class DailyAggregationService {
    * Rewrites the placeholder in every receipt/journal reference once Oracle has
    * issued the real transaction number.
    */
+  /** The configured fallback memo line, or null when none is set. */
+  get fallbackMemoLine(): string | null {
+    return UNKNOWN_ITEM_MEMO_LINE;
+  }
+
+  /**
+   * Moves invoice lines whose item is in `items` onto the fallback memo line
+   * (after Oracle rejected an item the pre-check believed existed). Returns how
+   * many lines were converted; 0 when no fallback memo line is configured.
+   */
+  convertItemsToMemo(group: DailyInvoiceGroup, items: Set<string>): number {
+    if (!UNKNOWN_ITEM_MEMO_LINE || items.size === 0) return 0;
+    let n = 0;
+    for (const line of group.invoiceHeader.invoiceLines) {
+      if (line.itemNumber && items.has(line.itemNumber)) {
+        line.description =
+          `${line.description ?? ''} [${line.itemNumber}]`.slice(0, 240);
+        line.itemNumber = undefined;
+        line.memoLineName = UNKNOWN_ITEM_MEMO_LINE;
+        line.uomCode = undefined;
+        n += 1;
+      }
+    }
+    return n;
+  }
+
   stampTransactionNumber(group: DailyInvoiceGroup, txnNumber: string): void {
     const swap = (value: string) =>
       value.split(TXN_PLACEHOLDER).join(txnNumber);

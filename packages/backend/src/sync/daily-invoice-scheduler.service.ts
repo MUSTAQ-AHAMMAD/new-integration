@@ -95,6 +95,10 @@ export class DailyInvoiceSchedulerService {
         return [];
       }
 
+      // Regions on the cut-off–based automatic integration (Admin → Automation
+      // & Cut-off) are owned by that scheduler; posting them here as well would
+      // give the same days two automatic posters with different windows.
+      const automationOn = await this.syncControl.isEnabled('integration-auto');
       for (const region of regions) {
         try {
           outcomes.push(...(await this.runRegion(region)));
@@ -115,8 +119,8 @@ export class DailyInvoiceSchedulerService {
         `Daily invoicing finished in ${elapsedS}s — ` +
           `${created} invoice(s) created, ${failed} failed across ${regions.length} region(s)`,
       );
-      await this.emailRunSummary(outcomes, regions, elapsedS).catch(() =>
-        undefined,
+      await this.emailRunSummary(outcomes, regions, elapsedS).catch(
+        () => undefined,
       );
       return outcomes;
     } finally {
@@ -405,7 +409,9 @@ export class DailyInvoiceSchedulerService {
       lines.push('');
       lines.push(`Failures: ${failed.length}`);
       for (const o of failed) {
-        lines.push(`  • ${o.branchCode} ${o.businessDay}: ${o.error ?? 'unknown'}`);
+        lines.push(
+          `  • ${o.branchCode} ${o.businessDay}: ${o.error ?? 'unknown'}`,
+        );
       }
     }
     if (excluded.length) {

@@ -27,6 +27,10 @@ export class FusionInvTxn {
   @Column({ type: 'number', nullable: true })
   requestId!: number | null;
 
+  /**
+   * SUCCESS | ERROR | NEGATIVE_INVENTORY (Oracle refused: subinventory would
+   * go negative — held for reprocess) | SUPERSEDED (replaced by another row).
+   */
   @Column({ type: 'varchar2', length: 255, default: 'PENDING' })
   status!: string;
 

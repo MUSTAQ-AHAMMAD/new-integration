@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ReportsService } from './reports.service';
 import type { ReportQueryDto } from './report-query';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('reports')
 @Controller('reports')
@@ -11,12 +12,14 @@ export class ReportsController {
 
   @Get('datasets')
   @ApiOperation({
-    summary: 'List reportable datasets and their fields (for the report builder)',
+    summary:
+      'List reportable datasets and their fields (for the report builder)',
   })
   datasets() {
     return this.service.datasets();
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('query')
   @ApiOperation({
     summary: 'Run a flexible report query (aggregate or records mode)',
@@ -25,6 +28,7 @@ export class ReportsController {
     return this.service.run(dto);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('export')
   @ApiOperation({ summary: 'Export a report query result as CSV' })
   async export(@Body() dto: ReportQueryDto, @Res() res: Response) {

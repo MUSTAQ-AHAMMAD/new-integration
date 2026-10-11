@@ -27,6 +27,7 @@ import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { OdooBackupState } from '../database/entities/odoo-backup-state.entity';
 import { OdooCredential } from '../database/entities/odoo-credential.entity';
 import { OdooBackupService } from './odoo-backup.service';
+import { Roles } from '../auth/roles.decorator';
 
 // ---------------------------------------------------------------------------
 // DTOs
@@ -190,6 +191,7 @@ export class OdooBackupController {
   /**
    * Manually trigger an Odoo backup run (uses the lastSyncAt watermark).
    */
+  @Roles('ADMIN')
   @Post('trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Manually trigger the Odoo order backup job' })
@@ -269,6 +271,7 @@ export class OdooBackupController {
   /**
    * Create a new per-region Odoo credential.
    */
+  @Roles('ADMIN')
   @Post('credentials')
   @ApiOperation({ summary: 'Create a new per-region Odoo credential' })
   async createCredential(@Body() dto: CreateOdooCredentialDto) {
@@ -290,6 +293,7 @@ export class OdooBackupController {
   /**
    * Update an existing Odoo credential.
    */
+  @Roles('ADMIN')
   @Put('credentials/:id')
   @ApiOperation({ summary: 'Update an Odoo credential' })
   async updateCredential(
@@ -316,6 +320,7 @@ export class OdooBackupController {
   /**
    * Delete an Odoo credential.
    */
+  @Roles('ADMIN')
   @Delete('credentials/:id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Delete an Odoo credential' })
@@ -331,6 +336,7 @@ export class OdooBackupController {
    * without running a full backup.  Always returns HTTP 200; the inner `ok`
    * field indicates whether the Odoo request itself succeeded.
    */
+  @Roles('ADMIN')
   @Post('credentials/:id/probe')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -422,6 +428,7 @@ export class OdooBackupController {
    * backed up but never ingested, or re-processing orders after fixing branch
    * mappings or state mapping changes.
    */
+  @Roles('ADMIN')
   @Post('reingest-from-backup')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

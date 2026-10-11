@@ -3,6 +3,7 @@ import { AlertSeverity } from '../database/enums';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { parseLimit } from '../common/parse-limit';
 import { AlertsService } from './alerts.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('alerts')
 @Controller('alerts')
@@ -23,6 +24,7 @@ export class AlertsController {
     });
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post(':id/resolve')
   @ApiOperation({ summary: 'Resolve an alert' })
   resolve(@Param('id') id: string, @Body() body: { resolvedBy: string }) {

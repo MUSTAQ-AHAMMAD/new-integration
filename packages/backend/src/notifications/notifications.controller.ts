@@ -12,9 +12,11 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { NotificationRole } from '../database/enums';
 import { NotificationsService } from './notifications.service';
+import { Roles } from '../auth/roles.decorator';
 
 @ApiTags('notifications')
 @Controller('notifications')
+@Roles('ADMIN')
 export class NotificationsController {
   constructor(private readonly service: NotificationsService) {}
 

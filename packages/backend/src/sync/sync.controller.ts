@@ -91,6 +91,7 @@ export class SyncController {
     return toSafeNumber(value);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('jobs')
   @ApiOperation({ summary: 'Create a new sync job (selective sync)' })
   createJob(@Body() dto: CreateSyncJobDto) {
@@ -109,12 +110,14 @@ export class SyncController {
     return this.syncService.getSyncJob(id);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('jobs/:id/cancel')
   @ApiOperation({ summary: 'Cancel a pending sync job' })
   cancelJob(@Param('id') id: string) {
     return this.syncService.cancelSyncJob(id);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('jobs/:id/retry')
   @ApiOperation({ summary: 'Retry a failed sync job' })
   retryJob(@Param('id') id: string) {
@@ -127,6 +130,7 @@ export class SyncController {
     return this.syncService.getQueueStats();
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('failed-transactions/:id/resolve')
   @ApiOperation({ summary: 'Resolve a failed transaction' })
   resolveFailedTransaction(
@@ -158,6 +162,7 @@ export class SyncController {
     return this.syncService.listFailedOrders(parseLimit(limit, 100));
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('retry-all-failed')
   @ApiOperation({ summary: 'Retry all failed orders' })
   async retryAllFailedOrders() {
@@ -187,6 +192,7 @@ export class SyncController {
     });
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('order-queue/:id/retry')
   @ApiOperation({
     summary: 'Re-queue a single OrderSyncQueue entry for processing',
@@ -201,6 +207,7 @@ export class SyncController {
     return this.syncService.getOrderStatus(odooOrderId);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('orders/retry-negative-inventory')
   @ApiOperation({
     summary:
@@ -210,6 +217,7 @@ export class SyncController {
     return this.orderSyncService.retryNegativeInventoryOrders(branchCode);
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('orders/retry-skipped')
   @ApiOperation({
     summary:
@@ -237,6 +245,7 @@ export class SyncController {
 
   // ── Operator integration run: pull (Odoo) → post (one invoice/store/day) ──
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('integration-run')
   @ApiOperation({
     summary:
@@ -261,6 +270,7 @@ export class SyncController {
     });
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('integration-run/all')
   @ApiOperation({
     summary:
@@ -286,6 +296,7 @@ export class SyncController {
     });
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('integration-auto/run-now')
   @ApiOperation({
     summary:
@@ -406,6 +417,7 @@ export class SyncController {
     };
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('daily-invoice')
   @ApiOperation({
     summary:
@@ -485,6 +497,7 @@ export class SyncController {
     };
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('fetch-odoo')
   @ApiOperation({
     summary:
@@ -576,6 +589,7 @@ export class SyncController {
     };
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('fetch-ibq')
   @ApiOperation({
     summary:
@@ -673,6 +687,7 @@ export class SyncController {
     return this.diagnosticsService.getOrderStatsSummary();
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('auto-fix/skipped-orders')
   @ApiOperation({
     summary:
@@ -748,6 +763,7 @@ export class SyncController {
    *
    * Resets failed orders to PENDING status and triggers sync
    */
+  @Roles('ADMIN', 'OPERATOR')
   @Post('fix-all-failed')
   @ApiOperation({
     summary: 'Fix all failed orders',
@@ -833,6 +849,7 @@ export class SyncController {
   /**
    * Sync a specific order directly
    */
+  @Roles('ADMIN')
   @Post('sync-direct/:orderId')
   @ApiOperation({
     summary: 'Directly sync a specific order',
@@ -938,6 +955,7 @@ export class SyncController {
   /**
    * Test enrichment - Build Oracle payloads without sending to Oracle
    */
+  @Roles('ADMIN')
   @Post('test-enrich/:orderSyncQueueId')
   @ApiOperation({
     summary: 'Test order enrichment with backup table data',
@@ -1103,6 +1121,7 @@ export class SyncController {
   /**
    * Reset a circuit breaker to CLOSED state
    */
+  @Roles('ADMIN')
   @Post('admin/circuit-breaker/reset/:name')
   @ApiOperation({
     summary: 'Reset circuit breaker for a service',
@@ -1144,6 +1163,7 @@ export class SyncController {
   /**
    * Debug endpoint - Test invoice building with metadata
    */
+  @Roles('ADMIN')
   @Post('debug/test-invoice/:region')
   @ApiOperation({
     summary: 'Test invoice building with metadata',

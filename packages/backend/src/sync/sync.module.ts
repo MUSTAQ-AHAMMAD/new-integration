@@ -50,6 +50,12 @@ import { OdooTransformationService } from './odoo-transformation.service';
 import { TaxClassificationService } from './tax-classification.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
+import { InventoryUploadService } from './inventory-upload.service';
+import { InventoryHoldsController } from './inventory-holds.controller';
+import { AutomationController } from './automation.controller';
+import { IntegrationSchedule } from '../database/entities/integration-schedule.entity';
+import { ReconciliationController } from './reconciliation.controller';
+import { ReconciliationService } from './reconciliation.service';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
 import { IntegrationCoverageService } from './integration-coverage.service';
 import { InventoryTransactionVerifierService } from './inventory-transaction-verifier.service';
@@ -83,6 +89,7 @@ import { BulkRetryService } from './bulk-retry.service';
       FusionCustomerAccount,
       FusionInvoiceLine,
       FusionInvTxn,
+      IntegrationSchedule,
       VendHqItemMeta,
       VendHqTaxMeta,
       OutletIntegrationConfig,
@@ -115,7 +122,12 @@ import { BulkRetryService } from './bulk-retry.service';
     forwardRef(() => OdooBackupModule),
     forwardRef(() => IbqBackupModule),
   ],
-  controllers: [SyncController],
+  controllers: [
+    SyncController,
+    InventoryHoldsController,
+    ReconciliationController,
+    AutomationController,
+  ],
   providers: [
     SyncService,
     OrderSyncService,
@@ -127,6 +139,8 @@ import { BulkRetryService } from './bulk-retry.service';
     TaxClassificationService,
     DailyAggregationService,
     DailyInvoiceService,
+    InventoryUploadService,
+    ReconciliationService,
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationCoverageService,
@@ -153,6 +167,7 @@ import { BulkRetryService } from './bulk-retry.service';
     OdooTransformationService,
     DailyAggregationService,
     DailyInvoiceService,
+    InventoryUploadService,
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationCoverageService,

@@ -84,6 +84,251 @@ export interface RegisterAccountAssignment {
   cashAccountId?: number | null;
 }
 
+// ── Automation & cut-off ───────────────────────────────────────────────────
+export type AutomationHealth =
+  | 'HEALTHY'
+  | 'RUNNING'
+  | 'ATTENTION'
+  | 'FAILING'
+  | 'STALE'
+  | 'NEVER_RAN'
+  | 'DISABLED'
+  | 'SCHEDULER_DOWN';
+export interface IntegrationScheduleRow {
+  id: string;
+  region: string;
+  runTime: string;
+  cutoffTime: string;
+  lookbackDays: number;
+  outletMode: 'AUTOMATIC' | 'ALL';
+  postIfPullFails: boolean;
+  alertOnFailure: boolean;
+  staleAfterHours: number;
+  lastScheduledDate: string | null;
+  lastTickAt: string | null;
+  lastRunJobId: string | null;
+  lastRunSource: string | null;
+  lastRunStartedAt: string | null;
+  lastRunFinishedAt: string | null;
+  lastRunStatus: string | null;
+  lastRunWindow: string | null;
+  lastRunSummary: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  lastError: string | null;
+  updatedBy: string | null;
+  updatedAt: string;
+}
+export interface AutomationPlan {
+  region: string;
+  timeZone: string;
+  at: string;
+  localNow: string;
+  localToday: string;
+  cutoffTime: string;
+  runTime: string;
+  cutoffPassedToday: boolean;
+  latestClosedDay: string;
+  window: { startDate: string; endDate: string; days: string[] };
+  firedToday: boolean;
+  nextRunLocal: string;
+  nextRunUtc: string;
+  explanation: string[];
+}
+export interface AutomationRegionStatus {
+  region: string;
+  masterEnabled: boolean;
+  regionEnabled: boolean;
+  enabled: boolean;
+  running: boolean;
+  health: AutomationHealth;
+  healthReason: string;
+  schedule: IntegrationScheduleRow;
+  plan: AutomationPlan;
+  recentRuns: Array<{
+    id: string;
+    status: string;
+    source: string;
+    window: string;
+    createdAt: string;
+    completedAt: string | null;
+    invoicesCreated: number;
+    invoicesFailed: number;
+    stepFailures: number;
+    error: string | null;
+  }>;
+}
+export interface AutomationPreview {
+  plan: AutomationPlan;
+  settings: IntegrationScheduleRow;
+  enabled: boolean;
+  readiness:
+    | { region: string; ready: boolean; blockers: number; warnings: number; checks: Array<{ name: string; status: 'PASS' | 'WARN' | 'FAIL'; detail: string }> }
+    | { error: string };
+  odoo: { reachable: boolean; ordersInWindow: number | null; error: string | null };
+  outlets: { stores: number; willPost: number; skippedManual: string[]; skippedNone: string[] };
+  days: Array<{ businessDay: string; ordersInBackup: number; amountInBackup: number; ordersAlreadyInvoiced: number; ordersToPost: number }>;
+  verdict: string[];
+}
+export type AutomationSettingsInput = Partial<
+  Pick<IntegrationScheduleRow, 'runTime' | 'cutoffTime' | 'lookbackDays' | 'outletMode' | 'postIfPullFails' | 'alertOnFailure' | 'staleAfterHours'>
+>;
+
+// ── Reconciliation ─────────────────────────────────────────────────────────
+export type ReconDayStatus = 'MATCHED' | 'VARIANCE' | 'NOT_POSTED' | 'NO_ACTIVITY';
+export interface ReconExpected {
+  orders: number;
+  salesOrders: number;
+  refundOrders: number;
+  excludedOrders: number;
+  excludedAmount: number;
+  salesGross: number;
+  salesNet: number;
+  salesTax: number;
+  refundGross: number;
+  payments: number;
+  expectedReceipts: number;
+  providerPayments: number;
+  creditPayments: number;
+  invoiceBasis: number;
+  inventoryQty: number;
+}
+export interface ReconPosted {
+  invoiceNumbers: string[];
+  invoicedOrders: number;
+  invoiceNet: number;
+  receiptsStandard: number;
+  receiptsMisc: number;
+  receiptsRounding: number;
+  receiptsGross: number;
+  creditMemos: number;
+  creditMemoAmount: number;
+  inventoryQty: number;
+  inventoryHeld: number;
+  inventoryErrors: number;
+}
+export interface ReconVariance {
+  invoiceNet: number;
+  ordersNotInvoiced: number;
+  receipts: number;
+  creditMemos: number;
+  inventoryQty: number;
+  pricingGap: number;
+}
+export interface ReconStoreDay {
+  branchCode: string;
+  branchName: string;
+  isActive: boolean;
+  businessDay: string;
+  currency: string | null;
+  status: ReconDayStatus;
+  issues: string[];
+  expected: ReconExpected;
+  posted: ReconPosted;
+  variance: ReconVariance;
+}
+export interface ReconException {
+  type: string;
+  branchCode: string;
+  branchName: string;
+  businessDay: string;
+  orderName: string | null;
+  amount: number | null;
+  quantity: number | null;
+  detail: string;
+}
+export interface ReconciliationReport {
+  region: string;
+  startDate: string;
+  endDate: string;
+  timeZone: string;
+  windowUtc: { start: string; end: string };
+  generatedAt: string;
+  tolerance: { amount: number; quantity: number };
+  totals: {
+    expected: ReconExpected;
+    posted: ReconPosted;
+    variance: ReconVariance;
+    storeDays: Record<ReconDayStatus, number>;
+  };
+  rows: ReconStoreDay[];
+  exceptions: ReconException[];
+  exceptionCounts: Record<string, number>;
+  exceptionsTruncated: boolean;
+  notes: string[];
+}
+export interface OdooVsBackupReport {
+  region: string;
+  startDate: string;
+  endDate: string;
+  timeZone: string;
+  apiReachable: boolean;
+  apiComplete: boolean;
+  error: string | null;
+  fetchedFromApi: number;
+  days: Array<{
+    businessDay: string;
+    apiOrders: number;
+    storedOrders: number;
+    apiAmount: number;
+    storedAmount: number;
+    missingInBackup: number;
+    notInOdoo: number;
+    mismatched: number;
+  }>;
+  totals: {
+    apiOrders: number;
+    storedOrders: number;
+    apiAmount: number;
+    storedAmount: number;
+    missingInBackup: number;
+    notInOdoo: number;
+    mismatched: number;
+  };
+  differences: Array<{
+    type: string;
+    odooOrderId: number;
+    orderName: string | null;
+    businessDay: string | null;
+    branch: string | null;
+    odoo: string;
+    stored: string;
+  }>;
+  differencesTruncated: boolean;
+  notes: string[];
+}
+
+export interface InventoryHoldRow {
+  id: string;
+  status: string;
+  region: string;
+  itemNumber: string | null;
+  txnSourceName: string | null;
+  subInventory: string | null;
+  organizationName: string | null;
+  txnType: string | null;
+  txnQty: number | null;
+  txnUom: string | null;
+  txnDate: string | null;
+  holdReason: string | null;
+  message: string | null;
+  retryCount: number | null;
+  lastRetryAt: string | null;
+  updatedAt: string;
+}
+export interface InventoryHoldsPage {
+  items: InventoryHoldRow[];
+  total: number;
+  counts: Record<string, number>;
+}
+export interface InventoryReprocessResult {
+  selected: number;
+  success: number;
+  negativeHeld: number;
+  failed: number;
+  skipped: number;
+}
+
 export interface SyncControlRow {
   id: string;
   serviceName: string;
@@ -219,6 +464,35 @@ export const api = {
   liveReconcile: (region: string, startDate: string, endDate: string) =>
     apiRequest<LiveReconcileResult>(
       `/odoo-backup/reconcile?region=${encodeURIComponent(region)}&startDate=${startDate}&endDate=${endDate}`,
+    ),
+  automationStatus: () => apiRequest<AutomationRegionStatus[]>('/integration-automation/status'),
+  automationSaveSettings: (region: string, body: AutomationSettingsInput) =>
+    apiRequest<IntegrationScheduleRow>(`/integration-automation/${encodeURIComponent(region)}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  automationSetEnabled: (region: string | null, enabled: boolean) =>
+    apiRequest<{ ok: boolean }>(
+      `/integration-automation/${region ? encodeURIComponent(region) : 'master'}/${enabled ? 'enable' : 'disable'}`,
+      { method: 'POST' },
+    ),
+  automationPreview: (region: string, at?: string) =>
+    apiRequest<AutomationPreview>(
+      `/integration-automation/${encodeURIComponent(region)}/preview${at ? `?at=${encodeURIComponent(at)}` : ''}`,
+    ),
+  automationRunNow: (region: string) =>
+    apiRequest<{ started: boolean; jobId?: string; reason?: string; plan: AutomationPlan }>(
+      `/integration-automation/${encodeURIComponent(region)}/run-now`,
+      { method: 'POST' },
+    ),
+  reconciliationSummary: (p: { region: string; startDate: string; endDate: string; branchCode?: string }) => {
+    const q = new URLSearchParams({ region: p.region, startDate: p.startDate, endDate: p.endDate });
+    if (p.branchCode) q.set('branchCode', p.branchCode);
+    return apiRequest<ReconciliationReport>(`/reconciliation/summary?${q.toString()}`);
+  },
+  reconciliationOdooVsBackup: (p: { region: string; startDate: string; endDate: string }) =>
+    apiRequest<OdooVsBackupReport>(
+      `/reconciliation/odoo-vs-backup?${new URLSearchParams(p).toString()}`,
     ),
   getRecentActivity: (limit = 50) => apiRequest<AuditLogItem[]>(`/dashboard/recent-activity?limit=${limit}`),
   getHealthStatus: () => apiRequest<HealthCheck[]>('/dashboard/health'),
@@ -401,6 +675,19 @@ export const api = {
     ),
 
   /** List sync-control services (optionally per region) */
+  // ── Inventory holds: rows Oracle refused (negative stock / errors) ──
+  listInventoryHolds: (params: { status: string; region?: string | null; skip?: number; take?: number }) => {
+    const q = new URLSearchParams({ status: params.status });
+    if (params.region) q.set('region', params.region);
+    if (params.skip) q.set('skip', String(params.skip));
+    if (params.take) q.set('take', String(params.take));
+    return apiRequest<InventoryHoldsPage>(`/inventory-holds?${q.toString()}`);
+  },
+  reprocessInventoryHolds: (body: { ids?: string[]; region?: string | null; statuses?: string[] }) =>
+    apiRequest<InventoryReprocessResult>('/inventory-holds/reprocess', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, region: body.region || undefined }),
+    }),
   syncControlList: (region?: string | null) =>
     apiRequest<SyncControlRow[]>(
       `/admin/sync-control${region ? `?region=${encodeURIComponent(region)}` : ''}`,
