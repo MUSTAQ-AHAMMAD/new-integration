@@ -33,20 +33,27 @@ export interface OracleInvoiceResult {
   [key: string]: unknown;
 }
 
-export interface StagedInventoryTransaction {
-  organizationId: number;
-  itemNumber: string;
-  subinventoryCode: string;
-  /** Negative for an issue (sale), positive for a return/RMA. */
-  transactionQuantity: number;
-  transactionUom: string;
-  transactionDate: string;
-  transactionTypeName: string;
-  transactionSourceName: string;
-  sourceCode: string;
-  sourceHeaderId: number;
-  sourceLineId: number;
-  transactionInterfaceId: number;
+/**
+ * One row for the inventoryStagedTransactions REST resource, in exactly the
+ * shape the crm-inventory-missreceipt bulk upload sends (field names and string
+ * values are Oracle's).
+ */
+export interface InventoryStagedTransactionPayload {
+  OrganizationId?: number;
+  OrganizationName?: string;
+  TransactionTypeName: string;
+  ItemNumber: string;
+  SubinventoryCode: string;
+  TransactionDate: string;
+  TransactionQuantity: string;
+  TransactionReference: string;
+  ExternalSystemTransactionReference: string;
+  TransactionUnitOfMeasure: string;
+  SourceHeaderId: string;
+  SourceLineId: string;
+  TransactionMode: string;
+  SourceCode: string;
+  UseCurrentCostFlag: string;
 }
 
 export interface OracleCreditMemoData {
@@ -233,55 +240,25 @@ export class OracleClient implements OnModuleInit {
   }
 
   /**
-   * Inserts one row into the inventoryStagedTransactions interface. Oracle's
-   * transaction manager processes the interface asynchronously (ProcessStatus
-   * moves 1→ processed/errored), exactly as the legacy integration relied on.
+   * POSTs one row to inventoryStagedTransactions, exactly as the
+   * crm-inventory-missreceipt bulk upload does: a single attempt, no retry
+   * (a retried POST that Oracle already committed would move stock twice) and
+   * no circuit breaker (an unknown item is a per-row rejection, not an outage,
+   * and must not block the rest of the day). Only the global REST gate applies.
    *
-   * NOTE: this uses inventoryStagedTransactions, not the Java's
-   * inventoryTransactions — the latter is deprecated and returns 403 on the
-   * current pod.
+   * Resolves with the HTTP status + body on 2xx — the caller must still check
+   * the body for ProcessStatus "3" / ErrorCode. Rejects with the axios error on
+   * a non-2xx response or a transport failure.
    */
-  async createStagedInventoryTransaction(
-    req: StagedInventoryTransaction,
-  ): Promise<{ transactionInterfaceId: number | null; raw: unknown }> {
-    return this.circuitBreaker.execute(
-      'oracle:createStagedInventoryTransaction',
-      () =>
-        this.withRetries(async () => {
-          const body = {
-            OrganizationId: req.organizationId,
-            ItemNumber: req.itemNumber,
-            SubinventoryCode: req.subinventoryCode,
-            TransactionQuantity: req.transactionQuantity,
-            TransactionUnitOfMeasure: req.transactionUom,
-            TransactionDate: req.transactionDate,
-            TransactionTypeName: req.transactionTypeName,
-            TransactionSourceName: req.transactionSourceName,
-            SourceCode: req.sourceCode,
-            SourceHeaderId: req.sourceHeaderId,
-            SourceLineId: req.sourceLineId,
-            TransactionInterfaceId: req.transactionInterfaceId,
-            // 3 = process in the background via the transaction manager.
-            TransactionMode: 3,
-            ProcessStatus: 1,
-            UseCurrentCostFlag: 'Y',
-          };
-          const response = await this.restGate.run(() =>
-            this.http.post('inventoryStagedTransactions', body),
-          );
-          const data = this.isRecord(response.data) ? response.data : {};
-          const idRaw = data['TransactionInterfaceId'];
-          return {
-            transactionInterfaceId:
-              typeof idRaw === 'number'
-                ? idRaw
-                : idRaw != null
-                  ? Number(idRaw)
-                  : null,
-            raw: response.data,
-          };
-        }),
+  async postInventoryStagedTransaction(
+    payload: InventoryStagedTransactionPayload,
+  ): Promise<{ status: number; data: unknown }> {
+    const response = await this.restGate.run(() =>
+      this.http.post('inventoryStagedTransactions', payload, {
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
+    return { status: response.status, data: response.data };
   }
 
   /**

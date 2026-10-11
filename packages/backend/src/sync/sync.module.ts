@@ -49,6 +49,8 @@ import { IdempotencyService } from './idempotency.service';
 import { OdooTransformationService } from './odoo-transformation.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import { DailyInvoiceService } from './daily-invoice.service';
+import { InventoryUploadService } from './inventory-upload.service';
+import { InventoryHoldsController } from './inventory-holds.controller';
 import { DailyInvoiceSchedulerService } from './daily-invoice-scheduler.service';
 import { IntegrationRunService } from './integration-run.service';
 import { IntegrationSchedulerService } from './integration-scheduler.service';
@@ -112,7 +114,7 @@ import { BulkRetryService } from './bulk-retry.service';
     forwardRef(() => OdooBackupModule),
     forwardRef(() => IbqBackupModule),
   ],
-  controllers: [SyncController],
+  controllers: [SyncController, InventoryHoldsController],
   providers: [
     SyncService,
     OrderSyncService,
@@ -123,6 +125,7 @@ import { BulkRetryService } from './bulk-retry.service';
     OdooTransformationService,
     DailyAggregationService,
     DailyInvoiceService,
+    InventoryUploadService,
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationRunService,
@@ -147,6 +150,7 @@ import { BulkRetryService } from './bulk-retry.service';
     OdooTransformationService,
     DailyAggregationService,
     DailyInvoiceService,
+    InventoryUploadService,
     DailyInvoiceSchedulerService,
     ReadinessService,
     IntegrationRunService,

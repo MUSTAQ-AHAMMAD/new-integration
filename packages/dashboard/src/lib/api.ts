@@ -84,6 +84,37 @@ export interface RegisterAccountAssignment {
   cashAccountId?: number | null;
 }
 
+export interface InventoryHoldRow {
+  id: string;
+  status: string;
+  region: string;
+  itemNumber: string | null;
+  txnSourceName: string | null;
+  subInventory: string | null;
+  organizationName: string | null;
+  txnType: string | null;
+  txnQty: number | null;
+  txnUom: string | null;
+  txnDate: string | null;
+  holdReason: string | null;
+  message: string | null;
+  retryCount: number | null;
+  lastRetryAt: string | null;
+  updatedAt: string;
+}
+export interface InventoryHoldsPage {
+  items: InventoryHoldRow[];
+  total: number;
+  counts: Record<string, number>;
+}
+export interface InventoryReprocessResult {
+  selected: number;
+  success: number;
+  negativeHeld: number;
+  failed: number;
+  skipped: number;
+}
+
 export interface SyncControlRow {
   id: string;
   serviceName: string;
@@ -322,6 +353,19 @@ export const api = {
     ),
 
   /** List sync-control services (optionally per region) */
+  // ── Inventory holds: rows Oracle refused (negative stock / errors) ──
+  listInventoryHolds: (params: { status: string; region?: string | null; skip?: number; take?: number }) => {
+    const q = new URLSearchParams({ status: params.status });
+    if (params.region) q.set('region', params.region);
+    if (params.skip) q.set('skip', String(params.skip));
+    if (params.take) q.set('take', String(params.take));
+    return apiRequest<InventoryHoldsPage>(`/inventory-holds?${q.toString()}`);
+  },
+  reprocessInventoryHolds: (body: { ids?: string[]; region?: string | null; statuses?: string[] }) =>
+    apiRequest<InventoryReprocessResult>('/inventory-holds/reprocess', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, region: body.region || undefined }),
+    }),
   syncControlList: (region?: string | null) =>
     apiRequest<SyncControlRow[]>(
       `/admin/sync-control${region ? `?region=${encodeURIComponent(region)}` : ''}`,

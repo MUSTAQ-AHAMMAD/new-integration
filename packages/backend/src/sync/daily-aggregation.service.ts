@@ -48,7 +48,7 @@ import { OdooTransformationService } from './odoo-transformation.service';
 export const TXN_PLACEHOLDER = '__TXN__';
 
 /** States that must never be invoiced. Mirrors the ingest-side rules. */
-const NON_INVOICEABLE_STATES = new Set([
+export const NON_INVOICEABLE_STATES = new Set([
   'draft',
   'cancel',
   'cancelled',
@@ -110,8 +110,6 @@ export interface DailyInvoiceGroup {
   miscReceipts: MiscReceiptRequest[];
   applyReceipts: ApplyReceiptRequest[];
   journalHeaders: JournalHeader[];
-  /** One inventory issue per contributing line, to relieve Oracle stock. */
-  inventoryTransactions: InventoryTransactionPlan[];
 }
 
 /**
@@ -127,19 +125,6 @@ interface RegionTaxContext {
   byName: Map<string, string>;
   /** The region's single code when unambiguous, else null. */
   regionDefault: string | null;
-}
-
-/** A planned inventory issue, before the Oracle organisation id is resolved. */
-export interface InventoryTransactionPlan {
-  itemNumber: string;
-  subinventoryCode: string;
-  /** Positive magnitude; the client negates it for an issue. */
-  quantity: number;
-  uomCode: string;
-  transactionDate: Date;
-  /** Source order number, for the Oracle TransactionSourceName + audit trail. */
-  salesOrder: string;
-  salesOrderLine: number;
 }
 
 /** Receipt accumulator keyed by payment method + register. */
@@ -317,16 +302,21 @@ export class DailyAggregationService {
   }
 
   /**
-   * Builds every Oracle invoice group for one branch on one store-local day.
-   *
-   * Returns an empty array when the day has nothing left to post — either no
-   * eligible orders, or every line already posted by an earlier run.
+   * Every Odoo order (sales AND refunds, any state) of one branch on one
+   * store-local day, with lines and payments. Shared by invoice aggregation and
+   * the inventory upload so both see exactly the same day window.
    */
-  async buildDailyGroups(
+  async loadDayOrders(
     branchCode: string,
     businessDay: string,
     timeZoneOverride?: string,
-  ): Promise<DailyInvoiceGroup[]> {
+  ): Promise<{
+    storeConfig: StoreConfiguration;
+    region: string;
+    orders: BackupOdooOrder[];
+    start: Date;
+    end: Date;
+  }> {
     const storeConfig = await this.storeConfigRepo.findOne({
       where: { branchCode },
     });
@@ -352,6 +342,22 @@ export class DailyAggregationService {
       relations: { orderLines: true, orderPayments: true },
       order: { dateOrder: 'ASC', orderId: 'ASC' },
     });
+    return { storeConfig, region, orders, start, end };
+  }
+
+  /**
+   * Builds every Oracle invoice group for one branch on one store-local day.
+   *
+   * Returns an empty array when the day has nothing left to post — either no
+   * eligible orders, or every line already posted by an earlier run.
+   */
+  async buildDailyGroups(
+    branchCode: string,
+    businessDay: string,
+    timeZoneOverride?: string,
+  ): Promise<DailyInvoiceGroup[]> {
+    const { storeConfig, region, orders, start, end } =
+      await this.loadDayOrders(branchCode, businessDay, timeZoneOverride);
 
     const eligible = orders.filter((o) => this.isInvoiceable(o));
     if (eligible.length === 0) {
@@ -442,10 +448,6 @@ export class DailyAggregationService {
     // tax engine computes and posts the VAT (Java-reference parity). Prices stay
     // ex-tax; Oracle adds the tax line.
     const taxCtx = await this.resolveRegionTaxContext(region);
-    // Subinventory that stock is issued from — the store's metadata value, e.g.
-    // "RYDAVNUMAL". Absent → inventory relief is skipped for the whole group.
-    const subinventory = salesMeta.subinventory?.trim() || null;
-    const inventoryPlans: InventoryTransactionPlan[] = [];
     // The legacy system stamps the group with the first sale's timestamp; keep
     // that so TrxDate/GlDate land inside the business day being posted.
     const saleDate =
@@ -531,28 +533,12 @@ export class DailyAggregationService {
         const itemNumber = line.productCode?.trim();
         const uomCode = itemNumber ? (uomCodes.get(itemNumber) ?? null) : null;
 
-        // Plan the inventory issue for EVERY line that names a real item —
-        // even lines whose invoice was already posted. Inventory is deduped
-        // per line at post time (sourceLineRef), so this never double-pushes,
-        // but it does mean an interrupted run that posted the invoice but not
-        // the inventory can still relieve stock on retry (no stranded stock).
-        // One issue per line — never aggregated by item.
-        if (itemNumber && uomCode && subinventory && qty > 0) {
-          inventoryPlans.push({
-            itemNumber,
-            subinventoryCode: subinventory,
-            quantity: qty,
-            uomCode,
-            transactionDate: saleDate,
-            salesOrder: orderNumber,
-            salesOrderLine: sourceLineNo,
-          });
-        }
+        // Inventory is NOT planned here: InventoryUploadService posts the
+        // day's stock movements (sales + refunds) separately, reference-style.
 
         const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
         if (priorInvoice) {
-          // Invoice line already posted — don't re-add it to the invoice
-          // header, but its inventory plan (above) still stands for retry.
+          // Invoice line already posted — don't re-add it to the invoice header.
           alreadyPostedLines += 1;
           existingTransactionNumber ??= priorInvoice;
           continue;
@@ -657,7 +643,6 @@ export class DailyAggregationService {
       miscReceipts,
       applyReceipts,
       journalHeaders,
-      inventoryTransactions: inventoryPlans,
     };
   }
 

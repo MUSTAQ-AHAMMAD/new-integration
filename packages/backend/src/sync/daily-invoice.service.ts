@@ -7,6 +7,7 @@
  *
  * Ordering mirrors the legacy Java integration:
  *   invoice → standard receipts → misc receipts → apply receipts → GL journals
+ *   → inventory upload (once per branch/day, see InventoryUploadService)
  *
  * Re-running a day is safe, and every Oracle object is guarded independently
  * (as the Java does) rather than short-circuiting on the invoice:
@@ -21,10 +22,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Decimal } from 'decimal.js';
 import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
-import { OracleClient } from '../clients/oracle/oracle.client';
 import { FusionApplyReceipt } from '../database/entities/fusion-apply-receipt.entity';
 import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
-import { FusionInvTxn } from '../database/entities/fusion-inv-txn.entity';
 import { FusionInvoiceLine } from '../database/entities/fusion-invoice-line.entity';
 import { FusionJournalHeader } from '../database/entities/fusion-journal-header.entity';
 import { FusionMiscReceipt } from '../database/entities/fusion-misc-receipt.entity';
@@ -39,6 +38,7 @@ import {
   DailyAggregationService,
   DailyInvoiceGroup,
 } from './daily-aggregation.service';
+import { InventoryUploadService } from './inventory-upload.service';
 
 /**
  * How many store/day units post concurrently. Each is independent; the true
@@ -49,17 +49,6 @@ import {
 const POST_CONCURRENCY = Math.max(
   1,
   parseInt(process.env.DAILY_POST_CONCURRENCY ?? '12', 10) || 12,
-);
-
-/**
- * How many inventory issues post concurrently WITHIN one store's group. Inventory
- * is one Oracle REST call per line and dominates the POST, so it fans out here;
- * the aggregate across all parallel stores is still capped by the Oracle client's
- * global REST gate (ORACLE_REST_CONCURRENCY). Tunable via env.
- */
-const INVENTORY_CONCURRENCY = Math.max(
-  1,
-  parseInt(process.env.DAILY_INVENTORY_CONCURRENCY ?? '8', 10) || 8,
 );
 
 export interface DailyInvoiceOutcome {
@@ -80,7 +69,12 @@ export interface DailyInvoiceOutcome {
   standardReceipts: number;
   miscReceipts: number;
   journals: number;
+  /** Inventory rows posted to Oracle for the branch/day (first outcome only). */
   inventoryTransactions?: number;
+  /** Inventory rows Oracle rejected for the branch/day (first outcome only). */
+  inventoryFailures?: number;
+  /** Inventory issues held for negative stock (first outcome only). */
+  inventoryNegativeHeld?: number;
   /** Orders held back because Oracle does not know one of their items. */
   excludedOrders?: Array<{ orderNumber: string; reason: string }>;
   error?: string;
@@ -104,29 +98,10 @@ export type IntegrationTrigger = 'MANUAL' | 'AUTOMATIC' | 'ALL';
 export class DailyInvoiceService {
   private readonly logger = new Logger(DailyInvoiceService.name);
 
-  /**
-   * Oracle transaction type used for inventory issues. Configurable because the
-   * legacy "Vend Sales Issue" type may not exist on every pod; defaults to the
-   * standard "Account Issue" which the current pod accepts.
-   */
-  private readonly inventoryTransactionType =
-    process.env.ORACLE_INVENTORY_TXN_TYPE || 'Account Issue';
-
-  /**
-   * Monotonic, collision-resistant id for the inventory interface. Date.now is
-   * unavailable in some sandboxes but fine at runtime; combined with a counter
-   * so two transactions in the same millisecond never clash.
-   */
-  private interfaceSeq = 0;
-  private nextInterfaceId(): number {
-    this.interfaceSeq = (this.interfaceSeq + 1) % 1000;
-    return Date.now() * 1000 + this.interfaceSeq;
-  }
-
   constructor(
     private readonly aggregation: DailyAggregationService,
     private readonly soap: OracleSoapClient,
-    private readonly oracleClient: OracleClient,
+    private readonly inventoryUpload: InventoryUploadService,
     @InjectRepository(FusionInvoiceHeader)
     private readonly invoiceHeaderRepo: Repository<FusionInvoiceHeader>,
     @InjectRepository(FusionInvoiceLine)
@@ -139,8 +114,6 @@ export class DailyInvoiceService {
     private readonly applyReceiptRepo: Repository<FusionApplyReceipt>,
     @InjectRepository(FusionJournalHeader)
     private readonly journalHeaderRepo: Repository<FusionJournalHeader>,
-    @InjectRepository(FusionInvTxn)
-    private readonly invTxnRepo: Repository<FusionInvTxn>,
     @InjectRepository(OrderSyncQueue)
     private readonly queueRepo: Repository<OrderSyncQueue>,
     @InjectRepository(StoreConfiguration)
@@ -226,16 +199,32 @@ export class DailyInvoiceService {
       branchCode,
       businessDay,
     );
+    const outcomes: DailyInvoiceOutcome[] = [];
     if (groups.length === 0) {
       this.logger.log(
-        `[${branchCode} ${businessDay}] nothing to post — no eligible orders or already fully posted`,
+        `[${branchCode} ${businessDay}] no invoice to post — no eligible orders or already fully posted`,
       );
-      return [];
     }
-
-    const outcomes: DailyInvoiceOutcome[] = [];
     for (const group of groups) {
       outcomes.push(await this.postGroup(group));
+    }
+
+    // Inventory: the whole day's sales + refunds, uploaded the way the
+    // crm-inventory-missreceipt bulk upload does it. Independent of the invoice
+    // groups (refund-only days and already-invoiced days still move stock), and
+    // idempotent — rows already in Oracle are never re-sent.
+    try {
+      const inv = await this.inventoryUpload.uploadDay(branchCode, businessDay);
+      if (outcomes.length > 0) {
+        outcomes[0].inventoryTransactions = inv.success;
+        outcomes[0].inventoryFailures = inv.failed;
+        outcomes[0].inventoryNegativeHeld = inv.negativeHeld;
+      }
+    } catch (err) {
+      this.logger.error(
+        `[${branchCode} ${businessDay}] inventory upload failed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return outcomes;
   }
@@ -608,7 +597,8 @@ export class DailyInvoiceService {
             // Persist the mapping actually applied so the dashboard shows it
             // instead of blanks (the values are resolved from
             // ServiceProviderJournalMeta in buildJournalHeaders).
-            ledgerId: journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
+            ledgerId:
+              journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
             batchName: journal.batchName ?? null,
             accountingDate: journal.accountingDate ?? null,
             customerType: group.customerType ?? null,
@@ -631,7 +621,8 @@ export class DailyInvoiceService {
             requestDate: new Date(),
             // Persist the intended mapping even on failure, so the row is
             // diagnosable rather than blank.
-            ledgerId: journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
+            ledgerId:
+              journal.ledgerId != null ? BigInt(journal.ledgerId) : null,
             batchName: journal.batchName ?? null,
             accountingDate: journal.accountingDate ?? null,
             customerType: group.customerType ?? null,
@@ -640,118 +631,6 @@ export class DailyInvoiceService {
         );
       }
     }
-
-    // ── 2c. Inventory issues ─────────────────────────────────────────────────
-    // One staged inventory transaction per contributing line, relieving stock
-    // from the store's subinventory. Oracle processes the interface async.
-    // Idempotency: skip a line already recorded SUCCESS for this txn+item.
-    //
-    // These are the bulk of the POST's work (one Oracle REST call per line), so
-    // they run CONCURRENTLY within the group. The aggregate load across all
-    // parallel stores is bounded by the Oracle client's global REST gate
-    // (ORACLE_REST_CONCURRENCY), so raising this per-group fan-out never
-    // overwhelms Oracle.
-    // Pre-load every already-posted line for this group in ONE query (chunked)
-    // instead of a findOne per line — the dedup then costs nothing per line,
-    // which matters because we now consider EVERY line (incl. already-invoiced
-    // ones) so stranded inventory can be retried.
-    const planRefs = [
-      ...new Set(
-        group.inventoryTransactions.map(
-          (p) => `${p.salesOrder}#${p.salesOrderLine}`,
-        ),
-      ),
-    ];
-    const postedRefs = new Set<string>();
-    for (let i = 0; i < planRefs.length; i += 1000) {
-      const rows = await this.invTxnRepo.find({
-        where: {
-          sourceLineRef: In(planRefs.slice(i, i + 1000)),
-          region: group.region,
-          status: 'SUCCESS',
-        },
-        select: { sourceLineRef: true },
-      });
-      for (const r of rows) if (r.sourceLineRef) postedRefs.add(r.sourceLineRef);
-    }
-
-    await mapWithConcurrency(
-      group.inventoryTransactions,
-      INVENTORY_CONCURRENCY,
-      async (plan) => {
-        // Per-line idempotency: a line's inventory is pushed to Oracle exactly
-        // once. Keyed on <salesOrder>#<salesOrderLine> so two lines with the
-        // same item both post (never aggregated), and a re-run never double-pushes.
-        const sourceLineRef = `${plan.salesOrder}#${plan.salesOrderLine}`;
-        const dedupeKey = `${txnNumber}:${sourceLineRef}:${plan.itemNumber}`;
-        if (postedRefs.has(sourceLineRef)) {
-          return; // already pushed to Oracle on a prior run
-        }
-        try {
-          const orgId = await this.oracleClient.resolveSubinventoryOrgId(
-            plan.subinventoryCode,
-          );
-          if (orgId == null) {
-            throw new Error(
-              `No inventory organisation found for subinventory "${plan.subinventoryCode}"`,
-            );
-          }
-          const interfaceId = this.nextInterfaceId();
-          await this.oracleClient.createStagedInventoryTransaction({
-            organizationId: orgId,
-            itemNumber: plan.itemNumber,
-            subinventoryCode: plan.subinventoryCode,
-            transactionQuantity: -Math.abs(plan.quantity), // issue = negative
-            transactionUom: plan.uomCode,
-            transactionDate: plan.transactionDate.toISOString(),
-            transactionTypeName: this.inventoryTransactionType,
-            transactionSourceName: plan.salesOrder,
-            sourceCode: 'Vend',
-            sourceHeaderId: interfaceId,
-            sourceLineId: interfaceId,
-            transactionInterfaceId: interfaceId,
-          });
-          await this.invTxnRepo.save(
-            this.invTxnRepo.create({
-              id: generateId(),
-              organizationName: String(orgId),
-              itemNumber: plan.itemNumber,
-              txnSourceName: plan.salesOrder,
-              sourceLineRef,
-              subInventory: plan.subinventoryCode,
-              txnUom: plan.uomCode,
-              txnDate: plan.transactionDate,
-              txnQty: -Math.abs(plan.quantity),
-              region: group.region,
-              status: 'SUCCESS',
-              requestDate: new Date(),
-            } as Partial<FusionInvTxn>),
-          );
-          base.inventoryTransactions = (base.inventoryTransactions ?? 0) + 1;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(
-            `[${group.branchCode}] inventory issue for ${plan.itemNumber} ` +
-              `(${dedupeKey}) failed: ${message}`,
-          );
-          await this.invTxnRepo.save(
-            this.invTxnRepo.create({
-              id: generateId(),
-              itemNumber: plan.itemNumber,
-              txnSourceName: plan.salesOrder,
-              sourceLineRef,
-              subInventory: plan.subinventoryCode,
-              txnQty: -Math.abs(plan.quantity),
-              region: group.region,
-              status: 'ERROR',
-              message,
-              requestDate: new Date(),
-            } as Partial<FusionInvTxn>),
-          );
-        }
-      },
-    );
-
 
     // ── 4. Mark the contributing orders synced ───────────────────────────────
     await this.markOrdersSynced(group, txnNumber);
