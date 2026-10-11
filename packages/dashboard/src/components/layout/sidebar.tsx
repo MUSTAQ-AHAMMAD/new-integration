@@ -162,6 +162,8 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/fusion-journal-headers', label: 'Journal Headers', icon: FileText, area: 'admin.fusion-transactions' },
       { href: '/admin/fusion-journal-lines', label: 'Journal Lines', icon: FileText, area: 'admin.fusion-transactions' },
       { href: '/admin/fusion-inv-txns', label: 'Inventory Txns', icon: Package, area: 'admin.fusion-transactions' },
+      { href: '/admin/inventory-holds', label: 'Inventory Holds', icon: Package, area: 'admin.fusion-transactions' },
+      { href: '/admin/automation', label: 'Automation & Cut-off', icon: Zap, area: 'sync-control' },
     ],
   },
   {

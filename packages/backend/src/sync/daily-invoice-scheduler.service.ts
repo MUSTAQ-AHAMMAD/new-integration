@@ -28,13 +28,19 @@ import { StoreConfiguration } from '../database/entities/store-configuration.ent
 import { SyncJob } from '../database/entities/sync-job.entity';
 import { JobStatus, JobType, ScopeType } from '../database/enums';
 import { generateId } from '../database/id.util';
-import { DailyInvoiceService, DailyInvoiceOutcome } from './daily-invoice.service';
+import {
+  DailyInvoiceService,
+  DailyInvoiceOutcome,
+} from './daily-invoice.service';
 import { DailyAggregationService } from './daily-aggregation.service';
 import {
   DEFAULT_COVERAGE_LOOKBACK_DAYS,
   IntegrationCoverageService,
 } from './integration-coverage.service';
-import { IntegrationRunEvent, IntegrationRunScope } from './integration-run.service';
+import {
+  IntegrationRunEvent,
+  IntegrationRunScope,
+} from './integration-run.service';
 import { SyncControlService } from './sync-control.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -100,6 +106,15 @@ export class DailyInvoiceSchedulerService {
       // give the same days two automatic posters with different windows.
       const automationOn = await this.syncControl.isEnabled('integration-auto');
       for (const region of regions) {
+        if (
+          automationOn &&
+          (await this.syncControl.isEnabled('integration-auto', region))
+        ) {
+          this.logger.log(
+            `[${region}] skipped — handled by the automatic integration schedule`,
+          );
+          continue;
+        }
         try {
           outcomes.push(...(await this.runRegion(region)));
         } catch (err) {
@@ -224,7 +239,7 @@ export class DailyInvoiceSchedulerService {
         remaining.length === 0
           ? `Region ${region} fully posted — no outstanding days remain.`
           : `⚠ ${remaining.length} day(s) still outstanding after the run: ${remaining.join(', ')}. ` +
-            `Check the failures above.`,
+              `Check the failures above.`,
         JobStatus.COMPLETED,
       );
       await this.jobs.update(job.id, { completedAt: new Date() });
@@ -282,6 +297,7 @@ export class DailyInvoiceSchedulerService {
     scope.post.miscReceipts += o.miscReceipts;
     scope.post.journals += o.journals;
     scope.post.inventoryTransactions += o.inventoryTransactions ?? 0;
+    scope.post.stepFailures += o.stepFailures?.length ?? 0;
   }
 
   /** Creates the tracking job an automatic run reports through. */
@@ -292,6 +308,8 @@ export class DailyInvoiceSchedulerService {
       startDate: days[0],
       endDate: days[days.length - 1],
       phase: 'POST',
+      trigger: 'AUTOMATIC',
+      source: 'DAILY_INVOICE_CRON',
       // The scheduled run posts from data the 15-minute Odoo backup already
       // landed; it does not pull, so these stay at zero by design.
       pull: {
@@ -300,6 +318,7 @@ export class DailyInvoiceSchedulerService {
         skipped: 0,
         ingested: 0,
         ingestSkipped: 0,
+        failures: [],
       },
       post: {
         daysPlanned: days.length,
@@ -311,6 +330,7 @@ export class DailyInvoiceSchedulerService {
         miscReceipts: 0,
         journals: 0,
         inventoryTransactions: 0,
+        stepFailures: 0,
       },
       results: [],
       events: [],

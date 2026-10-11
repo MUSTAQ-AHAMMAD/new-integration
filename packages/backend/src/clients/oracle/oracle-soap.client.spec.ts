@@ -1075,7 +1075,10 @@ describe('OracleSoapClient', () => {
   describe('createCreditMemoViaService', () => {
     it('sends the CreditMemoService envelope with the branch ids', async () => {
       mockHttpPost.mockResolvedValueOnce({
-        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425183' }),
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          TrxNumber: '1425183',
+        }),
       });
 
       const result = await client.createCreditMemoViaService(
@@ -1086,9 +1089,7 @@ describe('OracleSoapClient', () => {
       const soapBody = mockHttpPost.mock.calls[0][1] as string;
       expect(soapBody).toContain('<typ:createCreditMemo>');
       expect(soapBody).toContain('<typ:creditMemo>');
-      expect(soapBody).toContain(
-        '<cred:OrgId>300000237135370</cred:OrgId>',
-      );
+      expect(soapBody).toContain('<cred:OrgId>300000237135370</cred:OrgId>');
       expect(soapBody).toContain(
         '<cred:BillToCustomerId>146013</cred:BillToCustomerId>',
       );
@@ -1107,7 +1108,10 @@ describe('OracleSoapClient', () => {
 
     it('credits: negative quantity and extended amount, positive unit price', async () => {
       mockHttpPost.mockResolvedValueOnce({
-        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425184' }),
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          TrxNumber: '1425184',
+        }),
       });
 
       await client.createCreditMemoViaService(makeCreditMemoHeaderWithIds());
@@ -1126,7 +1130,10 @@ describe('OracleSoapClient', () => {
 
     it('omits InventoryItemId and UOMCode when they are unknown', async () => {
       mockHttpPost.mockResolvedValueOnce({
-        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', TrxNumber: '1425185' }),
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          TrxNumber: '1425185',
+        }),
       });
 
       await client.createCreditMemoViaService(makeCreditMemoHeaderWithIds());
@@ -1209,7 +1216,9 @@ describe('OracleSoapClient', () => {
       expect(soapBody).toContain(
         '<cred:BusinessUnit>AlQurashi-KSA</cred:BusinessUnit>',
       );
-      expect(soapBody).toContain('<cred:AmountApplied>100.00</cred:AmountApplied>');
+      expect(soapBody).toContain(
+        '<cred:AmountApplied>100.00</cred:AmountApplied>',
+      );
       // GlDate defaults to the apply date rather than being omitted.
       expect(soapBody).toContain('<cred:ApplyDate>2024-01-20</cred:ApplyDate>');
       expect(soapBody).toContain('<cred:GlDate>2024-01-20</cred:GlDate>');
@@ -1219,7 +1228,10 @@ describe('OracleSoapClient', () => {
       process.env = { ...ORIGINAL_ENV };
       delete process.env.ORACLE_CM_APPLY_ENABLED;
       mockHttpPost.mockResolvedValueOnce({
-        data: buildSuccessXml({ ServiceStatus: 'SUCCESS', ApplicationId: 'APP-78' }),
+        data: buildSuccessXml({
+          ServiceStatus: 'SUCCESS',
+          ApplicationId: 'APP-78',
+        }),
       });
 
       const result = await client.applyCreditMemo(makeApplyCreditMemoRequest());

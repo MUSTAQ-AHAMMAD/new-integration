@@ -54,8 +54,13 @@ import { SyncJob } from '../database/entities/sync-job.entity';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OdooBackupService } from '../odoo-backup/odoo-backup.service';
 import { withTimeout, MODULE_INIT_TIMEOUT_MS } from '../common/utils/timeout';
-import { INTEGRATION_TIMEZONE } from '../common/odoo-utils';
-import { format as formatTz, toZonedTime } from 'date-fns-tz';
+import { DailyAggregationService } from './daily-aggregation.service';
+import {
+  IntegrationRunScope,
+  IntegrationRunService,
+} from './integration-run.service';
+import { ReadinessReport, ReadinessService } from './readiness.service';
+import { SyncControlService } from './sync-control.service';
 
 const SERVICE = 'integration-auto';
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -926,19 +931,57 @@ export class IntegrationSchedulerService implements OnModuleInit {
     ].sort();
   }
 
-  private window(): { startDate: string; endDate: string } {
-    // "Today" is the current calendar day in the configured integration zone,
-    // not UTC — otherwise a run just after local midnight (e.g. 01:00 in a
-    // UTC+3 zone = 22:00 UTC the previous day) would target the wrong day.
-    // Both dates are bare YYYY-MM-DD; the pull path converts them local→UTC.
-    const endDate = formatTz(
-      toZonedTime(new Date(), INTEGRATION_TIMEZONE),
-      'yyyy-MM-dd',
-      { timeZone: INTEGRATION_TIMEZONE },
+  private async assertKnownRegion(region: string): Promise<void> {
+    if (!(await this.activeRegions()).includes(region)) {
+      throw new BadRequestException(
+        `No active Odoo credential for region ${region}`,
+      );
+    }
+  }
+
+  private normalizeRegion(region: string): string {
+    const r = (region ?? '').trim().toUpperCase();
+    if (!r) throw new BadRequestException('region is required');
+    return r;
+  }
+
+  /** Local calendar date + HH:mm of an instant in a timezone. */
+  private localParts(
+    at: Date,
+    timeZone: string,
+  ): { date: string; time: string } {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      })
+        .formatToParts(at)
+        .map((p) => [p.type, p.value]),
     );
-    // Day arithmetic on a UTC-anchored midnight avoids DST/offset drift.
-    const start = new Date(`${endDate}T00:00:00Z`);
-    start.setUTCDate(start.getUTCDate() - LOOKBACK_DAYS);
-    return { startDate: start.toISOString().slice(0, 10), endDate };
+    return {
+      date: `${parts.year}-${parts.month}-${parts.day}`,
+      time: `${parts.hour}:${parts.minute}`,
+    };
+  }
+
+  /** UTC instant of a local date + HH:mm in a timezone. */
+  private localToUtc(day: string, time: string, timeZone: string): Date {
+    const [h, m] = time.split(':').map(Number);
+    const midnight = this.aggregation.localDayWindow(day, timeZone).start;
+    return new Date(midnight.getTime() + (h * 60 + m) * 60_000);
+  }
+
+  private addDays(day: string, n: number): string {
+    const [y, m, d] = day.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+  }
+
+  private msg(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
   }
 }

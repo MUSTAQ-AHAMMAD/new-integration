@@ -385,12 +385,15 @@ export class SyncController {
   @ApiOperation({
     summary:
       'Inventory issues Oracle rejected, newest first — each one is stock ' +
-      'that was invoiced but never relieved, with Oracle\'s own reason.',
+      "that was invoiced but never relieved, with Oracle's own reason.",
   })
   async listRejectedInventoryTransactions(@Query('limit') limit?: string) {
-    return this.inventoryVerifier.listRejected(limit ? Number(limit) : undefined);
+    return this.inventoryVerifier.listRejected(
+      limit ? Number(limit) : undefined,
+    );
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('inventory-transactions/verify')
   @ApiOperation({
     summary:
@@ -401,6 +404,7 @@ export class SyncController {
     return this.inventoryVerifier.verifyPending();
   }
 
+  @Roles('ADMIN', 'OPERATOR')
   @Post('daily-invoice/run-now')
   @ApiOperation({
     summary:

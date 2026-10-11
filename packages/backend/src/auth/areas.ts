@@ -101,8 +101,9 @@ export const AREAS: AreaDefinition[] = [
     key: 'sync-control',
     label: 'Sync Control',
     group: 'Operations',
-    description: 'Pause, resume and throttle the sync pipeline.',
-    routes: ['/admin/sync-control'],
+    description:
+      'Pause, resume and throttle the sync pipeline; automatic integration schedule and cut-off.',
+    routes: ['/admin/sync-control', '/admin/automation'],
   },
   {
     key: 'exceptions',
@@ -236,6 +237,7 @@ export const AREAS: AreaDefinition[] = [
       '/admin/fusion-journal-headers',
       '/admin/fusion-journal-lines',
       '/admin/fusion-inv-txns',
+      '/admin/inventory-holds',
     ],
   },
   {

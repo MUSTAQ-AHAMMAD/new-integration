@@ -154,7 +154,7 @@ export class RefundsController {
   @Post(':id/apply')
   @ApiOperation({
     summary:
-      'Apply this refund\'s existing Oracle credit memo to the invoice it credits',
+      "Apply this refund's existing Oracle credit memo to the invoice it credits",
   })
   applyCreditMemo(@Param('id') id: string) {
     return this.creditMemoService.applyExisting(id);
