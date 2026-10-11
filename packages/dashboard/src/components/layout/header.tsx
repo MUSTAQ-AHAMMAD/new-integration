@@ -1,10 +1,13 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { api, authStorage } from '@/lib/api';
 import { useRegion } from '@/providers/region-provider';
-import { Bell, ChevronDown, Globe, LogOut, RefreshCw, Zap } from 'lucide-react';
+import { useAuth } from '@/providers/auth-provider';
+import { ChangePasswordDialog } from '@/components/layout/change-password-dialog';
+import { Bell, ChevronDown, Globe, KeyRound, LogOut, RefreshCw, User, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -19,6 +22,15 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
   const qc = useQueryClient();
   const router = useRouter();
   const { selectedRegion, setSelectedRegion } = useRegion();
+  const { profile } = useAuth();
+  const [passwordOpen, setPasswordOpen] = useState(false);
+
+  // An account created (or reset) with a temporary password must change it
+  // before doing anything else, so the dialog opens itself and cannot be
+  // dismissed until the change succeeds.
+  useEffect(() => {
+    if (profile?.mustChangePassword) setPasswordOpen(true);
+  }, [profile?.mustChangePassword]);
 
   const { data: overview } = useQuery({
     queryKey: ['dashboard-overview', selectedRegion],
@@ -124,17 +136,51 @@ export function Header({ mobileMenuButton }: { mobileMenuButton?: React.ReactNod
           <RefreshCw className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Refresh</span>
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleLogout}
-          className="h-8 gap-1.5 border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600"
-          title="Sign out"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Sign out</span>
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600"
+            >
+              <User className="h-3.5 w-3.5" />
+              <span className="hidden max-w-[140px] truncate sm:inline">
+                {profile?.name || profile?.email || 'Account'}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>
+              <div className="truncate text-sm font-semibold text-slate-800">
+                {profile?.name || profile?.email || 'Signed in'}
+              </div>
+              <div className="truncate text-xs font-normal text-slate-500">
+                {profile?.email}
+                {profile?.role ? ` · ${profile.role}` : ''}
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setPasswordOpen(true)}>
+              <KeyRound className="mr-2 h-3.5 w-3.5" />
+              Change password
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleLogout}
+              className="text-red-600 focus:text-red-600"
+            >
+              <LogOut className="mr-2 h-3.5 w-3.5" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+
+      <ChangePasswordDialog
+        open={passwordOpen}
+        onOpenChange={setPasswordOpen}
+        forced={profile?.mustChangePassword ?? false}
+      />
     </header>
   );
 }

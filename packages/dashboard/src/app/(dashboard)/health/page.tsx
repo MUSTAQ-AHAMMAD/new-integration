@@ -6,6 +6,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as ChartTo
 import { Database, Globe, RefreshCw, Server, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type Alert, type QueueStats } from '@/lib/api';
+import { getApiBase } from '@/lib/runtime-config';
 import { formatDate, getSeverityColor, getStatusColor } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,7 +35,7 @@ interface QueueStatsRecord extends QueueStats {
   orderSync: QueueStats['orderSync'] & { delayed?: number };
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+const apiBase = getApiBase();
 const SERVICE_ORDER: Array<ServiceHealthRecord['serviceName']> = ['ODOO', 'ORACLE', 'REDIS', 'DATABASE'];
 const SERVICE_COLORS: Record<ServiceHealthRecord['serviceName'], string> = {
   ODOO: '#2563eb',

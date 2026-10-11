@@ -14,6 +14,7 @@ import { generateId } from '../id.util';
 @Index(['region'])
 @Index(['itemNumber'])
 @Index(['sourceLineRef'])
+@Index(['txnInterfaceId'])
 export class FusionInvTxn {
   @PrimaryColumn({ type: 'varchar2', length: 36 })
   id!: string;
@@ -75,27 +76,20 @@ export class FusionInvTxn {
   @Column({ type: 'varchar2', length: 255, nullable: true })
   integMode!: string | null;
 
-  /** Oracle TransactionTypeName sent ("Vend Sales Issue" / "Vend RMA"). */
-  @Column({ type: 'varchar2', length: 100, nullable: true })
-  txnType!: string | null;
-
   /**
-   * Why the row is held (status NEGATIVE_INVENTORY / ERROR) — Oracle's own
-   * reason, short enough for the admin grid. Cleared once the row posts.
+   * The TransactionInterfaceId we sent to Oracle's staging interface.
+   *
+   * Oracle processes that interface asynchronously, so accepting the POST
+   * proves only that the row was queued — a negative-balance rejection lands on
+   * the interface row minutes later and never comes back on the original call.
+   * Keeping the id is what lets the verifier go back and ask what became of it.
    */
-  @Column({ type: 'varchar2', length: 1000, nullable: true })
-  holdReason!: string | null;
-
-  /** Exact inventoryStagedTransactions JSON last sent, replayed on reprocess. */
-  @Column({ type: 'clob', nullable: true })
-  requestPayload!: string | null;
-
-  /** How many times the row has been re-sent from the admin panel. */
   @Column({ type: 'number', nullable: true })
-  retryCount!: number | null;
+  txnInterfaceId!: number | null;
 
+  /** When Oracle's own answer was read back (SUCCESS or ERROR confirmed). */
   @Column({ type: 'timestamp', nullable: true })
-  lastRetryAt!: Date | null;
+  verifiedAt!: Date | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt!: Date;

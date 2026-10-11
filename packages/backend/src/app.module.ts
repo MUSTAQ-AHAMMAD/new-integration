@@ -28,6 +28,9 @@ import { SettingsModule } from './settings/settings.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
+import { AreasGuard } from './auth/areas.guard';
+import { UsersModule } from './users/users.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { VendHqBackupModule } from './vendhq-backup/vendhq-backup.module';
 import { ItemSyncModule } from './item-sync/item-sync.module';
 import { IbqBackupModule } from './ibq-backup/ibq-backup.module';
@@ -108,6 +111,8 @@ import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
     SettingsModule,
     AdminModule,
     AuthModule,
+    UsersModule,
+    ReconciliationModule,
     VendHqBackupModule,
     ItemSyncModule,
     IbqBackupModule,
@@ -135,6 +140,11 @@ import { BigIntInterceptor } from './common/interceptors/big-int.interceptor';
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
+    },
+    // Area-based visibility (only narrows routes marked with @RequireArea)
+    {
+      provide: APP_GUARD,
+      useClass: AreasGuard,
     },
   ],
 })

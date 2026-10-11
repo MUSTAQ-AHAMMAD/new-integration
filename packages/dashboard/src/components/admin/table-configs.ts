@@ -383,6 +383,11 @@ export const ADMIN_TABLE_CONFIGS: Record<
       { key: 'retryCount', label: 'Retries', type: 'number', tableHidden: true },
       { key: 'message', label: 'Request / Response', type: 'textarea', tableHidden: true },
       { key: 'integMode', label: 'Mode', tableHidden: true },
+      // Oracle's own rejection reason, and when the interface row was read
+      // back — without these an ERROR row says nothing actionable.
+      { key: 'message', label: 'Oracle message' },
+      { key: 'verifiedAt', label: 'Verified', type: 'date', tableHidden: true },
+      { key: 'txnInterfaceId', label: 'Interface ID', type: 'number', tableHidden: true },
     ],
   },
   'backup-sales': {

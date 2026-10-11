@@ -41,6 +41,7 @@ import { mapWithConcurrency } from '../common/utils/concurrency';
 import {
   DailyAggregationService,
   DailyInvoiceGroup,
+  InventoryTransactionPlan,
 } from './daily-aggregation.service';
 import { InventoryUploadService } from './inventory-upload.service';
 
@@ -111,8 +112,29 @@ export type IntegrationTrigger = 'MANUAL' | 'AUTOMATIC' | 'ALL';
 export class DailyInvoiceService {
   private readonly logger = new Logger(DailyInvoiceService.name);
 
-  /** Store/days being posted right now (see postDay). */
-  private readonly inFlight = new Set<string>();
+  /**
+   * Oracle transaction types used for inventory movements. A sale relieves the
+   * stock with "Vend Sales Issue"; a refund puts it back with "Vend Sales".
+   * Both stay env-overridable because the names are pod-specific setup data.
+   */
+  private readonly inventoryTransactionTypes: Record<
+    NonNullable<InventoryTransactionPlan['kind']>,
+    string
+  > = {
+    SALE: process.env.ORACLE_INVENTORY_TXN_TYPE || 'Vend Sales Issue',
+    REFUND: process.env.ORACLE_INVENTORY_REFUND_TXN_TYPE || 'Vend Sales',
+  };
+
+  /**
+   * Monotonic, collision-resistant id for the inventory interface. Date.now is
+   * unavailable in some sandboxes but fine at runtime; combined with a counter
+   * so two transactions in the same millisecond never clash.
+   */
+  private interfaceSeq = 0;
+  private nextInterfaceId(): number {
+    this.interfaceSeq = (this.interfaceSeq + 1) % 1000;
+    return Date.now() * 1000 + this.interfaceSeq;
+  }
 
   constructor(
     private readonly aggregation: DailyAggregationService,
@@ -711,6 +733,134 @@ export class DailyInvoiceService {
         );
       }
     }
+
+    // ── 2c. Inventory issues ─────────────────────────────────────────────────
+    // One staged inventory transaction per contributing line, relieving stock
+    // from the store's subinventory. Oracle processes the interface async.
+    // Idempotency: skip a line already recorded SUCCESS for this txn+item.
+    //
+    // These are the bulk of the POST's work (one Oracle REST call per line), so
+    // they run CONCURRENTLY within the group. The aggregate load across all
+    // parallel stores is bounded by the Oracle client's global REST gate
+    // (ORACLE_REST_CONCURRENCY), so raising this per-group fan-out never
+    // overwhelms Oracle.
+    // Pre-load every already-posted line for this group in ONE query (chunked)
+    // instead of a findOne per line — the dedup then costs nothing per line,
+    // which matters because we now consider EVERY line (incl. already-invoiced
+    // ones) so stranded inventory can be retried.
+    const planRefs = [
+      ...new Set(
+        group.inventoryTransactions.map(
+          (p) => `${p.salesOrder}#${p.salesOrderLine}`,
+        ),
+      ),
+    ];
+    const postedRefs = new Set<string>();
+    for (let i = 0; i < planRefs.length; i += 1000) {
+      const rows = await this.invTxnRepo.find({
+        where: {
+          sourceLineRef: In(planRefs.slice(i, i + 1000)),
+          region: group.region,
+          // PENDING counts as pushed: the row is already sitting in Oracle's
+          // interface awaiting the transaction manager. Re-sending it would
+          // relieve the same stock twice. Only ERROR rows are re-attempted.
+          status: In(['SUCCESS', 'PENDING']),
+        },
+        select: { sourceLineRef: true },
+      });
+      for (const r of rows) if (r.sourceLineRef) postedRefs.add(r.sourceLineRef);
+    }
+
+    await mapWithConcurrency(
+      group.inventoryTransactions,
+      INVENTORY_CONCURRENCY,
+      async (plan) => {
+        // Per-line idempotency: a line's inventory is pushed to Oracle exactly
+        // once. Keyed on <salesOrder>#<salesOrderLine> so two lines with the
+        // same item both post (never aggregated), and a re-run never double-pushes.
+        const sourceLineRef = `${plan.salesOrder}#${plan.salesOrderLine}`;
+        // A sale issues stock out (negative qty) under "Vend Sales Issue"; a
+        // refund returns it (positive qty) under "Vend Sales".
+        const kind = plan.kind ?? 'SALE';
+        const signedQty =
+          kind === 'REFUND'
+            ? Math.abs(plan.quantity)
+            : -Math.abs(plan.quantity);
+        const dedupeKey = `${txnNumber}:${sourceLineRef}:${plan.itemNumber}`;
+        if (postedRefs.has(sourceLineRef)) {
+          return; // already pushed to Oracle on a prior run
+        }
+        try {
+          const orgId = await this.oracleClient.resolveSubinventoryOrgId(
+            plan.subinventoryCode,
+          );
+          if (orgId == null) {
+            throw new Error(
+              `No inventory organisation found for subinventory "${plan.subinventoryCode}"`,
+            );
+          }
+          const interfaceId = this.nextInterfaceId();
+          // Oracle accepts this into the staging interface and processes it in
+          // the background, so a 200 here is NOT proof the stock moved — an
+          // insufficient-quantity rejection surfaces on the interface row later.
+          // The row is therefore recorded PENDING and confirmed (or failed) by
+          // InventoryTransactionVerifierService.
+          await this.oracleClient.createStagedInventoryTransaction({
+            organizationId: orgId,
+            itemNumber: plan.itemNumber,
+            subinventoryCode: plan.subinventoryCode,
+            transactionQuantity: signedQty,
+            transactionUom: plan.uomCode,
+            transactionDate: plan.transactionDate.toISOString(),
+            transactionTypeName: this.inventoryTransactionTypes[kind],
+            transactionSourceName: plan.salesOrder,
+            sourceCode: 'Vend',
+            sourceHeaderId: interfaceId,
+            sourceLineId: interfaceId,
+            transactionInterfaceId: interfaceId,
+          });
+          await this.invTxnRepo.save(
+            this.invTxnRepo.create({
+              id: generateId(),
+              organizationName: String(orgId),
+              itemNumber: plan.itemNumber,
+              txnSourceName: plan.salesOrder,
+              sourceLineRef,
+              subInventory: plan.subinventoryCode,
+              txnUom: plan.uomCode,
+              txnDate: plan.transactionDate,
+              txnQty: signedQty,
+              region: group.region,
+              status: 'PENDING',
+              txnInterfaceId: interfaceId,
+              requestDate: new Date(),
+            } as Partial<FusionInvTxn>),
+          );
+          base.inventoryTransactions = (base.inventoryTransactions ?? 0) + 1;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error(
+            `[${group.branchCode}] inventory issue for ${plan.itemNumber} ` +
+              `(${dedupeKey}) failed: ${message}`,
+          );
+          await this.invTxnRepo.save(
+            this.invTxnRepo.create({
+              id: generateId(),
+              itemNumber: plan.itemNumber,
+              txnSourceName: plan.salesOrder,
+              sourceLineRef,
+              subInventory: plan.subinventoryCode,
+              txnQty: signedQty,
+              region: group.region,
+              status: 'ERROR',
+              message,
+              requestDate: new Date(),
+            } as Partial<FusionInvTxn>),
+          );
+        }
+      },
+    );
+
 
     // ── 4. Mark the contributing orders synced ───────────────────────────────
     await this.markOrdersSynced(group, txnNumber);

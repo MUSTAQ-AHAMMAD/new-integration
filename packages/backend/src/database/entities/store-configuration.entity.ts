@@ -68,6 +68,33 @@ export class StoreConfiguration {
   @Column({ type: 'varchar2', length: 255, nullable: true })
   creditMemoTransactionType!: string | null;
 
+  // ── Oracle ids for CreditMemoService (createCreditMemo) ──────────────────
+  // The SOAP credit-memo payload identifies the branch by numeric id, not by
+  // the names above. Kept as strings: Oracle ids run past 2^53, and they are
+  // written verbatim into the envelope, so there is nothing to gain from
+  // parsing them. Nullable — a branch without them falls back to the REST
+  // create, which works from names. Set them on the Stores admin screen.
+
+  /** Oracle BillToCustomerId (hz_cust_accounts). */
+  @Column({ type: 'varchar2', length: 40, nullable: true })
+  billToCustomerId!: string | null;
+
+  /** Oracle BillToSiteUseId of the bill-to site. */
+  @Column({ type: 'varchar2', length: 40, nullable: true })
+  billToSiteUseId!: string | null;
+
+  /** Oracle PaymentTermsId matching paymentTermsName. */
+  @Column({ type: 'varchar2', length: 40, nullable: true })
+  paymentTermsId!: string | null;
+
+  /** Oracle BatchSourceSequenceId of the credit-memo batch source. */
+  @Column({ type: 'varchar2', length: 40, nullable: true })
+  batchSourceSequenceId!: string | null;
+
+  /** Oracle CustomerTrxSquenceId — the credit-memo transaction type's id. */
+  @Column({ type: 'varchar2', length: 40, nullable: true })
+  creditMemoTrxTypeId!: string | null;
+
   @Column({ type: 'varchar2', length: 8, default: 'AED' })
   invoiceCurrencyCode!: string;
 

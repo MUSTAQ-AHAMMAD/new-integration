@@ -175,7 +175,7 @@ describe('IbqBackupService', () => {
       );
     });
 
-    it('appends 00:00:00 to a date-only startDate override from the UI', async () => {
+    it('converts a date-only startDate override (local start-of-day) to UTC', async () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
@@ -184,10 +184,11 @@ describe('IbqBackupService', () => {
       const callParams = mockAxios.mock.calls[0][1] as {
         params: Record<string, unknown>;
       };
-      expect(callParams.params['start_date']).toBe('2026-02-01 00:00:00');
+      // 2026-02-01 00:00:00 in the default zone (Asia/Riyadh, UTC+3) → prev day 21:00 UTC.
+      expect(callParams.params['start_date']).toBe('2026-01-31 21:00:00');
     });
 
-    it('appends 23:59:59 to a date-only endDate override from the UI', async () => {
+    it('converts a date-only endDate override (local end-of-day) to UTC', async () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
@@ -196,10 +197,11 @@ describe('IbqBackupService', () => {
       const callParams = mockAxios.mock.calls[0][1] as {
         params: Record<string, unknown>;
       };
-      expect(callParams.params['end_date']).toBe('2026-02-01 23:59:59');
+      // 2026-02-01 23:59:59 in UTC+3 → 2026-02-01 20:59:59 UTC.
+      expect(callParams.params['end_date']).toBe('2026-02-01 20:59:59');
     });
 
-    it('does not modify a startDate override that already has a time component', async () => {
+    it('converts a naive datetime override (local wall time) to UTC', async () => {
       const { service } = makeService();
       mockAxios.mockResolvedValue({ data: { result: [] } });
 
@@ -210,7 +212,8 @@ describe('IbqBackupService', () => {
       const callParams = mockAxios.mock.calls[0][1] as {
         params: Record<string, unknown>;
       };
-      expect(callParams.params['start_date']).toBe('2026-02-01 21:00:00');
+      // 21:00 local (UTC+3) → 18:00 UTC.
+      expect(callParams.params['start_date']).toBe('2026-02-01 18:00:00');
     });
 
     it('does NOT send start_date param on first run (lastSyncAt null)', async () => {

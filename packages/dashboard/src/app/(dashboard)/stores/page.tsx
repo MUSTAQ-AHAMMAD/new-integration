@@ -28,6 +28,12 @@ const EMPTY_FORM: UpsertStoreConfigDto = {
   transactionSource: 'Manual',
   transactionType: 'PASA CONSULTING SALE',
   invoiceCurrencyCode: 'AED',
+  creditMemoTransactionType: '',
+  billToCustomerId: '',
+  billToSiteUseId: '',
+  paymentTermsId: '',
+  batchSourceSequenceId: '',
+  creditMemoTrxTypeId: '',
   isActive: true,
   createdBy: 'DASHBOARD_USER',
 };
@@ -106,6 +112,20 @@ function StoreFormDialog({
           {field('transactionSource', 'Transaction Source')}
           {field('transactionType', 'Transaction Type')}
           {field('invoiceCurrencyCode', 'Invoice Currency Code')}
+          <div className="col-span-2 mt-2 border-t pt-3">
+            <h4 className="text-sm font-semibold">Credit Memo (Oracle CreditMemoService)</h4>
+            <p className="text-xs text-muted-foreground">
+              Numeric Oracle ids for this branch. Fill all five in to post refunds
+              through CreditMemoService; leave any blank and the branch falls back
+              to the older REST create.
+            </p>
+          </div>
+          {field('creditMemoTransactionType', 'Credit Memo Transaction Type', { placeholder: 'PASA CREDIT MEMO' })}
+          {field('creditMemoTrxTypeId', 'Credit Memo Trx Type ID (CustomerTrxSquenceId)', { placeholder: '300000001421038' })}
+          {field('billToCustomerId', 'Bill-To Customer ID', { placeholder: '146013' })}
+          {field('billToSiteUseId', 'Bill-To Site Use ID', { placeholder: '130054' })}
+          {field('paymentTermsId', 'Payment Terms ID', { placeholder: '5' })}
+          {field('batchSourceSequenceId', 'Batch Source Sequence ID', { placeholder: '300000067320011' })}
           <div className="col-span-2 flex items-center gap-2">
             <input
               id="isActive"
@@ -141,6 +161,12 @@ function storeToFormDto(store: StoreConfig): UpsertStoreConfigDto {
     transactionSource: store.transactionSource,
     transactionType: store.transactionType,
     invoiceCurrencyCode: store.invoiceCurrencyCode,
+    creditMemoTransactionType: store.creditMemoTransactionType ?? '',
+    billToCustomerId: store.billToCustomerId ?? '',
+    billToSiteUseId: store.billToSiteUseId ?? '',
+    paymentTermsId: store.paymentTermsId ?? '',
+    batchSourceSequenceId: store.batchSourceSequenceId ?? '',
+    creditMemoTrxTypeId: store.creditMemoTrxTypeId ?? '',
     isActive: store.isActive,
     createdBy: store.createdBy,
   };

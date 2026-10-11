@@ -3,30 +3,80 @@
  * Used by backup services and sync controllers.
  */
 
+import { format as formatTz, fromZonedTime, toZonedTime } from 'date-fns-tz';
+
 /** Default timezone assumed for Odoo/IBQ orders that carry no explicit timezone. */
 export const DEFAULT_ODOO_TIMEZONE = 'Asia/Dubai';
+
+/**
+ * Timezone the admin's date-range input is expressed in. The date-picker sends
+ * a bare `YYYY-MM-DD`; the operator means "that whole day in local time". We
+ * interpret it in this zone and convert to UTC before calling the Odoo/IBQ API
+ * (Odoo stores/compares `date_order` in UTC).
+ *
+ * Configurable via APP_INTEGRATION_TIMEZONE; defaults to Asia/Riyadh (UTC+3,
+ * no DST). Example: 2026-07-26 → start_date 2026-07-25 21:00:00,
+ * end_date 2026-07-26 20:59:59 (UTC).
+ */
+export const INTEGRATION_TIMEZONE =
+  process.env.APP_INTEGRATION_TIMEZONE || 'Asia/Riyadh';
 
 /** Enable detailed logging for payment detection (set via env var ODOO_UTILS_DEBUG=true) */
 const DEBUG_PAYMENT_DETECTION = process.env.ODOO_UTILS_DEBUG === 'true';
 
+/** Matches an explicit UTC/offset suffix: `Z`, `+03:00`, `-0500`, etc. */
+const HAS_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/;
+/** Matches a time component after the date part (space or `T` then `HH:MM`). */
+const HAS_TIME = /[\sT]\d{2}:\d{2}/;
+
+/** Format an absolute instant as the naive UTC wall-clock string Odoo expects. */
+function formatUtc(instant: Date): string {
+  return formatTz(toZonedTime(instant, 'UTC'), 'yyyy-MM-dd HH:mm:ss', {
+    timeZone: 'UTC',
+  });
+}
+
 /**
- * Ensures a date string sent to the Odoo/IBQ `/api/pos/order` endpoint has a
- * time component. The UI date-picker produces `YYYY-MM-DD` (no time) but the
- * API requires `YYYY-MM-DD HH:MM:SS`.
+ * Convert a date/datetime the admin entered (local wall time) into the
+ * `YYYY-MM-DD HH:MM:SS` **UTC** string the Odoo/IBQ `/api/pos/order` endpoint
+ * expects for `start_date` / `end_date`.
  *
- * - If the string already contains a time (a space or 'T' after the date part)
- *   it is returned unchanged.
- * - For start dates (default) the time `00:00:00` is appended.
- * - For end dates pass `{ end: true }` and `23:59:59` is appended instead.
+ * Three input shapes are handled so every run mode (manual, /all, scheduled,
+ * IBQ, watermark) produces a correct UTC boundary:
+ *
+ *  1. Explicit instant (`...Z` or `...+03:00`, e.g. a `lastSyncAt.toISOString()`
+ *     watermark) — already absolute; re-emitted as UTC wall-clock, no shift.
+ *  2. Naive datetime (`YYYY-MM-DD HH:MM:SS`, no offset) — treated as local wall
+ *     time in `timeZone` and converted to UTC.
+ *  3. Date only (`YYYY-MM-DD`) — expanded to local start-of-day `00:00:00`
+ *     (or `23:59:59` when `{ end: true }`) in `timeZone`, then converted to UTC.
+ *
+ * @param date     A `YYYY-MM-DD`, naive datetime, or ISO instant string.
+ * @param options  `end` picks the 23:59:59 boundary for date-only inputs;
+ *                 `timeZone` overrides the configured INTEGRATION_TIMEZONE.
  */
 export function toApiDatetime(
   date: string,
-  options?: { end?: boolean },
+  options?: { end?: boolean; timeZone?: string },
 ): string {
-  // Already has a time component — leave it alone
-  if (/[\sT]\d{2}:\d{2}/.test(date)) return date;
-  const time = options?.end ? '23:59:59' : '00:00:00';
-  return `${date} ${time}`;
+  const trimmed = (date ?? '').trim();
+  if (!trimmed) return trimmed;
+
+  const tz = options?.timeZone || INTEGRATION_TIMEZONE;
+
+  // 1. Already an absolute instant (has Z or ± offset) — no local interpretation.
+  if (HAS_OFFSET.test(trimmed)) {
+    return formatUtc(new Date(trimmed));
+  }
+
+  // 2. Naive datetime — interpret the wall-clock time in the local zone.
+  if (HAS_TIME.test(trimmed)) {
+    return formatUtc(fromZonedTime(trimmed.replace(' ', 'T'), tz));
+  }
+
+  // 3. Date only — local start/end of that day in the local zone.
+  const wall = `${trimmed}T${options?.end ? '23:59:59' : '00:00:00'}`;
+  return formatUtc(fromZonedTime(wall, tz));
 }
 
 /**

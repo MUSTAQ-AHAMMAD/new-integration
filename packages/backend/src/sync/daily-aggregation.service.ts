@@ -48,7 +48,12 @@ import { mapWithConcurrency } from '../common/utils/concurrency';
 /** Placeholder used in receipt numbers until Oracle issues the transaction number. */
 export const TXN_PLACEHOLDER = '__TXN__';
 
-/** States that must never be invoiced. Mirrors the ingest-side rules. */
+/**
+ * States that must never be invoiced. Mirrors the ingest-side rules. Exported
+ * so IntegrationCoverageService measures the same eligibility this service
+ * applies — coverage that counted orders the aggregator refuses to post would
+ * report gaps that can never close.
+ */
 export const NON_INVOICEABLE_STATES = new Set([
   'draft',
   'cancel',
@@ -158,6 +163,26 @@ interface RegionTaxContext {
   byName: Map<string, string>;
   /** The region's single code when unambiguous, else null. */
   regionDefault: string | null;
+}
+
+/** A planned inventory movement, before the Oracle organisation id is resolved. */
+export interface InventoryTransactionPlan {
+  /**
+   * Which side of the movement this is. A sale issues stock out under the
+   * "Vend Sales Issue" transaction type; a refund returns it under "Vend
+   * Sales". Absent means SALE — the only kind this aggregation plans today,
+   * since refunds go down the credit-memo path.
+   */
+  kind?: 'SALE' | 'REFUND';
+  itemNumber: string;
+  subinventoryCode: string;
+  /** Positive magnitude; the poster signs it from `kind`. */
+  quantity: number;
+  uomCode: string;
+  transactionDate: Date;
+  /** Source order number, for the Oracle TransactionSourceName + audit trail. */
+  salesOrder: string;
+  salesOrderLine: number;
 }
 
 /** Receipt accumulator keyed by payment method + register. */
@@ -328,9 +353,13 @@ export class DailyAggregationService {
     }
   }
 
-  /** IANA timezone the integration uses for a region's business days. */
-  regionTimeZone(region: string): string {
-    return REGION_TIMEZONE[region] ?? DEFAULT_TIMEZONE;
+  /**
+   * The store-local timezone a region's orders are bucketed into business days
+   * by. Business days are local, not UTC — a 01:30 Riyadh sale belongs to the
+   * previous UTC day — so anything reasoning about days needs this same map.
+   */
+  timeZoneForRegion(region: string): string {
+    return REGION_TIMEZONE[(region ?? '').trim()] ?? DEFAULT_TIMEZONE;
   }
 
   /** Store-local calendar day (YYYY-MM-DD) for an instant. */
@@ -607,8 +636,24 @@ export class DailyAggregationService {
         const itemNumber = line.productCode?.trim();
         const uomCode = itemNumber ? (uomCodes.get(itemNumber) ?? null) : null;
 
-        // Inventory is NOT planned here: InventoryUploadService posts the
-        // day's stock movements (sales + refunds) separately, reference-style.
+        // Plan the inventory issue for EVERY line that names a real item —
+        // even lines whose invoice was already posted. Inventory is deduped
+        // per line at post time (sourceLineRef), so this never double-pushes,
+        // but it does mean an interrupted run that posted the invoice but not
+        // the inventory can still relieve stock on retry (no stranded stock).
+        // One issue per line — never aggregated by item.
+        if (itemNumber && uomCode && subinventory && qty > 0) {
+          inventoryPlans.push({
+            kind: 'SALE',
+            itemNumber,
+            subinventoryCode: subinventory,
+            quantity: qty,
+            uomCode,
+            transactionDate: saleDate,
+            salesOrder: orderNumber,
+            salesOrderLine: sourceLineNo,
+          });
+        }
 
         const priorInvoice = posted.get(`${orderNumber}|${sourceLineNo}`);
         if (priorInvoice) {
@@ -1031,7 +1076,10 @@ export class DailyAggregationService {
       // "G") — NOT the Odoo display name "Gram", which Oracle rejects as too
       // long. Omitted when unknown so Oracle falls back to the item's own UOM.
       uomCode: uomCode ?? undefined,
-      unitSellingPrice: unitPrice,
+      // Round to 2dp at the source so a `total / qty` derivation can never emit
+      // a long float (e.g. 3.3333333) and so displayed ex-tax totals computed
+      // from unitSellingPrice × quantity stay penny-consistent with the wire.
+      unitSellingPrice: this.round2(unitPrice),
       currencyCode,
       salesOrder,
       salesOrderLine: String(salesOrderLine),
@@ -1165,7 +1213,12 @@ export class DailyAggregationService {
           if (method === 'Debit Card' && region === 'OM' && charge > 10) {
             charge = 10;
           }
-          bucket.bankChargeAmount += charge;
+          // Round each charge to 2dp BEFORE accumulating. The standard receipt is
+          // round2(gross − charge) and the misc receipt is −round2(charge); if the
+          // charge is only rounded at emission, those two need not sum back to
+          // gross, leaving a sub-penny residue that reconciliation later trims off
+          // a valid payment. Rounding here makes net + |misc| == gross exactly.
+          bucket.bankChargeAmount += this.round2(charge);
         }
       }
     }

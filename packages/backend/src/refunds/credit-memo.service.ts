@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,8 +10,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { AuditOperation, AuditStatus } from '../database/enums';
 import { CircuitBreakerService } from '../clients/circuit-breaker.service';
-import { OracleSoapClient } from '../clients/oracle/oracle-soap.client';
-import { OracleClient } from '../clients/oracle/oracle.client';
+import {
+  CreditMemoHeader,
+  OracleSoapClient,
+  hasCreditMemoSoapIds,
+} from '../clients/oracle/oracle-soap.client';
+import {
+  OracleClient,
+  OracleLiveCreditMemo,
+  OracleLiveInvoice,
+} from '../clients/oracle/oracle.client';
 import { FusionInvoiceHeader } from '../database/entities/fusion-invoice-header.entity';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { OrderSyncQueue } from '../database/entities/order-sync-queue.entity';
@@ -19,6 +28,27 @@ import { StoreConfigService } from '../store-config/store-config.service';
 import { SyncStatus } from '../database/enums';
 import { IdempotencyService } from '../sync/idempotency.service';
 import { OdooTransformationService } from '../sync/odoo-transformation.service';
+
+/**
+ * What Oracle actually holds for a refund, read back live. Used by the Refunds
+ * screen's Verify action — our own row records only what was sent.
+ */
+export interface CreditMemoVerification {
+  refundId: string;
+  refundOrderNumber: string;
+  refundAmount: number;
+  creditMemoNumber: string | null;
+  creditMemoFound: boolean;
+  creditMemo: OracleLiveCreditMemo | null;
+  /** Oracle's memo total agrees with the refund amount (to the cent). */
+  amountMatches: boolean;
+  /** Memo balance is zero — it has been applied, not left on-account. */
+  applied: boolean;
+  invoiceNumber: string | null;
+  invoice: OracleLiveInvoice | null;
+  /** Human-readable reasons this refund is not fully settled in Oracle. */
+  problems: string[];
+}
 
 export interface CreditMemoPushResult {
   refundId: string;
@@ -212,77 +242,30 @@ export class CreditMemoService {
         },
       );
 
-      // Create via the REST resource (the SOAP AutoInvoice path is rejected by
-      // the pod for credit memos). Resolve the store's revenue account first.
-      const revenueAccount = await this.resolveRevenueAccount(
-        branchCode,
-        region,
-        header.billToCustomerName,
-      );
-      // Items unknown to Oracle's catalog would fail the whole memo with
-      // AR-857618 ("The item you entered ... doesn't exist"). ItemNumber is
-      // optional on Manual-source credit-memo lines — the distribution carries
-      // the revenue account — so fall back to a description-only line for any
-      // item Oracle doesn't know rather than losing the refund.
-      const itemKnown = new Map<string, boolean>();
-      for (const l of header.creditMemoLines) {
-        const item = l.itemNumber?.trim();
-        if (item && !itemKnown.has(item)) {
-          itemKnown.set(
-            item,
-            await this.restClient.itemExists(item).catch(() => false),
+      // Prefer Oracle's CreditMemoService — the payload verified against the
+      // pod — and fall back to the REST resource for branches whose numeric
+      // ids are not filled in yet. The two produce the same document, so a
+      // half-configured branch keeps posting refunds instead of hard-failing.
+      const response = hasCreditMemoSoapIds(header)
+        ? await this.createViaCreditMemoService(header)
+        : await this.createViaRest(
+            header,
+            branchCode,
+            region,
+            refund.refundOrderNumber,
           );
-        }
-      }
-      const restResult = await this.restClient.createCreditMemoViaRest({
-        businessUnit: header.businessUnit,
-        billToCustomerNumber: header.billToAccountNumber,
-        currency: header.invoiceCurrencyCode,
-        transactionDate: (header.memoDate instanceof Date
-          ? header.memoDate
-          : new Date(String(header.memoDate))
-        )
-          .toISOString()
-          .slice(0, 10),
-        transactionType: header.transactionType,
-        lines: header.creditMemoLines.map((l, i) => {
-          const qty = Math.abs(l.quantity || 1);
-          const price = Math.abs(l.unitSellingPrice || 0);
-          const item = l.itemNumber?.trim();
-          const knownItem = item && itemKnown.get(item) ? item : undefined;
-          if (item && !knownItem) {
-            this.logger.warn(
-              `[${refund.refundOrderNumber}] item "${item}" not in Oracle ` +
-                `catalog — credit-memo line ${i + 1} sent as description-only.`,
-            );
-          }
-          return {
-            lineNumber: l.lineNumber ?? i + 1,
-            description: l.description ?? `Refund line ${i + 1}`,
-            quantityCredit: -qty,
-            unitSellingPrice: price,
-            itemNumber: knownItem,
-            revenueAccount,
-            amount: -this.round2(qty * price),
-          };
-        }),
-      });
-      const response = {
-        transactionNumber: restResult.transactionNumber,
-        customerTrxId: restResult.customerTransactionId,
-      };
 
       // Best-effort: apply the memo to the invoice it credits. The memo already
       // exists in Oracle, so an application failure must NOT fail the push — it
       // is recorded as a note and the memo stays SYNCED (left on-account) for
       // finance to apply manually.
-      const applicationNote = await this.applyToInvoice(
-        response.transactionNumber,
+      const applicationNote = await this.applyToInvoice({
+        creditMemoNumber: response.transactionNumber,
         originalTransactionNumber,
-        Number(refund.refundAmount),
-        header.invoiceCurrencyCode,
-        refund.refundDate,
-      );
+        amount: Number(refund.refundAmount),
+        businessUnit: header.businessUnit,
+        applyDate: refund.refundDate,
+      });
 
       await this.refunds.update(refund.id, {
         oracleCreditMemoNumber: response.transactionNumber,
@@ -384,32 +367,317 @@ export class CreditMemoService {
   }
 
   /**
+   * Creates the memo through CreditMemoService.createCreditMemo — the verified
+   * SOAP payload. Line items are identified by Oracle's numeric InventoryItemId;
+   * an item Oracle does not know is sent as a description-only line rather than
+   * failing the whole memo (same rule the REST path uses).
+   */
+  private async createViaCreditMemoService(
+    header: CreditMemoHeader,
+  ): Promise<{ transactionNumber: string; customerTrxId: string }> {
+    for (const line of header.creditMemoLines) {
+      const item = line.itemNumber?.trim();
+      if (!item) continue;
+      const itemId = await this.restClient.resolveItemId(item).catch(() => null);
+      if (itemId) {
+        line.inventoryItemId = itemId;
+      } else {
+        this.logger.warn(
+          `Item "${item}" has no Oracle InventoryItemId — credit-memo line ` +
+            `${line.lineNumber} sent as description-only.`,
+        );
+      }
+    }
+
+    const result = await this.oracleClient.createCreditMemoViaService(header);
+    return {
+      transactionNumber: result.transactionNumber,
+      customerTrxId: result.customerTrxId,
+    };
+  }
+
+  /**
+   * Legacy fallback: creates the memo through the REST resource, working from
+   * names instead of ids. Used only while a branch is missing its Oracle ids.
+   */
+  private async createViaRest(
+    header: CreditMemoHeader,
+    branchCode: string,
+    region: string,
+    refundOrderNumber: string,
+  ): Promise<{ transactionNumber: string; customerTrxId: string }> {
+    this.logger.warn(
+      `[${branchCode}] no Oracle credit-memo ids configured — falling back to ` +
+        `the REST create for refund ${refundOrderNumber}. Set BillToCustomerId, ` +
+        `BillToSiteUseId, PaymentTermsId, BatchSourceSequenceId and ` +
+        `CreditMemoTrxTypeId on the Stores admin screen to use CreditMemoService.`,
+    );
+
+    const revenueAccount = await this.resolveRevenueAccount(
+      branchCode,
+      region,
+      header.billToCustomerName,
+    );
+    // Items unknown to Oracle's catalog would fail the whole memo with
+    // AR-857618 ("The item you entered ... doesn't exist"). ItemNumber is
+    // optional on Manual-source credit-memo lines — the distribution carries
+    // the revenue account — so fall back to a description-only line for any
+    // item Oracle doesn't know rather than losing the refund.
+    const itemKnown = new Map<string, boolean>();
+    for (const l of header.creditMemoLines) {
+      const item = l.itemNumber?.trim();
+      if (item && !itemKnown.has(item)) {
+        itemKnown.set(
+          item,
+          await this.restClient.itemExists(item).catch(() => false),
+        );
+      }
+    }
+    const restResult = await this.restClient.createCreditMemoViaRest({
+      businessUnit: header.businessUnit,
+      billToCustomerNumber: header.billToAccountNumber,
+      currency: header.invoiceCurrencyCode,
+      transactionDate: (header.memoDate instanceof Date
+        ? header.memoDate
+        : new Date(String(header.memoDate))
+      )
+        .toISOString()
+        .slice(0, 10),
+      transactionType: header.transactionType,
+      lines: header.creditMemoLines.map((l, i) => {
+        const qty = Math.abs(l.quantity || 1);
+        const price = Math.abs(l.unitSellingPrice || 0);
+        const item = l.itemNumber?.trim();
+        const knownItem = item && itemKnown.get(item) ? item : undefined;
+        if (item && !knownItem) {
+          this.logger.warn(
+            `[${refundOrderNumber}] item "${item}" not in Oracle ` +
+              `catalog — credit-memo line ${i + 1} sent as description-only.`,
+          );
+        }
+        return {
+          lineNumber: l.lineNumber ?? i + 1,
+          description: l.description ?? `Refund line ${i + 1}`,
+          quantityCredit: -qty,
+          unitSellingPrice: price,
+          itemNumber: knownItem,
+          revenueAccount,
+          amount: -this.round2(qty * price),
+        };
+      }),
+    });
+    return {
+      transactionNumber: restResult.transactionNumber,
+      customerTrxId: restResult.customerTransactionId,
+    };
+  }
+
+  /**
+   * Applies a memo that already exists in Oracle to the invoice it credits.
+   *
+   * Every memo created while application was switched off is sitting
+   * on-account; this is how the Refunds screen clears them without creating a
+   * second memo. Safe to re-run: Oracle rejects a double application, and the
+   * failure is recorded as a note rather than losing the memo.
+   */
+  async applyExisting(refundId: string): Promise<{
+    refundId: string;
+    creditMemoNumber: string;
+    invoiceNumber: string;
+    applied: boolean;
+    note: string | null;
+  }> {
+    const refund = await this.refunds.findOne({ where: { id: refundId } });
+    if (!refund) throw new NotFoundException(`Refund ${refundId} not found`);
+    if (!refund.oracleCreditMemoNumber) {
+      throw new BadRequestException(
+        `Refund ${refund.refundOrderNumber} has no Oracle credit memo yet — push it first.`,
+      );
+    }
+
+    const invoiceNumber = await this.resolveOriginalInvoiceNumber(refund);
+    if (!invoiceNumber) {
+      throw new BadRequestException(
+        `No original Oracle invoice found for refund ${refund.refundOrderNumber} — ` +
+          `the memo can only stay on-account.`,
+      );
+    }
+
+    const branchCode = await this.resolveBranchCode(refund);
+    const storeConfig = branchCode
+      ? await this.storeConfigService.getOrCreateStoreConfig(branchCode)
+      : null;
+    if (!storeConfig) {
+      throw new BadRequestException(
+        `No store configuration for refund ${refund.refundOrderNumber} — ` +
+          `the business unit is required to apply a credit memo.`,
+      );
+    }
+
+    const note = await this.applyToInvoice({
+      creditMemoNumber: refund.oracleCreditMemoNumber,
+      originalTransactionNumber: invoiceNumber,
+      amount: Number(refund.refundAmount),
+      businessUnit: storeConfig.oracleBusinessUnit,
+      applyDate: refund.refundDate,
+    });
+
+    await this.refunds.update(refund.id, {
+      originalInvoiceNumber: refund.originalInvoiceNumber ?? invoiceNumber,
+      failureReason: note,
+    });
+
+    return {
+      refundId: refund.id,
+      creditMemoNumber: refund.oracleCreditMemoNumber,
+      invoiceNumber,
+      applied: note === null,
+      note,
+    };
+  }
+
+  /**
+   * Reads the refund's memo — and the invoice it credits — back out of Oracle.
+   *
+   * Our own row only records what we sent. This answers the two questions that
+   * actually matter: does the memo exist in Oracle with the amount we intended,
+   * and has it been applied (balance driven to zero) or is it still on-account?
+   */
+  async verify(refundId: string): Promise<CreditMemoVerification> {
+    const refund = await this.refunds.findOne({ where: { id: refundId } });
+    if (!refund) throw new NotFoundException(`Refund ${refundId} not found`);
+
+    const result: CreditMemoVerification = {
+      refundId: refund.id,
+      refundOrderNumber: refund.refundOrderNumber,
+      refundAmount: Number(refund.refundAmount),
+      creditMemoNumber: refund.oracleCreditMemoNumber ?? null,
+      creditMemoFound: false,
+      creditMemo: null,
+      amountMatches: false,
+      applied: false,
+      invoiceNumber: null,
+      invoice: null,
+      problems: [],
+    };
+
+    if (!refund.oracleCreditMemoNumber) {
+      result.problems.push('No credit memo has been created for this refund yet.');
+      return result;
+    }
+
+    const memo = await this.restClient
+      .getCreditMemoByTransactionNumber(refund.oracleCreditMemoNumber)
+      .catch((err: unknown) => {
+        result.problems.push(
+          `Could not read the credit memo from Oracle: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return null;
+      });
+
+    if (!memo) {
+      if (result.problems.length === 0) {
+        result.problems.push(
+          `Oracle has no credit memo ${refund.oracleCreditMemoNumber} — our row ` +
+            `records one, so the create did not land. Re-push this refund.`,
+        );
+      }
+      return result;
+    }
+
+    result.creditMemoFound = true;
+    result.creditMemo = memo;
+
+    const expected = this.round2(Math.abs(Number(refund.refundAmount)));
+    const actual =
+      memo.enteredAmount != null ? this.round2(Math.abs(memo.enteredAmount)) : null;
+    result.amountMatches = actual != null && Math.abs(actual - expected) < 0.01;
+    if (!result.amountMatches) {
+      result.problems.push(
+        `Amount mismatch: refund is ${expected} ${memo.currencyCode ?? ''} but ` +
+          `Oracle holds ${actual ?? 'an unreadable amount'}.`,
+      );
+    }
+
+    // A zero balance is the proof of application — stronger than trusting our
+    // own note, which only records what the apply call returned at the time.
+    result.applied = memo.balanceAmount != null && Math.abs(memo.balanceAmount) < 0.01;
+    if (!result.applied) {
+      result.problems.push(
+        `Credit memo is still on-account (balance ${memo.balanceAmount ?? 'unknown'}) — ` +
+          `it has not been applied to an invoice.`,
+      );
+    }
+
+    const invoiceNumber = await this.resolveOriginalInvoiceNumber(refund);
+    result.invoiceNumber = invoiceNumber;
+    if (invoiceNumber) {
+      result.invoice = await this.restClient
+        .getInvoiceByTransactionNumber(invoiceNumber)
+        .catch(() => null);
+      if (!result.invoice) {
+        result.problems.push(
+          `Could not read the credited invoice ${invoiceNumber} back from Oracle.`,
+        );
+      }
+    } else {
+      result.problems.push(
+        'No original Oracle invoice is linked to this refund, so the memo can ' +
+          'only ever sit on-account.',
+      );
+    }
+
+    return result;
+  }
+
+  /** branchCode from the refund, falling back to its order-sync row. */
+  private async resolveBranchCode(refund: {
+    branchCode: string | null;
+    refundOrderId: string;
+  }): Promise<string | null> {
+    return (
+      refund.branchCode ??
+      (
+        await this.orders.findOne({
+          where: { odooOrderId: refund.refundOrderId },
+          select: { branchCode: true },
+        })
+      )?.branchCode ??
+      null
+    );
+  }
+
+  /**
    * Applies a freshly-created credit memo to the invoice it credits. Returns a
    * human-readable note when the memo was left on-account (application disabled,
    * no original invoice, or Oracle rejected the application) so it surfaces on
    * the Refunds page; returns null when fully applied. Never throws — the memo
    * already exists and must not be lost over an application hiccup.
    */
-  private async applyToInvoice(
-    creditMemoNumber: string,
-    originalTransactionNumber: string | null,
-    amount: number,
-    currencyCode: string,
-    applyDate: Date,
-  ): Promise<string | null> {
+  private async applyToInvoice(req: {
+    creditMemoNumber: string;
+    originalTransactionNumber: string | null;
+    amount: number;
+    businessUnit: string;
+    applyDate: Date;
+  }): Promise<string | null> {
+    const { creditMemoNumber, originalTransactionNumber, applyDate } = req;
     if (!originalTransactionNumber) {
       return 'Credit memo created on-account — no original Oracle invoice found to apply against.';
     }
     if (!this.oracleClient.isCreditMemoApplicationEnabled()) {
-      return `Credit memo ${creditMemoNumber} created on-account; auto-application to invoice ${originalTransactionNumber} is disabled (set ORACLE_CM_APPLY_ENABLED=true once verified).`;
+      return `Credit memo ${creditMemoNumber} created on-account; auto-application to invoice ${originalTransactionNumber} is switched off (ORACLE_CM_APPLY_ENABLED=false).`;
     }
     try {
       await this.oracleClient.applyCreditMemo({
         applyDate,
         transactionNumber: originalTransactionNumber,
         creditMemoNumber,
-        amountApplied: amount,
-        currencyCode,
+        amountApplied: req.amount,
+        businessUnit: req.businessUnit,
+        glDate: applyDate,
       });
       return null;
     } catch (err) {

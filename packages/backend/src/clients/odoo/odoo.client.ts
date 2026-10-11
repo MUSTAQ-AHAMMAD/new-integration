@@ -368,12 +368,14 @@ export class OdooClient {
       domain.push(['branch_id', '=', params.branchId]);
     }
 
+    // Convert the admin's local date range to the UTC datetimes Odoo stores in
+    // `date_order` (parity with the API-key path's start_date/end_date params).
     if (params.startDate) {
-      domain.push(['date_order', '>=', params.startDate]);
+      domain.push(['date_order', '>=', toApiDatetime(params.startDate)]);
     }
 
     if (params.endDate) {
-      domain.push(['date_order', '<=', params.endDate]);
+      domain.push(['date_order', '<=', toApiDatetime(params.endDate, { end: true })]);
     }
 
     return domain;
