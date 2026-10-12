@@ -16,7 +16,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-integration_pass}
       POSTGRES_DB: integration_db
     ports:
-      - '5432:5432'
+      # Host port defaults to 5434 (5433 is pgbouncer's): other local stacks (e.g. maktabi_postgres)
+      # also publish 5432, and whichever starts second after a reboot fails to
+      # bind, leaving this whole stack stuck in "Created". Containers reach
+      # Postgres internally at postgres:5432 regardless.
+      - '${POSTGRES_HOST_PORT:-5434}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
