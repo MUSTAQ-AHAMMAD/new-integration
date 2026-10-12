@@ -42,12 +42,7 @@ import { VendHqRegister } from '../database/entities/vend-hq-register.entity';
 import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 import { round2 } from '../common/money';
 import { TaxClassificationService } from './tax-classification.service';
-
-/**
- * FusionSalesMetadata.subinventory value marking a region's default bill-to,
- * used by any store in that region (and customer type) without its own row.
- */
-export const REGION_DEFAULT_SUBINVENTORY = '*';
+import { matchBillTo } from './bill-to-resolver';
 
 export interface OdooTransformResult {
   invoiceHeader: InvoiceHeader;
@@ -124,44 +119,18 @@ export class OdooTransformationService {
     region: string,
     branchName: string,
   ) {
-    const typeUpper = (customerType || 'NORMAL').trim().toUpperCase();
-    const target = this.normalizeName(branchName);
-
     const regionRows = await this.salesMetadataRepo.find({ where: { region } });
-    const ofType = regionRows.filter(
-      (r) => (r.customerType ?? '').trim().toUpperCase() === typeUpper,
-    );
-
-    // A row with subinventory '*' is the region's default bill-to: stores with
-    // no row of their own (e.g. a region billed to one shared customer, or a
-    // newly opened store) post against it instead of failing every run.
-    const isDefault = (r: { subinventory: string | null }) =>
-      (r.subinventory ?? '').trim() === REGION_DEFAULT_SUBINVENTORY;
-    const regionDefault = ofType.find(isDefault) ?? null;
-    const perStore = ofType.filter((r) => !isDefault(r));
-
-    const bySubinventory = perStore.find(
-      (r) => this.normalizeName(r.subinventory) === target,
-    );
-    if (bySubinventory) return bySubinventory;
-
-    if (typeUpper !== 'NORMAL') {
-      const fallback = regionDefault ?? perStore[0] ?? null;
-      if (fallback) {
-        this.logger.warn(
-          `No ${typeUpper} FusionSalesMetadata row with subinventory ` +
-            `"${branchName}" in ${region} — using the region's shared ` +
-            `${typeUpper} bill-to (site ${fallback.siteNumber ?? '?'}). ` +
-            `Re-import FUSION_SALES_METADATA to restore per-branch sites.`,
-        );
-      }
-      return fallback;
+    const match = matchBillTo(regionRows, customerType, branchName);
+    if (match?.via === 'SHARED_PROVIDER') {
+      const typeUpper = (customerType || 'NORMAL').trim().toUpperCase();
+      this.logger.warn(
+        `No ${typeUpper} FusionSalesMetadata row with subinventory ` +
+          `"${branchName}" in ${region} — using the region's shared ` +
+          `${typeUpper} bill-to (site ${match.row.siteNumber ?? '?'}). ` +
+          `Map it in Admin → Bill-to Mapping to set a per-branch site.`,
+      );
     }
-
-    return (
-      perStore.find((c) => this.normalizeName(c.billToName) === target) ??
-      regionDefault
-    );
+    return match?.row ?? null;
   }
 
   /**
@@ -451,7 +420,7 @@ export class OdooTransformationService {
       throw new Error(
         `No FusionSalesMetadata bill-to match for branch ${branchCode} ` +
           `(name="${storeConfig.branchName}", type=${orderCustomerType}, ` +
-          `region=${region}) — add/align the FusionSalesMetadata record.`,
+          `region=${region}) — map it in Admin → Bill-to Mapping.`,
       );
     }
 
@@ -802,7 +771,7 @@ export class OdooTransformationService {
       throw new Error(
         `No FusionSalesMetadata bill-to match for branch ${branchCode} ` +
           `(name="${storeConfig.branchName}", type=${customerType}, ` +
-          `region=${region}) — cannot build credit memo.`,
+          `region=${region}) — cannot build credit memo; map it in Admin → Bill-to Mapping.`,
       );
     }
 

@@ -527,7 +527,7 @@ export class DailyAggregationService {
       throw new Error(
         `No FusionSalesMetadata bill-to match for branch ${storeConfig.branchCode} ` +
           `(name="${storeConfig.branchName}", type=${customerType}, region=${region}) ` +
-          `— cannot aggregate ${businessDay}.`,
+          `— cannot aggregate ${businessDay}; map it in Admin → Bill-to Mapping.`,
       );
     }
 

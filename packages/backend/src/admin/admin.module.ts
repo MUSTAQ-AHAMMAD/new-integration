@@ -9,6 +9,9 @@ import { SyncControlController } from './sync-control.controller';
 import { AdminDiagnosticsController } from './admin-diagnostics.controller';
 import { RegisterAccountsController } from './register-accounts.controller';
 import { RegisterAccountsService } from './register-accounts.service';
+import { BillToMappingController } from './bill-to-mapping.controller';
+import { BillToMappingService } from './bill-to-mapping.service';
+import { StoreConfiguration } from '../database/entities/store-configuration.entity';
 import { SyncModule } from '../sync/sync.module';
 import { OracleModule } from '../clients/oracle/oracle.module';
 import { FusionBusinessUnitMap } from '../database/entities/fusion-business-unit-map.entity';
@@ -59,6 +62,7 @@ import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
       IbqCredential,
       SyncJob,
       SyncControl,
+      StoreConfiguration,
     ]),
   ],
   controllers: [
@@ -68,9 +72,15 @@ import { VendHqTaxMeta } from '../database/entities/vend-hq-tax-meta.entity';
     SyncControlController,
     AdminDiagnosticsController,
     RegisterAccountsController,
+    BillToMappingController,
     AdminController,
   ],
-  providers: [AdminService, OracleNativeService, RegisterAccountsService],
+  providers: [
+    AdminService,
+    OracleNativeService,
+    RegisterAccountsService,
+    BillToMappingService,
+  ],
   exports: [OracleNativeService],
 })
 export class AdminModule {}
