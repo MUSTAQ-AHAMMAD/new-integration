@@ -49,6 +49,7 @@ import {
   toApiDatetime,
   RawOdooOrderFields,
 } from '../common/odoo-utils';
+import { buildAppDbConnectionAttrs } from '../database/data-source';
 import { generateId } from '../database/id.util';
 import { BackupOdooOrder } from '../database/entities/backup-odoo-order.entity';
 import { BackupOdooOrderLine } from '../database/entities/backup-odoo-order-line.entity';
@@ -1855,13 +1856,10 @@ export class OdooBackupService {
    */
   private async getBulkPool(): Promise<oracledb.Pool> {
     if (this.bulkPool) return this.bulkPool;
-    const host = process.env.APP_DB_HOST ?? 'localhost';
-    const port = process.env.APP_DB_PORT ?? '1521';
-    const service = process.env.APP_DB_SERVICE ?? 'XEPDB1';
     this.bulkPool = await oracledb.createPool({
       user: process.env.APP_DB_USERNAME,
       password: process.env.APP_DB_PASSWORD,
-      connectString: `${host}:${port}/${service}`,
+      ...buildAppDbConnectionAttrs(),
       poolMin: 1,
       poolMax: 4,
       poolIncrement: 1,

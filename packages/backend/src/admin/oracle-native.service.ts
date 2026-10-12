@@ -29,6 +29,13 @@ interface OracleTableMapping {
   mapRow: (row: Record<string, unknown>) => Record<string, unknown>;
   /** Unique column(s) used as the upsert conflict target. */
   conflictColumns: string[];
+  /**
+   * Set when the source holds several rows per conflict key (e.g. a request
+   * log). Rows are read in this ORDER BY (lowest precedence first) and folded
+   * into one per key, each later non-null value overriding — otherwise the
+   * concurrent upserts let an arbitrary row win and blank good values.
+   */
+  mergeDuplicatesOrderBy?: string;
 }
 
 function col(row: Record<string, unknown>, name: string): unknown {
@@ -279,7 +286,7 @@ const MAPPINGS: OracleTableMapping[] = [
       fusionTaxCode: optStr(r, 'FUSION_TAX_CODE'),
       currency: optStr(r, 'CURRENCY') ?? 'AED',
     }),
-    conflictColumns: ['domainName'],
+    conflictColumns: ['domainName', 'region'],
   },
   // VENDHQ_OUTLETS → VendHqOutlet
   {
@@ -376,7 +383,8 @@ const MAPPINGS: OracleTableMapping[] = [
       sourceId: optInt32(r, 'SOURCE_ID'),
       uomCode: optStr(r, 'UOM_CODE'),
       handle: optStr(r, 'HANDLE'),
-      itemType: optStr(r, 'ITEM_TYPE'),
+      // The source column is TYPE; ITEM_TYPE kept for older schemas.
+      itemType: optStr(r, 'TYPE') ?? optStr(r, 'ITEM_TYPE'),
       uomName: optStr(r, 'UOM_NAME'),
       active: bool(r, 'ACTIVE'),
       // NAME is NOT NULL but ~71 rows have none — fall back to SKU/description.
@@ -392,6 +400,11 @@ const MAPPINGS: OracleTableMapping[] = [
       region: str(r, 'REGION'),
     }),
     conflictColumns: ['itemId', 'region'],
+    // One row per sync request: Success rows outrank Failed ones (which carry
+    // no price/UOM), newer requests outrank older.
+    mergeDuplicatesOrderBy:
+      "CASE WHEN STATUS = 'Success' THEN 1 ELSE 0 END, " +
+      'LAST_UPDATE_DATE NULLS FIRST, REQUEST_DATE NULLS FIRST, ROW_ID',
   },
 ];
 
@@ -567,6 +580,54 @@ export class OracleNativeService {
     return { host, port: Number(port), serviceName, username, password };
   }
 
+  /**
+   * Folds source rows sharing a conflict key into one, in input order: each
+   * later non-null column overrides the earlier value. Rows whose key can't be
+   * computed pass through untouched so their error still surfaces per row.
+   */
+  private mergeDuplicateRows(
+    rows: Record<string, unknown>[],
+    mapping: OracleTableMapping,
+  ): Record<string, unknown>[] {
+    const merged = new Map<string, Record<string, unknown>>();
+    const passthrough: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      let key: string;
+      try {
+        const data = mapping.mapRow(row);
+        key = JSON.stringify(mapping.conflictColumns.map((c) => data[c]));
+      } catch {
+        passthrough.push(row);
+        continue;
+      }
+      const prev = merged.get(key);
+      if (!prev) {
+        merged.set(key, { ...row });
+        continue;
+      }
+      for (const [k, v] of Object.entries(row)) {
+        if (v != null && !(typeof v === 'string' && v.trim() === '')) {
+          prev[k] = v;
+        }
+      }
+    }
+    return [...merged.values(), ...passthrough];
+  }
+
+  /**
+   * Retries once when the app-DB connection drops mid-import (NJS-500 /
+   * ORA-03113 / ORA-03135); the pool hands out a fresh connection.
+   */
+  private async withReconnectRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/NJS-500|ORA-03113|ORA-03135/.test(msg)) throw err;
+      return fn();
+    }
+  }
+
   async importFromOracle(tables?: string[]): Promise<OracleImportSummary> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const oracledb = require('oracledb') as typeof import('oracledb');
@@ -675,13 +736,18 @@ export class OracleNativeService {
       };
 
       try {
+        const orderBy = mapping.mergeDuplicatesOrderBy
+          ? ` ORDER BY ${mapping.mergeDuplicatesOrderBy}`
+          : '';
         const queryResult = await connection.execute<Record<string, unknown>>(
-          `SELECT * FROM "${schema}"."${mapping.oracleTable}"`,
+          `SELECT * FROM "${schema}"."${mapping.oracleTable}"${orderBy}`,
           [],
           { outFormat: oracledb.OUT_FORMAT_OBJECT },
         );
 
-        const rows = queryResult.rows ?? [];
+        const rows = mapping.mergeDuplicatesOrderBy
+          ? this.mergeDuplicateRows(queryResult.rows ?? [], mapping)
+          : (queryResult.rows ?? []);
 
         // Upsert in concurrent chunks — row-by-row sequential upserts made a
         // full multi-table import exceed the request timeout.
@@ -707,7 +773,9 @@ export class OracleNativeService {
                   data,
                   mapping.conflictColumns,
                 );
-                return repo.upsert(data, mapping.conflictColumns);
+                return this.withReconnectRetry(() =>
+                  repo.upsert(data, mapping.conflictColumns),
+                );
               }),
             ),
           );

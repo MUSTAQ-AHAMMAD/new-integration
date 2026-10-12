@@ -11,6 +11,9 @@ import { generateId } from '../id.util';
 import { booleanTransformer } from '../transformers';
 
 @Entity({ name: 'VendHqCredential' })
+// One VendHQ store may serve several regions, so the domain is unique per
+// region rather than globally.
+@Index(['domainName', 'region'], { unique: true })
 @Index(['region'])
 @Index(['active'])
 export class VendHqCredential {
@@ -22,7 +25,6 @@ export class VendHqCredential {
     if (!this.id) this.id = generateId();
   }
 
-  @Index({ unique: true })
   @Column({ type: 'varchar2', length: 255 })
   domainName!: string;
 
