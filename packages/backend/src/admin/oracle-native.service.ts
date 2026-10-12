@@ -92,8 +92,10 @@ function bool(row: Record<string, unknown>, name: string): boolean {
   const v = col(row, name);
   if (v == null) return false;
   // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  const s = String(v);
-  return s.toUpperCase() === 'Y' || s === '1' || v === true;
+  // Trim: CHAR flag columns come back blank-padded ('1    '), which used to
+  // read as false and silently turn e.g. IS_CASH=1 into 0.
+  const s = String(v).trim().toUpperCase();
+  return v === true || ['Y', '1', 'YES', 'TRUE'].includes(s);
 }
 
 function optStr(row: Record<string, unknown>, name: string): string | null {
