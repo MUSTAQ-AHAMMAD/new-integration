@@ -749,4 +749,35 @@ describe('OdooTransformationService', () => {
       expect(service.deriveServiceProvider(order, new Set())).toBeNull();
     });
   });
+
+  // ── Bill-to resolution: region default ('*') ───────────────────────────────
+
+  describe('resolveBillToForAggregate — region default bill-to', () => {
+    const regionDefault = makeSalesMeta({
+      subinventory: '*',
+      billToName: 'SN Shared Customer',
+      region: 'SN',
+    });
+
+    it('falls back to the region default when the store has no own row', async () => {
+      prisma.fusionSalesMetadata.find.mockResolvedValueOnce([regionDefault]);
+      const meta = await service.resolveBillToForAggregate('NORMAL', 'SN', 'RYDROSHN');
+      expect(meta).toBe(regionDefault);
+    });
+
+    it("prefers the store's own row over the region default", async () => {
+      const own = makeSalesMeta({ subinventory: 'RYDROSHN', region: 'SN' });
+      prisma.fusionSalesMetadata.find.mockResolvedValueOnce([regionDefault, own]);
+      const meta = await service.resolveBillToForAggregate('NORMAL', 'SN', 'RYDROSHN');
+      expect(meta).toBe(own);
+    });
+
+    it('still returns null when neither an own row nor a default exists', async () => {
+      prisma.fusionSalesMetadata.find.mockResolvedValueOnce([
+        makeSalesMeta({ subinventory: 'OTHER', billToName: 'Other', region: 'SN' }),
+      ]);
+      const meta = await service.resolveBillToForAggregate('NORMAL', 'SN', 'RYDROSHN');
+      expect(meta).toBeNull();
+    });
+  });
 });

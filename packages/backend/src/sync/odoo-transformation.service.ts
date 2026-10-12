@@ -43,6 +43,12 @@ import { bigIntToNumber, toSafeNumber } from '../common/utils/bigint-utils';
 import { round2 } from '../common/money';
 import { TaxClassificationService } from './tax-classification.service';
 
+/**
+ * FusionSalesMetadata.subinventory value marking a region's default bill-to,
+ * used by any store in that region (and customer type) without its own row.
+ */
+export const REGION_DEFAULT_SUBINVENTORY = '*';
+
 export interface OdooTransformResult {
   invoiceHeader: InvoiceHeader;
   standardReceipts: StandardReceiptRequest[];
@@ -106,9 +112,11 @@ export class OdooTransformationService {
    * - Primary: normalised subinventory == branchName within (customerType, region).
    * - NORMAL fallback: normalised billToName == branchName (stores whose
    *   bill-to IS the branch code, and rows imported without a subinventory).
-   * - Non-NORMAL fallback: any (customerType, region) row — the platform
-   *   customer/account is shared across branches; only the site is per-branch,
-   *   so this is flagged but still usable.
+   * - Region default: a row with subinventory '*' (REGION_DEFAULT_SUBINVENTORY)
+   *   for (customerType, region) — for regions billed to one shared customer.
+   * - Non-NORMAL fallback: the region default, else any (customerType, region)
+   *   row — the platform customer/account is shared across branches; only the
+   *   site is per-branch, so this is flagged but still usable.
    * Returns null when no record matches (caller flags the branch as unmapped).
    */
   private async resolveBillToMetadata(
@@ -124,13 +132,21 @@ export class OdooTransformationService {
       (r) => (r.customerType ?? '').trim().toUpperCase() === typeUpper,
     );
 
-    const bySubinventory = ofType.find(
+    // A row with subinventory '*' is the region's default bill-to: stores with
+    // no row of their own (e.g. a region billed to one shared customer, or a
+    // newly opened store) post against it instead of failing every run.
+    const isDefault = (r: { subinventory: string | null }) =>
+      (r.subinventory ?? '').trim() === REGION_DEFAULT_SUBINVENTORY;
+    const regionDefault = ofType.find(isDefault) ?? null;
+    const perStore = ofType.filter((r) => !isDefault(r));
+
+    const bySubinventory = perStore.find(
       (r) => this.normalizeName(r.subinventory) === target,
     );
     if (bySubinventory) return bySubinventory;
 
     if (typeUpper !== 'NORMAL') {
-      const fallback = ofType[0] ?? null;
+      const fallback = regionDefault ?? perStore[0] ?? null;
       if (fallback) {
         this.logger.warn(
           `No ${typeUpper} FusionSalesMetadata row with subinventory ` +
@@ -143,7 +159,8 @@ export class OdooTransformationService {
     }
 
     return (
-      ofType.find((c) => this.normalizeName(c.billToName) === target) ?? null
+      perStore.find((c) => this.normalizeName(c.billToName) === target) ??
+      regionDefault
     );
   }
 
