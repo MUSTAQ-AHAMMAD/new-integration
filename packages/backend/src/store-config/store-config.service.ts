@@ -143,9 +143,13 @@ export class StoreConfigService {
     let outletRegion: string | null = null;
     if (target) {
       const outlets = await this.outletConfigs.find();
-      const outlet = outlets.find(
+      // An outlet name can exist in several regions (e.g. SA and SN) — prefer
+      // the hinted region's row, as the register witness below does.
+      const byName = outlets.filter(
         (o) => this.normalizeName(o.outletName) === target,
       );
+      const outlet =
+        byName.find((o) => o.region === hintedRegion) ?? byName[0];
       outletRegion = outlet?.region?.trim() || null;
     }
 

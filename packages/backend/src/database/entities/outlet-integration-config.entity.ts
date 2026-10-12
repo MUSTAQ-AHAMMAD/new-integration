@@ -10,6 +10,8 @@ import {
 import { generateId } from '../id.util';
 
 @Entity({ name: 'OutletIntegrationConfig' })
+// The same outlet name exists in several regions (e.g. SA and SN).
+@Index(['outletName', 'region'], { unique: true })
 @Index(['region'])
 @Index(['integMode'])
 export class OutletIntegrationConfig {
@@ -21,7 +23,6 @@ export class OutletIntegrationConfig {
     if (!this.id) this.id = generateId();
   }
 
-  @Index({ unique: true })
   @Column({ type: 'varchar2', length: 255 })
   outletName!: string;
 

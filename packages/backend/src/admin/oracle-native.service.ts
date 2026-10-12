@@ -36,7 +36,23 @@ interface OracleTableMapping {
    * concurrent upserts let an arbitrary row win and blank good values.
    */
   mergeDuplicatesOrderBy?: string;
+  /**
+   * When a record already matches these columns, the source row is left out
+   * (reported as skipped) so values maintained in the dashboard survive.
+   */
+  keepExistingBy?: string[];
 }
+
+/** Fallback invoice currency per region for sources without a CURRENCY column. */
+const REGION_CURRENCY: Record<string, string> = {
+  AE: 'AED',
+  SA: 'SAR',
+  SN: 'SAR',
+  KW: 'KWD',
+  OM: 'OMR',
+  BH: 'BHD',
+  QR: 'QAR',
+};
 
 function col(row: Record<string, unknown>, name: string): unknown {
   // Oracle column names may be uppercase or mixed case depending on quoting
@@ -174,7 +190,9 @@ const MAPPINGS: OracleTableMapping[] = [
       integMode: str(r, 'INTEG_MODE'),
       region: str(r, 'REGION'),
     }),
-    conflictColumns: ['outletName'],
+    // The same outlet name exists in several regions (e.g. SA and SN), so the
+    // key must include region or one region's rows overwrite the other's.
+    conflictColumns: ['outletName', 'region'],
   },
   // FUSION_BUSINESS_UNIT_ID_MAP → FusionBusinessUnitMap
   {
@@ -284,9 +302,19 @@ const MAPPINGS: OracleTableMapping[] = [
       fusionOrgCode: optStr(r, 'FUSION_ORG_CODE'),
       timezoneOffset: num(r, 'TIMEZONE_OFFSET'),
       fusionTaxCode: optStr(r, 'FUSION_TAX_CODE'),
-      currency: optStr(r, 'CURRENCY') ?? 'AED',
+      businessStartDate: optDate(r, 'BUSINESS_START_DATE'),
+      // The source has no CURRENCY column; derive it from the region rather
+      // than defaulting every region to AED.
+      currency:
+        optStr(r, 'CURRENCY') ??
+        REGION_CURRENCY[str(r, 'REGION').trim().toUpperCase()] ??
+        'AED',
     }),
     conflictColumns: ['domainName', 'region'],
+    // Credentials are maintained in the dashboard once a region has one: a
+    // re-import must neither overwrite an edited domain/token nor add a second
+    // active credential for the region (which would pull it twice).
+    keepExistingBy: ['region'],
   },
   // VENDHQ_OUTLETS → VendHqOutlet
   {
@@ -327,10 +355,14 @@ const MAPPINGS: OracleTableMapping[] = [
     mapRow: (r) => ({
       region: str(r, 'REGION'),
       serviceProvider: str(r, 'SERVICE_PROVIDER'),
-      vendHqCustomerId: optStr(r, 'VENDHQ_CUSTOMER_ID'),
+      // The source column is misspelt VEDNHQ_CUSTOMER_ID.
+      vendHqCustomerId:
+        optStr(r, 'VEDNHQ_CUSTOMER_ID') ?? optStr(r, 'VENDHQ_CUSTOMER_ID'),
       isCash: bool(r, 'IS_CASH'),
     }),
-    conflictColumns: ['serviceProvider'],
+    // One provider can have several VendHQ customers per region (e.g. a cash
+    // and a non-cash HUNGERSTATION customer), and exists in several regions.
+    conflictColumns: ['serviceProvider', 'region', 'vendHqCustomerId'],
   },
   // VENDHQ_DISCOUNT_ITEMS → VendHqDiscountItem
   {
@@ -348,7 +380,9 @@ const MAPPINGS: OracleTableMapping[] = [
     repo: (s) => s.vendHqTaxMetaRepo,
     mapRow: (r) => ({
       taxId: str(r, 'TAX_ID'),
-      taxName: str(r, 'TAX_NAME'),
+      // A few source taxes have no TAX_NAME (e.g. KW's zero-rate tax); fall
+      // back so the row still imports rather than being skipped.
+      taxName: firstStr(r, 'TAX_NAME', 'FUSION_NAME', 'TAX_ID'),
       version: bigint(r, 'VERSION'),
       fusionName: optStr(r, 'FUSION_NAME'),
       region: str(r, 'REGION'),
@@ -378,9 +412,9 @@ const MAPPINGS: OracleTableMapping[] = [
       // downstream path keys items by SKU (productCode), fall back to SKU so
       // those items still import and are usable; last resort is the handle.
       itemId: firstStr(r, 'ITEM_ID', 'SKU', 'HANDLE'),
-      // Fusion SOURCE_ID exceeds Int32; null out-of-range values (field is
-      // informational and unread — mirrors ItemSyncService's own handling).
-      sourceId: optInt32(r, 'SOURCE_ID'),
+      // Fusion item ids (~3e14) exceed Int32 but fit a JS number exactly and
+      // the column is an unbounded NUMBER, so keep the full value.
+      sourceId: optNum(r, 'SOURCE_ID'),
       uomCode: optStr(r, 'UOM_CODE'),
       handle: optStr(r, 'HANDLE'),
       // The source column is TYPE; ITEM_TYPE kept for older schemas.
@@ -767,6 +801,17 @@ export class OracleNativeService {
                   throw new Error(
                     `source row has empty required column(s): ${missing.join(', ')}`,
                   );
+                }
+                if (mapping.keepExistingBy) {
+                  const where = Object.fromEntries(
+                    mapping.keepExistingBy.map((c) => [c, data[c]]),
+                  );
+                  if (await repo.findOne({ where })) {
+                    throw new Error(
+                      `kept the existing record for ${JSON.stringify(where)} ` +
+                        `(edit it in the dashboard to change it)`,
+                    );
+                  }
                 }
                 await this.ensurePrimaryKey(
                   repo,

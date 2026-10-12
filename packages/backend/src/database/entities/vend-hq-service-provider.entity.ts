@@ -11,9 +11,12 @@ import { generateId } from '../id.util';
 import { booleanTransformer } from '../transformers';
 
 @Entity({ name: 'VendHqServiceProvider' })
+// A provider exists per region, sometimes with several VendHQ customers
+// (e.g. cash and non-cash HUNGERSTATION).
+@Index(['serviceProvider', 'region', 'vendHqCustomerId'], { unique: true })
 @Index(['region'])
-// serviceProvider is already covered by its unique index below — a second index
-// on the same column collides on Oracle (identical generated name).
+// No separate serviceProvider index: the composite unique index above leads
+// with it (a second index on the same column collides on Oracle).
 export class VendHqServiceProvider {
   @PrimaryColumn({ type: 'varchar2', length: 36 })
   id!: string;
@@ -26,7 +29,6 @@ export class VendHqServiceProvider {
   @Column({ type: 'varchar2', length: 255 })
   region!: string;
 
-  @Index({ unique: true })
   @Column({ type: 'varchar2', length: 255 })
   serviceProvider!: string;
 
