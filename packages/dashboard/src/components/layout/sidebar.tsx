@@ -131,6 +131,7 @@ const adminGroups: NavGroup[] = [
       { href: '/admin/fusion-bu-map', label: 'BU Map', icon: Database, area: 'admin.integration-config' },
       { href: '/admin/fusion-receipt-methods', label: 'Receipt Methods', icon: CreditCard, area: 'admin.integration-config' },
       { href: '/admin/fusion-sales-metadata', label: 'Sales Metadata', icon: FileText, area: 'admin.integration-config' },
+      { href: '/admin/bill-to-mapping', label: 'Bill-to Mapping', icon: Store, area: 'admin.integration-config' },
       { href: '/admin/service-provider-journal-meta', label: 'Journal Meta', icon: FileText, area: 'admin.integration-config' },
       { href: '/admin/sales-integration-status', label: 'Integration Status', icon: Activity, area: 'admin.integration-config' },
     ],

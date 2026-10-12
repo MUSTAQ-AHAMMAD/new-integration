@@ -78,6 +78,54 @@ export interface RegisterAccountsPreview {
     unmatched: number;
   };
 }
+export interface BillToRow {
+  id: string;
+  region: string;
+  customerType: string;
+  /** Store name the bill-to belongs to; '*' marks the region default. */
+  subinventory: string | null;
+  billToName: string;
+  billToAccount: string;
+  siteNumber: string | null;
+  businessUnit: string;
+  costCenterCode: string | null;
+}
+
+export type StoreBillToStatus = 'MAPPED' | 'REGION_DEFAULT' | 'MISSING';
+
+export interface StoreBillTo {
+  storeId: string;
+  branchCode: string;
+  branchName: string;
+  region: string;
+  status: StoreBillToStatus;
+  via: string | null;
+  billTo: BillToRow | null;
+  suggestion: { templateId: string; reason: string } | null;
+}
+
+export interface RegionBillToSummary {
+  region: string;
+  businessUnit: string | null;
+  stores: number;
+  mapped: number;
+  viaDefault: number;
+  missing: number;
+  regionDefault: BillToRow | null;
+}
+
+export interface BillToMappingStatus {
+  regions: RegionBillToSummary[];
+  stores: StoreBillTo[];
+  templates: BillToRow[];
+}
+
+export interface BillToApplyRequest {
+  stores?: { storeId: string; templateId: string }[];
+  regionDefaults?: { region: string; templateId: string }[];
+  includeProviders?: boolean;
+}
+
 export interface RegisterAccountAssignment {
   registerId: string;
   bankAccountId?: number | null;
@@ -672,6 +720,19 @@ export const api = {
     apiRequest<{ updated: number; skipped: number }>(
       '/admin/register-accounts/apply',
       { method: 'POST', body: JSON.stringify({ assignments }) },
+    ),
+
+  /** Bill-to resolution status for every active store (same matcher as posting) */
+  billToMappingStatus: (region?: string) =>
+    apiRequest<BillToMappingStatus>(
+      `/admin/bill-to-mapping${region ? `?region=${encodeURIComponent(region)}` : ''}`,
+    ),
+
+  /** Copy existing bill-to rows onto stores (Subinventory = store name) or region defaults */
+  billToMappingApply: (body: BillToApplyRequest) =>
+    apiRequest<{ created: number; updated: number; providerRowsCopied: number }>(
+      '/admin/bill-to-mapping/apply',
+      { method: 'POST', body: JSON.stringify(body) },
     ),
 
   /** List sync-control services (optionally per region) */

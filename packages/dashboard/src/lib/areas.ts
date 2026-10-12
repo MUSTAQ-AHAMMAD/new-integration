@@ -48,6 +48,7 @@ export const AREA_ROUTES: Record<string, string[]> = {
     '/admin/fusion-bu-map',
     '/admin/fusion-receipt-methods',
     '/admin/fusion-sales-metadata',
+    '/admin/bill-to-mapping',
     '/admin/service-provider-journal-meta',
     '/admin/sales-integration-status',
   ],
