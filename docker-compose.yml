@@ -273,7 +273,18 @@ services:
       - ./packages/backend/data:/app/packages/backend/data:ro
       # APP_DB_* live here (dotenv). .dockerignore excludes .env from the image,
       # so it must be bind-mounted in at runtime rather than baked in.
-      - ./packages/backend/.env:/app/packages/backend/.env:ro
+      # Long syntax on purpose: the short form makes Docker create an empty
+      # *directory* when the file is missing, which crashes ConfigModule with
+      # EISDIR. This form fails fast instead (copy .env.example to create it).
+      - type: bind
+        source: ./packages/backend/.env
+        target: /app/packages/backend/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      # Autonomous DB mTLS wallet (gitignored + dockerignored: private keys).
+      # Unzip Wallet_<DB>.zip here; APP_DB_WALLET_DIR points at the target.
+      - ./packages/backend/wallet:/app/packages/backend/wallet:ro
     networks:
       - integration_net
 
@@ -347,7 +358,18 @@ services:
     volumes:
       # APP_DB_* live here (dotenv). .dockerignore excludes .env from the image,
       # so it must be bind-mounted in at runtime rather than baked in.
-      - ./packages/backend/.env:/app/packages/backend/.env:ro
+      # Long syntax on purpose: the short form makes Docker create an empty
+      # *directory* when the file is missing, which crashes ConfigModule with
+      # EISDIR. This form fails fast instead (copy .env.example to create it).
+      - type: bind
+        source: ./packages/backend/.env
+        target: /app/packages/backend/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      # Autonomous DB mTLS wallet (gitignored + dockerignored: private keys).
+      # Unzip Wallet_<DB>.zip here; APP_DB_WALLET_DIR points at the target.
+      - ./packages/backend/wallet:/app/packages/backend/wallet:ro
     depends_on:
       postgres:
         condition: service_healthy

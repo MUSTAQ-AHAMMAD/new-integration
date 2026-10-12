@@ -16,15 +16,61 @@ import { OracleNamingStrategy } from './oracle-naming.strategy';
  */
 let thickModeInitialised = false;
 
-export function buildOracleDataSourceOptions(): OracleConnectionOptions {
+/**
+ * Connection attributes for the app DB, shared by TypeORM and the raw
+ * node-oracledb pools so every connection reaches the DB the same way.
+ *
+ * - APP_DB_CONNECT_STRING: full descriptor / Easy Connect string, used verbatim
+ *   (e.g. the "TLS" connection string copied from the Autonomous DB console).
+ * - APP_DB_PROTOCOL=tcps: TLS to host:port/service. Required for Autonomous DB
+ *   (port 1522 rejects plain TCP with ORA-12537).
+ * - APP_DB_WALLET_DIR: unzipped wallet folder, when the Autonomous DB requires
+ *   mutual TLS. Thick mode uses cwallet.sso (no password; its sqlnet.ora
+ *   WALLET_LOCATION must name this folder). Thin mode needs
+ *   APP_DB_WALLET_PASSWORD to decrypt ewallet.pem.
+ */
+export function buildAppDbConnectionAttrs(): {
+  connectString: string;
+  configDir?: string;
+  walletLocation?: string;
+  walletPassword?: string;
+} {
   const host = process.env.APP_DB_HOST ?? 'localhost';
   const port = parseInt(process.env.APP_DB_PORT ?? '1521', 10);
   const serviceName = process.env.APP_DB_SERVICE ?? 'XEPDB1';
+  const protocol = (process.env.APP_DB_PROTOCOL ?? 'tcp').toLowerCase();
+
+  const connectString =
+    process.env.APP_DB_CONNECT_STRING ||
+    (protocol === 'tcps'
+      ? `(description=(retry_count=3)(retry_delay=3)` +
+        `(address=(protocol=tcps)(port=${port})(host=${host}))` +
+        `(connect_data=(service_name=${serviceName}))` +
+        `(security=(ssl_server_dn_match=yes)))`
+      : `${host}:${port}/${serviceName}`);
+
+  // Thick mode reads the wallet via initOracleClient({ configDir }) (using the
+  // password-less cwallet.sso); only thin mode needs it per connection.
+  const walletDir = process.env.APP_DB_WALLET_DIR || undefined;
+  const thin = process.env.APP_DB_THICK_MODE !== 'true';
+  return {
+    connectString,
+    ...(walletDir && thin && {
+      configDir: walletDir,
+      walletLocation: walletDir,
+      walletPassword: process.env.APP_DB_WALLET_PASSWORD || undefined,
+    }),
+  };
+}
+
+export function buildOracleDataSourceOptions(): OracleConnectionOptions {
+  const { connectString, ...walletAttrs } = buildAppDbConnectionAttrs();
 
   if (process.env.APP_DB_THICK_MODE === 'true' && !thickModeInitialised) {
     try {
       oracledb.initOracleClient({
         libDir: process.env.APP_DB_INSTANT_CLIENT_DIR || undefined,
+        configDir: process.env.APP_DB_WALLET_DIR || undefined,
       });
       thickModeInitialised = true;
     } catch (err) {
@@ -37,7 +83,7 @@ export function buildOracleDataSourceOptions(): OracleConnectionOptions {
     type: 'oracle',
     username: process.env.APP_DB_USERNAME ?? '',
     password: process.env.APP_DB_PASSWORD ?? '',
-    connectString: `${host}:${port}/${serviceName}`,
+    connectString,
     // Deliberately NOT setting `schema` when it matches the connecting user.
     // TypeORM aliases the MERGE target of an upsert as "<schema>.<Table>", a
     // single quoted identifier that blows past this DB's 30-byte limit
@@ -64,6 +110,7 @@ export function buildOracleDataSourceOptions(): OracleConnectionOptions {
     // upserts is ~4x faster. So poolMin == poolMax (no on-demand growth) and
     // idle connections never expire (poolTimeout 0). Overridable via env.
     extra: {
+      ...walletAttrs,
       poolMin: parseInt(
         process.env.APP_DB_POOL_MIN ?? process.env.APP_DB_POOL_MAX ?? '16',
         10,

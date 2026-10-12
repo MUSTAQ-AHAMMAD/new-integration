@@ -1,10 +1,16 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, ObjectLiteral, Repository } from 'typeorm';
+import {
+  DataSource,
+  ObjectLiteral,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { EntityMetadata } from 'typeorm';
 import { numberToBigInt } from '../common/utils/bigint-utils';
 import {
@@ -240,19 +246,60 @@ export class AdminService {
   async create(table: string, body: Record<string, unknown>) {
     const repo = this.getRepo(table);
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    const entity = repo.create(AdminService.normalizeRegion(data));
-    return repo.save(entity);
+    const normalized = AdminService.normalizeRegion(data);
+    const entity = repo.create(normalized);
+    try {
+      return await repo.save(entity);
+    } catch (err) {
+      throw await this.toConflict(repo, err, normalized);
+    }
   }
 
   async update(table: string, id: string, body: Record<string, unknown>) {
     await this.getOne(table, id);
     const repo = this.getRepo(table);
     const { id: _id, createdAt: _ca, updatedAt: _ua, ...data } = body;
-    await repo.update(
-      id,
-      AdminService.normalizeRegion(data) as ObjectLiteral,
-    );
+    const normalized = AdminService.normalizeRegion(data);
+    try {
+      await repo.update(id, normalized as ObjectLiteral);
+    } catch (err) {
+      throw await this.toConflict(repo, err, normalized, id);
+    }
     return this.getOne(table, id);
+  }
+
+  /**
+   * Turn an Oracle unique-constraint violation (ORA-00001) into a 409 that
+   * names the clashing field and the record already holding the value, so the
+   * dashboard can show why a save was refused instead of a bare 500. Any other
+   * error is returned unchanged for the caller to rethrow.
+   */
+  private async toConflict(
+    repo: Repository<ObjectLiteral>,
+    err: unknown,
+    data: Record<string, unknown>,
+    selfId?: string,
+  ): Promise<unknown> {
+    const errorNum = (err as { driverError?: { errorNum?: number } })
+      .driverError?.errorNum;
+    if (!(err instanceof QueryFailedError) || errorNum !== 1) return err;
+
+    for (const index of repo.metadata.indices.filter((i) => i.isUnique)) {
+      const props = index.columns.map((c) => c.propertyName);
+      if (!props.every((p) => p in data)) continue;
+      const where = Object.fromEntries(props.map((p) => [p, data[p]]));
+      const holder = await repo.findOne({ where });
+      if (holder && holder.id !== selfId) {
+        const label = props.map((p) => `${p} "${String(data[p])}"`).join(', ');
+        const region = holder.region ? ` (region ${String(holder.region)})` : '';
+        return new ConflictException(
+          `Another record${region} already uses ${label}. Each must be unique.`,
+        );
+      }
+    }
+    return new ConflictException(
+      'This change would duplicate a value that must be unique.',
+    );
   }
 
   async remove(table: string, id: string) {

@@ -63,3 +63,6 @@ packages/backend/prisma/migrations/
 # ─────────────────────────────────────────
 *.tsbuildinfo
 .turbo/
+
+# Oracle Autonomous DB wallet (private keys) — mounted at runtime, never committed
+packages/backend/wallet/
